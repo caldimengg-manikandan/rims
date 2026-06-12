@@ -481,7 +481,7 @@ export default function HRApplicationsPage() {
             <div className="col-span-1 xl:col-span-2 text-center">Actions</div>
           </div>
 
-          <div className="bg-transparent divide-y divide-border/40">
+          <div className="bg-transparent divide-y divide-border/40 stagger-children">
             {applications.map((app, index) => (
               <div
                 key={app.id}

@@ -192,7 +192,7 @@ export default function SettingsPage() {
                         </CardTitle>
                         <CardDescription>Basic information used in communications</CardDescription>
                     </CardHeader>
-                    <CardContent className="p-6 space-y-6">
+                    <CardContent className="pb-6 space-y-6">
                         <div className="space-y-4">
                             <div className="space-y-2">
                                 <Label htmlFor="company_name">Company Name</Label>
@@ -200,7 +200,7 @@ export default function SettingsPage() {
                                     id="company_name" 
                                     value={settings.company_name} 
                                     onChange={(e) => setSettings({...settings, company_name: e.target.value})}
-                                    placeholder="e.g. Acme Corp"
+                                    placeholder="Company name"
                                     className="hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200 rounded-xl"
                                 />
                             </div>
@@ -263,7 +263,7 @@ export default function SettingsPage() {
                         <CardDescription>HR Contact Information</CardDescription>
                     </CardHeader>
                     
-                    <CardContent className="p-6 space-y-4">
+                    <CardContent className="p- space-y-4">
                         <div className="space-y-2">
                             <Label htmlFor="hr_name">HR Contact Name</Label>
                             <div className="relative">
@@ -325,7 +325,7 @@ export default function SettingsPage() {
                         </CardTitle>
                         <CardDescription>Customize the application's logo, colors, text, and policies for your brand identity</CardDescription>
                     </CardHeader>
-                    <CardContent className="p-6 space-y-6">
+                    <CardContent className="pb-6 space-y-6">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <Label htmlFor="product_name">Product Name</Label>
@@ -448,31 +448,6 @@ export default function SettingsPage() {
                     </CardContent>
                 </Card>
 
-                {/* New Theme Preference Card */}
-                <Card className="bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden md:col-span-2 rounded-2xl pt-0 hover-premium-lift hover:shadow-md hover:border-border/60 transition-all duration-300">
-                    <CardHeader className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40 pt-6">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <CardTitle className="flex items-center gap-2 text-base font-bold">
-                                    <div className="p-1.5 bg-primary/10 rounded-lg">
-                                        <Palette className="h-4 w-4 text-primary" />
-                                    </div>
-                                    Theme Preferences
-                                </CardTitle>
-                                <CardDescription>Choose how your workspace looks</CardDescription>
-                            </div>
-                            <ToggleTheme />
-                        </div>
-                    </CardHeader>
-                    <CardContent className="p-6">
-                        <div className="flex items-center justify-between gap-6">
-                            <div className="space-y-1">
-                                <p className="text-sm font-medium">Appearance Mode</p>
-                                <p className="text-xs text-muted-foreground">Select between Light, Dark, or System default theme.</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
             </div>
 
                 <Card className="bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden rounded-2xl pt-0 hover-premium-lift hover:shadow-md hover:border-border/60 transition-all duration-300">
@@ -567,7 +542,7 @@ export default function SettingsPage() {
                         </div>
                     </div>
                 </CardHeader>
-                 <CardContent className="p-6 space-y-4">
+                 <CardContent className="pb-6 space-y-4">
                     <div className="bg-primary/5 border border-primary/15 p-4 rounded-xl">
                         <div className="flex items-center justify-between mb-2">
                             <h4 className="font-bold text-primary text-sm">Available Placeholders</h4>

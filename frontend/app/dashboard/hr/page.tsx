@@ -51,7 +51,7 @@ const DashboardChart = dynamic(
     ssr: false,
     loading: () => (
       <div className="h-[300px] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-8 w-10 border-b-2 border-primary"></div>
       </div>
     )
   }
@@ -96,6 +96,7 @@ export default function HRDashboard() {
   
   const [jobFilter, setJobFilter] = useState('all')
   const [debouncedSearch, setDebouncedSearch] = useState(filters.search)
+  const [chartType, setChartType] = useState<'bar' | 'funnel'>('bar')
 
   const { data: dashboardData, error: dashboardError, isLoading: dashboardLoading } = useSWR<DashboardData>(
     `/api/analytics/dashboard?${new URLSearchParams({
@@ -309,25 +310,35 @@ export default function HRDashboard() {
       </div>
 
       {/* Charts & Tables Section */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div className="flex flex-row gap-4 ">
 
-        {/* Chart Section */}
-        <div className="lg:col-span-2 animate-in fade-in duration-500 delay-300">
-          <Card className="h-full pt-0 overflow-hidden">
+        {/* Chart Section */} 
+        <div className="w-[73%] animate-in fade-in duration-500 delay-300">
+          <Card className="h-full pt-0 overflow-hidden pb-5">
             <CardHeader className="bg-muted/35 border-b border-border/60 pb-4 pt-5">
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle >Application Pipeline</CardTitle>
                   <CardDescription className="text-muted-foreground">Distribution of candidates by status</CardDescription>
                 </div>
-                <div className="p-2 bg-primary/10 text-primary rounded-md">
-                  <TrendingUp className="h-5 w-5" />
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setChartType(prev => prev === 'bar' ? 'funnel' : 'bar')}
+                    className="h-9 px-3 text-xs"
+                  >
+                    {chartType === 'bar' ? 'Show Funnel' : 'Show Bar'}
+                  </Button>
+                  <div className="p-2 bg-primary/10 text-primary rounded-md">
+                    <TrendingUp className="h-5 w-5" />
+                  </div>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="h-[300px] w-full">
-                <DashboardChart data={chartData} />
+                <DashboardChart data={chartData} type={chartType} />
               </div>
             </CardContent>
           </Card>
@@ -335,12 +346,12 @@ export default function HRDashboard() {
         </div>
 
         {/* Recent Activity / Quick Actions */}
-        <div className="space-y-6 animate-in fade-in duration-500 delay-500">
-          <Card className="pt-0 overflow-hidden">
-            <CardHeader className="bg-muted/35 border-b border-border/60 pb-4 pt-5">
+        <div className="w-[27%] animate-in fade-in duration-500 delay-500">
+          <Card className="overflow-hidden">
+            <CardHeader className="bg-muted/35 border-b border-border/60 pt-5 pb-5">
               <CardTitle >Quick Actions</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 pt-6 stagger-children">
+            <CardContent className="space-y-4 py-5 stagger-children">
               <ActionButton href="/dashboard/hr/applications" label="Review Applications" />
               <ActionButton href="/dashboard/hr/pipeline" label="Hiring Pipeline" />
               <ActionButton href="/dashboard/hr/reports" label="View Reports" />
@@ -359,7 +370,7 @@ export default function HRDashboard() {
 const StatsCard = React.memo(({ title, subtitle, value, icon: Icon, color, bg, isInteractive = false }: any) => {
   return (
     <Card className={cn(
-      "group overflow-hidden",
+      "group overflow-hidden py-3",
       isInteractive && "hover-premium-lift cursor-pointer active:scale-[0.98] transition-transform duration-200"
     )}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

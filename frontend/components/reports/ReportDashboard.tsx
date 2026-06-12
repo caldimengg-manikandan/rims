@@ -246,7 +246,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
 
         <TabsContent value="detailed" className="space-y-4 animate-in fade-in slide-in-from-bottom-8 duration-700 ease-out fill-mode-both delay-300">
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 gap-4 stagger-children">
               {filteredReports.length > 0 ? (
                 filteredReports.map((report: Report) => (
                   <ReportCard
@@ -285,7 +285,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                     <TableHead className="text-center">Suggestion</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="stagger-children">
                   {filteredReports.map((report: Report) => (
                     <TableRow
                       key={report.id}
@@ -376,13 +376,13 @@ export const ReportDashboard = React.memo(function ReportDashboard({
           {metrics.total > 0 ? (
             <Card className="overflow-hidden">
               <CardHeader className="pb-2">
-                <CardTitle className="text-xl flex items-center gap-2">
+                <CardTitle className="text-xl pt-4 flex items-center gap-2">
                   <BarChart className="h-5 w-5 text-primary" />
                   Overview & Analysis
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-col lg:flex-row gap-8 items-start py-4">
+                <div className="flex flex-col lg:flex-row gap-5 lg:gap-8 items-start py-2">
                   <div className="flex-1 w-full h-[280px] relative">
                     <StatusChart data={[
                       { name: 'Selected', value: metrics.selected, color: '#10b981' },

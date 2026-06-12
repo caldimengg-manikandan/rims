@@ -229,7 +229,7 @@ export default function ApprovalsPage() {
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody className="stagger-children">
                 {hrUsers.map((hrUser) => (
                   <TableRow key={hrUser.id} className="border-b border-border/10 last:border-b-0 premium-table-row cursor-pointer">
                     <TableCell>{hrUser.id}</TableCell>
@@ -317,7 +317,7 @@ export default function ApprovalsPage() {
       </Card>
 
       <Dialog open={!!confirmAction} onOpenChange={() => setConfirmAction(null)}>
-        <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-card/45 backdrop-blur-xl shadow-2xl p-6">
+        <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-background/95 backdrop-blur-xl shadow-2xl p-6">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Confirm Action</DialogTitle>
             <DialogDescription className="text-base">{confirmAction?.message}</DialogDescription>
@@ -331,7 +331,7 @@ export default function ApprovalsPage() {
 
       {/* Password Reset OTP Confirmation Dialog */}
       <Dialog open={!!otpConfirmUser} onOpenChange={() => setOtpConfirmUser(null)}>
-        <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-card/45 backdrop-blur-xl shadow-2xl p-6">
+        <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-background/95 backdrop-blur-xl shadow-2xl p-6">
           <DialogHeader className="space-y-3">
             <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center border border-primary/20">
               <UserCheck className="h-6 w-6 text-primary" />

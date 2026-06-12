@@ -137,7 +137,7 @@ export default function DashboardLayout({
       <AppSidebar />
 
           {/* Right panel: flex-1 min-h-0 so it shrinks properly; overflow-hidden clips children */}
-          <div className="flex-1 min-h-0 flex flex-col relative z-10 transition-all duration-300 overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col relative z-10 transition-all duration-400 ease-[cubic-bezier(0.75,0,0.25,1)] overflow-hidden">
             {/* Decorative glow blobs — purely cosmetic */}
             {/* Single scroll zone - this is the ONLY element that scrolls */}
             <div className="flex-1 min-h-0 px-4 py-5 sm:px-5 md:px-7 md:py-7 overflow-y-auto overflow-x-hidden scrollbar-premium">

@@ -281,7 +281,7 @@ export default function HRTicketsPage() {
                         <div className="col-span-3">Feedback</div>
                         <div className="col-span-1 text-right">Date</div>
                     </div>
-                    <div className="divide-y divide-border/50">
+                    <div className="divide-y divide-border/50 stagger-children">
                         {feedbacks.map((fb) => (
                             <Tooltip key={fb.id}>
                                 <TooltipTrigger asChild>
@@ -329,7 +329,7 @@ export default function HRTicketsPage() {
                         <div className="col-span-2 text-center">Status</div>
                         <div className="col-span-1 text-right">Date</div>
                     </div>
-                    <div className="divide-y divide-border/50">
+                    <div className="divide-y divide-border/50 stagger-children">
                         {tickets.map((ticket) => (
                             <div
                                 key={ticket.id}
@@ -440,7 +440,7 @@ export default function HRTicketsPage() {
                     setHrResponse('')
                 }
             }}>
-                <DialogContent className="max-w-5xl w-[95vw] sm:w-[90vw] bg-card/45 backdrop-blur-xl border border-border/80 shadow-2xl p-0 overflow-hidden rounded-3xl">
+                <DialogContent className="max-w-5xl w-[95vw] sm:w-[90vw] bg-background/95 backdrop-blur-xl border border-border/80 shadow-2xl p-0 overflow-hidden rounded-3xl">
                     <DialogHeader className="p-6 pb-0">
                         <DialogTitle className="text-2xl font-black tracking-tight flex items-center gap-2">
                             Ticket Details
@@ -633,7 +633,7 @@ export default function HRTicketsPage() {
             </Dialog>
             {/* Feedback Details Dialog */}
             <Dialog open={!!selectedFeedback} onOpenChange={(open) => !open && setSelectedFeedback(null)}>
-                <DialogContent className="max-w-xl bg-card/45 backdrop-blur-xl border border-border/80 shadow-2xl p-0 overflow-hidden rounded-3xl">
+                <DialogContent className="max-w-xl bg-background/95 backdrop-blur-xl border border-border/80 shadow-2xl p-0 overflow-hidden rounded-3xl">
                     <DialogHeader className="p-6 pb-2">
                         <DialogTitle className="text-2xl font-black tracking-tight flex items-center gap-2">
                             Candidate Feedback

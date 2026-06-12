@@ -115,7 +115,7 @@ export default function PipelineIndexPage() {
                             <TableHead className="font-bold text-center">Action</TableHead>
                         </TableRow>
                     </TableHeader>
-                    <TableBody>
+                    <TableBody className="stagger-children">
                         {paginatedJobs.map((job) => (
                             <TableRow 
                                 key={job.id} 

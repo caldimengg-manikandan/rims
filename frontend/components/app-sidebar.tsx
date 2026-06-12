@@ -149,7 +149,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                     onClick={toggleSidebar}
                                     className="h-8 w-8 text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-accent rounded-xl hover:scale-110 active:scale-95 transition-all duration-200"
                                 >
-                                    <PanelRight className="h-4 w-4" />
+                                    <PanelLeft className="h-4 w-4 transition-transform duration-300 rotate-180" />
                                 </Button>
                             </TooltipTrigger>
                             <TooltipContent side="right">
@@ -163,8 +163,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             onClick={toggleSidebar}
                             className="h-8 w-8 text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-accent rounded-xl hover:scale-110 active:scale-95 transition-all duration-200"
                         >
-                            <PanelLeft className="h-4 w-4 group-data-[collapsible=icon]:hidden" />
-                            <PanelRight className="h-4 w-4 hidden group-data-[collapsible=icon]:block" />
+                            <PanelLeft className="h-4 w-4 transition-transform duration-300" />
                         </Button>
                     )}
                 </div>

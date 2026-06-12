@@ -324,7 +324,7 @@ export default function HRApplicationDetailPage() {
     return (
         <div className=" space-y-5 max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* ─── Candidate Info Card ───────────────────────────────── */}
-            <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] bg-gradient-to-br from-card/30 to-muted/10 relative overflow-hidden">
+            <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] bg-gradient-to-br from-card/30 to-muted/10 py-3 relative overflow-hidden">
                 <div className="absolute top-4 right-4 z-10 md:top-6 md:right-6">
                     <Badge className={`px-4 py-1.5 text-xs font-bold uppercase border shadow-sm whitespace-nowrap ${statusInfo.color}`}>
                         {statusInfo.label}
@@ -361,7 +361,7 @@ export default function HRApplicationDetailPage() {
                                 </div>
                             </div>
                         )}
-                        <div className="text-center md:text-left space-y-1">
+                        <div className="text-center md:text-left">
                             <CardTitle className="text-3xl font-extrabold tracking-tight text-foreground">{application.candidate_name}</CardTitle>
                             <CardDescription className="text-lg font-medium text-muted-foreground">{application.candidate_email}</CardDescription>
                             <div className="flex items-center justify-center md:justify-start gap-2 mt-2">
@@ -382,7 +382,7 @@ export default function HRApplicationDetailPage() {
                 <div className="xl:col-span-2 space-y-6">
                     <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
                         {/* ─── AI Resume Analysis ─── */}
-                        <Card className="bg-card/45 backdrop-blur-xl border border-border/80 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.02)] h-full flex flex-col pt-0 overflow-hidden">
+                        <Card className="bg-card/45 backdrop-blur-xl border border-border/80 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.02)] h-full flex flex-col pb-5 pt-0 overflow-hidden">
                             <CardHeader className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40 pt-6 pb-4">
                                 <CardTitle className="text-lg flex flex-wrap items-center gap-2 font-bold text-foreground">
                                     <FileText className="h-5 w-5 text-primary" />
@@ -754,7 +754,7 @@ export default function HRApplicationDetailPage() {
                             <CardTitle className="text-sm font-bold uppercase tracking-widest text-muted-foreground">HR Notes</CardTitle>
                             {!isEditingNotes && <Button variant="ghost" size="sm" className="active:scale-[0.98]" onClick={() => setIsEditingNotes(true)}><Edit2 className="h-4 w-4" /></Button>}
                         </CardHeader>
-                        <CardContent>
+                        <CardContent className="pb-5">
                             {isEditingNotes ? (
                                 <div className="space-y-3">
                                     <Textarea value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} placeholder="Add notes..." className="min-h-[120px] bg-background/50 border border-input rounded-xl hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all duration-200" />

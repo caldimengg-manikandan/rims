@@ -111,7 +111,7 @@ class AnalyticsService:
                 'screened': 'Screened',
                 'interview_scheduled': 'Interview scheduled',
                 'interview_completed': 'Interview completed',
-                'review_later': 'Interview completed',  # treated same as completed
+                'review_later': 'Review Later',  
                 'physical_interview': 'Physical Interview',
                 'offer_sent': 'Offer Sent',
                 'hired': 'Hired',
@@ -119,12 +119,12 @@ class AnalyticsService:
                 'rejected': 'Rejected'
             }
             
-            # Strict display order – exactly the 6 required stages
+            # The 10 stages for the pipeline chart
             CHART_ORDER = [ 
-                'Applied', 'Screened', 'Interview scheduled', 'Interview completed',
-                'Physical Interview', 'Hired', 'Offer Sent', 'Onboarded', 'Rejected'
+                'Applied', 'Screened', 'Interview scheduled', 'Interview completed', 
+                'Review Later', 'Physical Interview', 'Hired', 'Offer Sent', 'Onboarded', 'Rejected'
             ]
-            
+
             # Initialize with 0s so all bars always appear
             counts = {name: 0 for name in CHART_ORDER}
             for stat, count in pipeline_results:
@@ -243,9 +243,9 @@ class AnalyticsService:
         Get count of candidates in each stage for a specific job (Point 12).
         """
         stages = [
-            'applied', 'screened', 'aptitude_round', 'ai_interview', 'interview_completed',
-            'review_later', 'physical_interview', 'pending_approval', 'offer_sent', 
-            'accepted', 'hired', 'onboarded', 'rejected'
+            'applied', 'screened', 'interview_completed',
+            'review_later', 'physical_interview', 'offer_sent', 
+            'hired', 'onboarded', 'rejected'
         ]
         # Calculate all stage counts in a single GROUP BY query
         results = self.db.query(

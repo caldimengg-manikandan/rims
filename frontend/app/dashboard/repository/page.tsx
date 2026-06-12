@@ -424,7 +424,7 @@ function SetFormModal({ open, onClose, onSaved, initial, sets }: SetFormProps) {
 
     return (
         <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-            <DialogContent className="w-[95vw] sm:max-w-[80vw] max-h-[90vh] overflow-y-auto bg-card/45 backdrop-blur-xl border border-border/80 shadow-2xl rounded-3xl p-6 md:p-8 scrollbar-premium">
+            <DialogContent className="w-[95vw] sm:max-w-[80vw] max-h-[90vh] overflow-y-auto bg-background/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-3xl p-6 md:p-8 scrollbar-premium">
                 <DialogHeader>
                     <DialogTitle className="text-lg font-bold">
                         {isEdit ? 'Edit Question Set' : 'Create New Question Set'}
@@ -833,7 +833,7 @@ export default function RepositoryPage() {
                                     <TableHead className="font-bold text-center pr-2">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
-                            <TableBody>
+                            <TableBody className="stagger-children">
                                 {paginatedSets.map((set) => (
                                     <TableRow key={set.id} className="premium-table-row border-b border-border/10 last:border-b-0 group">
                                         <TableCell className="py-4">

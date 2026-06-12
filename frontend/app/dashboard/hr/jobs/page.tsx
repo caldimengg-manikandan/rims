@@ -291,7 +291,7 @@ export default function HRJobsPage() {
                         <div className="col-span-2 text-center">Actions</div>
                     </div>
 
-                    <div className="divide-y divide-border/50">
+                    <div className="divide-y divide-border/50 stagger-children">
                         {paginatedJobs.map((job, index) => (
                             <div
                                 key={job.id}
@@ -490,7 +490,7 @@ export default function HRJobsPage() {
 
             {/* Confirm Dialog */}
             <Dialog open={!!confirmAction} onOpenChange={() => setConfirmAction(null)}>
-                <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-card/45 backdrop-blur-xl shadow-2xl p-6">
+                <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-background/95 backdrop-blur-xl shadow-2xl p-6">
                     <DialogHeader>
                         <DialogTitle className="text-xl font-bold">Confirm Action</DialogTitle>
                         <DialogDescription className="pt-2 text-base leading-relaxed text-muted-foreground">

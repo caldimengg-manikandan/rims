@@ -324,9 +324,9 @@ export default function OnboardingPage() {
 
             {showStats && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-top-4 duration-500 ease-out stagger-children">
-                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-blue-500/5 to-primary/5 border-l-4 border-l-blue-500/50">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border py-3 border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-blue-500/5 to-primary/5 border-l-4 border-l-blue-500/50">
+                        <CardHeader className="">
+                            <CardTitle className="text-sm font-bold flex items-center gap-1">
                                 <FileText className="h-4 w-4 text-blue-500" />
                                 Pending Offers
                             </CardTitle>
@@ -340,9 +340,9 @@ export default function OnboardingPage() {
                             <p className="text-xs text-muted-foreground mt-1">Action required: send letters</p>
                         </CardContent>
                     </Card>
-                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-amber-500/5 to-amber-600/5 border-l-4 border-l-amber-500/50">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border py-3 border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-amber-500/5 to-amber-600/5 border-l-4 border-l-amber-500/50">
+                        <CardHeader className="">
+                            <CardTitle className="text-sm font-bold flex items-center gap-1">
                                 <Calendar className="h-4 w-4 text-amber-500" />
                                 Upcoming Joinings (7d)
                             </CardTitle>
@@ -372,9 +372,9 @@ export default function OnboardingPage() {
                             <p className="text-xs text-muted-foreground mt-1">Upcoming in next 7 days</p>
                         </CardContent>
                     </Card>
-                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-emerald-500/5 to-emerald-600/5 border-l-4 border-l-emerald-500/50">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl py-3 border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-emerald-500/5 to-emerald-600/5 border-l-4 border-l-emerald-500/50">
+                        <CardHeader className="">
+                            <CardTitle className="text-sm font-bold flex items-center gap-1">
                                 <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                                 Onboarded This Month
                             </CardTitle>
@@ -397,8 +397,8 @@ export default function OnboardingPage() {
 
 
             <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden pt-0">
-                <CardHeader className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40 pb-4 pt-6">
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <CardHeader className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40  pt-4">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-0">
                         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
                             <div className="relative flex-1 max-w-md">
                                 <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10 pointer-events-none" />
@@ -480,7 +480,7 @@ export default function OnboardingPage() {
                                 <TableHead className="font-bold text-right pr-6">Action</TableHead>
                             </TableRow>
                         </TableHeader>
-                        <TableBody>
+                        <TableBody className="stagger-children">
                             {isLoading ? (
                                 <TableRow>
                                     <TableCell colSpan={6} className="h-48 text-center align-middle">
@@ -787,7 +787,7 @@ export default function OnboardingPage() {
             )}
 
             <Dialog open={isApproveOpen} onOpenChange={setIsApproveOpen}>
-                <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-card/45 backdrop-blur-xl shadow-2xl p-6">
+                <DialogContent className="max-w-md rounded-3xl border border-border/80 bg-background/95 backdrop-blur-xl shadow-2xl p-6">
                     <DialogHeader className="space-y-2">
                         <DialogTitle className="text-xl font-bold">Finalize Offer Approval</DialogTitle>
                         <DialogDescription className="text-sm text-muted-foreground leading-normal">
@@ -808,7 +808,7 @@ export default function OnboardingPage() {
             </Dialog>
 
             <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
-                <DialogContent className="max-w-5xl h-[90vh] flex flex-col p-0 overflow-hidden border border-border/80 bg-card/45 backdrop-blur-xl shadow-2xl rounded-3xl">
+                <DialogContent className="max-w-5xl h-[90vh] flex flex-col p-0 overflow-hidden border border-border/80 bg-background/95 backdrop-blur-xl shadow-2xl rounded-3xl">
                     <DialogHeader className="p-6 border-b bg-muted/30">
                         <div className="flex items-center justify-between gap-4">
                             <div>

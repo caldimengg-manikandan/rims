@@ -104,7 +104,7 @@ export default function ProfilePage() {
                                     </div>
                                 </button>
                             </DialogTrigger>
-                            <DialogContent className="sm:max-w-[500px] rounded-3xl border border-border/80 bg-card/45 backdrop-blur-xl shadow-2xl p-6">
+                            <DialogContent className="sm:max-w-[500px] rounded-3xl border border-border/80 bg-background/95 backdrop-blur-xl shadow-2xl p-6">
                                 <DialogHeader>
                                     <DialogTitle>Customize Profile Logo</DialogTitle>
                                     <DialogDescription>

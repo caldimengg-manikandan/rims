@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import useSWR from 'swr'
 import { fetcher } from '@/app/dashboard/lib/swr-fetcher'
@@ -136,23 +137,29 @@ export default function LeaderboardPage() {
                                 <TableHead className="font-bold text-foreground text-center">AI Recommendation</TableHead>
                             </TableRow>
                         </TableHeader>
-                        <TableBody>
+                        <TableBody className="stagger-children">
                             {paginatedRanked.map((cand, index) => {
                                 const actualRank = (rankingPage - 1) * pageSize + index + 1
                                 return (
                                     <TableRow key={cand.id} className="premium-table-row border-b border-border/20 last:border-b-0 py-4 h-16">
                                         <TableCell className="font-medium align-middle">
-                                            <div className="flex items-center gap-3 pl-2">
+                                            <div className="flex items-center  gap-3 pl-2">
                                                 {getRankIcon(actualRank)}
                                             </div>
                                         </TableCell>
                                         <TableCell className="align-middle">
-                                            <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                            
+                                            <Link 
+                                                href={`/dashboard/hr/applications/${cand.id}`} 
+                                                className="flex items-center gap-3 group cursor-pointer"
+                                            >
+                                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                                                     <User className="h-4 w-4 text-primary" />
                                                 </div>
-                                                <span className="font-semibold text-foreground">{cand.candidate_name}</span>
-                                            </div>
+                                                <span className="font-semibold text-foreground group-hover:text-primary transition-colors">
+                                                    {cand.candidate_name}
+                                                </span>
+                                            </Link>
                                         </TableCell>
                                         <TableCell className="align-middle capitalize text-muted-foreground font-medium">
                                             {cand.status.replace(/_/g, ' ')}

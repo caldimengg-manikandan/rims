@@ -930,18 +930,7 @@ def get_filtered_interviews(
             ))
         elif status_lower == "rejected":
             query = query.filter(Application.status == 'rejected')
-        elif status_lower == "not_started":
-            # Priority: If interview exists, must be not_started. If not, application must be early stage.
-            query = query.filter(or_(
-                Interview.status == 'not_started',
-                and_(Interview.id == None, Application.status.in_(['applied', 'screened']))
-            ))
-        elif status_lower == "in_progress":
-            # Priority: If interview exists, must be in_progress. If not, application must be in-progress stage.
-            query = query.filter(or_(
-                Interview.status == 'in_progress',
-                and_(Interview.id == None, Application.status.in_(['aptitude_round', 'ai_interview', 'physical_interview']))
-            ))
+
         else:
             # Fallback for any other specific status (e.g., 'terminated', 'cancelled')
             query = query.filter(or_(

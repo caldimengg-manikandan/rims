@@ -592,7 +592,7 @@ export default function ReportsPage() {
 
       {/* Question Detail Modal */}
       <Dialog open={!!selectedQuestion} onOpenChange={(open) => !open && setSelectedQuestion(null)}>
-        <DialogContent className="w-full md:!max-w-[35vw] md:!w-[35vw] max-h-[90vh] overflow-y-auto bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_20px_50px_rgba(0,0,0,0.15)] p-6 rounded-3xl scrollbar-premium">
+        <DialogContent className="w-full md:!max-w-[35vw] md:!w-[35vw] max-h-[90vh] overflow-y-auto bg-background/95 backdrop-blur-xl border border-border/80 shadow-[0_20px_50px_rgba(0,0,0,0.15)] p-6 rounded-3xl scrollbar-premium">
           <DialogHeader>
             <DialogTitle className="text-2xl font-bold">Detailed Question Analysis</DialogTitle>
             <DialogDescription>In-depth review of the candidate's response.</DialogDescription>
@@ -729,7 +729,7 @@ export default function ReportsPage() {
 
       {/* FULL VIEW MODAL FOR REPORT */}
       <Dialog open={!!viewingReport} onOpenChange={(open) => !open && setViewingReport(null)}>
-        <DialogContent className="w-[80vw] sm:max-w-[80vw] lg:w-[66vw] lg:max-w-[66vw] h-[85vh] lg:h-[80vh] flex flex-col p-6 overflow-hidden bg-card/45 backdrop-blur-xl border border-border/80 shadow-2xl rounded-3xl">
+        <DialogContent className="w-[80vw] sm:max-w-[80vw] lg:w-[66vw] lg:max-w-[66vw] h-[85vh] lg:h-[80vh] flex flex-col p-6 overflow-hidden bg-background/95 backdrop-blur-xl border border-border/80 shadow-2xl rounded-3xl">
           {viewingReport && (
             <>
               <DialogHeader className="mb-4">
