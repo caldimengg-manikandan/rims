@@ -78,6 +78,10 @@ _REQUIRED_COLUMNS = [
     ("users", "otp_locked_until", "TIMESTAMP WITH TIME ZONE"),
     # Disposable email detection
     ("applications", "is_disposable_email", "BOOLEAN DEFAULT FALSE"),
+    # Enterprise Proctoring Extensions
+    ("interview_monitoring_events", "is_false_positive", "BOOLEAN DEFAULT FALSE"),
+    ("interview_monitoring_events", "details", "TEXT"),
+    ("interviews", "risk_score", "FLOAT DEFAULT 0.0"),
 ]
 
 

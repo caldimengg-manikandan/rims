@@ -14,6 +14,7 @@ import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
 import '@tensorflow/tfjs-converter';
 import * as blazeface from '@tensorflow-models/blazeface';
+import * as faceLandmarksDetection from '@tensorflow-models/face-landmarks-detection';
 import {
   Loader2, ShieldCheck, ShieldAlert,
   UserCheck, Eye, BrainCircuit, CheckCircle2, Trophy, LogOut, CameraOff, AlertTriangle
@@ -27,7 +28,20 @@ const BLAZEFACE_MODEL_URL = '/calrims/models/blazeface/model.json';
 async function loadFaceDetector() {
   await tf.setBackend('webgl');
   await tf.ready();
-  return blazeface.load({ modelUrl: BLAZEFACE_MODEL_URL });
+  try {
+    const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+    const detector = await faceLandmarksDetection.createDetector(model, {
+      runtime: 'tfjs',
+      refineLandmarks: true,
+    });
+    console.info('[FaceCheck] FaceLandmarksDetection (FaceMesh) loaded successfully.');
+    return { type: 'facemesh', detector };
+  } catch (err) {
+    console.warn('[FaceCheck] Failed to load FaceMesh landmarks detector, falling back to BlazeFace:', err);
+    const detector = await blazeface.load({ modelUrl: BLAZEFACE_MODEL_URL });
+    console.info('[FaceCheck] BlazeFace fallback loaded successfully.');
+    return { type: 'blazeface', detector };
+  }
 }
 
 interface InterviewSessionProps {
@@ -66,6 +80,176 @@ function captureFrame(video: HTMLVideoElement | null): string | null {
   } catch (err) {
     console.error('Failed to capture frame snapshot:', err);
     return null;
+  }
+}
+
+// ─── IndexedDB video chunk helpers for resilience ───────────────────────────
+function getDBInstance(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || !window.indexedDB) {
+      reject(new Error('IndexedDB not supported'));
+      return;
+    }
+    const request = window.indexedDB.open('rims-proctoring-db', 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('video-chunks')) {
+        db.createObjectStore('video-chunks');
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveChunksToIndexedDB(interviewId: string, chunks: Blob[]) {
+  try {
+    const db = await getDBInstance();
+    const tx = db.transaction('video-chunks', 'readwrite');
+    const store = tx.objectStore('video-chunks');
+    store.put(chunks, interviewId);
+    await new Promise((resolve) => { tx.oncomplete = resolve; });
+  } catch (err) {
+    console.warn('Failed to save chunks to IndexedDB:', err);
+  }
+}
+
+async function loadChunksFromIndexedDB(interviewId: string): Promise<Blob[] | null> {
+  try {
+    const db = await getDBInstance();
+    const tx = db.transaction('video-chunks', 'readonly');
+    const store = tx.objectStore('video-chunks');
+    const request = store.get(interviewId);
+    return new Promise((resolve) => {
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => resolve(null);
+    });
+  } catch (err) {
+    return null;
+  }
+}
+
+async function clearChunksFromIndexedDB(interviewId: string) {
+  try {
+    const db = await getDBInstance();
+    const tx = db.transaction('video-chunks', 'readwrite');
+    const store = tx.objectStore('video-chunks');
+    store.delete(interviewId);
+    await new Promise((resolve) => { tx.oncomplete = resolve; });
+  } catch (err) {}
+}
+
+// ─── Brightness Calculation helper ───────────────────────────────────────────
+function getAverageBrightness(video: HTMLVideoElement): number {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 30;
+    canvas.height = 30;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 127;
+    ctx.drawImage(video, 0, 0, 30, 30);
+    const imgData = ctx.getImageData(0, 0, 30, 30);
+    const data = imgData.data;
+    let colorSum = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i+1];
+      const b = data[i+2];
+      const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+      colorSum += brightness;
+    }
+    return colorSum / (30 * 30);
+  } catch (e) {
+    return 127;
+  }
+}
+
+function calculateVariance(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+  return values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+}
+
+function computeFaceEmbedding(landmarks: number[][]): number[] {
+  const distances: number[] = [];
+  for (let i = 0; i < landmarks.length; i++) {
+    for (let j = i + 1; j < landmarks.length; j++) {
+      const dx = landmarks[i][0] - landmarks[j][0];
+      const dy = landmarks[i][1] - landmarks[j][1];
+      distances.push(Math.sqrt(dx * dx + dy * dy));
+    }
+  }
+  const magnitude = Math.sqrt(distances.reduce((sum, d) => sum + d * d, 0));
+  return distances.map(d => d / (magnitude || 1));
+}
+
+function cosineSimilarity(v1: number[], v2: number[]): number {
+  if (v1.length !== v2.length) return 0;
+  let dotProduct = 0;
+  for (let i = 0; i < v1.length; i++) {
+    dotProduct += v1[i] * v2[i];
+  }
+  return dotProduct;
+}
+
+async function computeHMAC(message: string, secret: string): Promise<string> {
+  try {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const messageData = encoder.encode(message);
+    const cryptoKey = await window.crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signatureBuffer = await window.crypto.subtle.sign(
+      "HMAC",
+      cryptoKey,
+      messageData
+    );
+    const signatureArray = Array.from(new Uint8Array(signatureBuffer));
+    return signatureArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    let h = 0;
+    for (let i = 0; i < message.length; i++) {
+      h = (h * 31 + message.charCodeAt(i)) & 0xFFFFFFFF;
+    }
+    return (h >>> 0).toString(16);
+  }
+}
+
+function detectPhoneHeuristic(video: HTMLVideoElement, topLeft: any, bottomRight: any): boolean {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 40;
+    canvas.height = 40;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+    ctx.drawImage(video, 0, 0, 40, 40);
+    const imgData = ctx.getImageData(0, 0, 40, 40);
+    const data = imgData.data;
+    
+    let phoneScore = 0;
+    for (let y = 5; y < 35; y++) {
+      for (let x = 5; x < 35; x++) {
+        const idx = (y * 40 + x) * 4;
+        const currentLuma = 0.299 * data[idx] + 0.587 * data[idx+1] + 0.114 * data[idx+2];
+        const rightLuma = 0.299 * data[idx+4] + 0.587 * data[idx+5] + 0.114 * data[idx+6];
+        const downLuma = 0.299 * data[((y+1)*40 + x)*4] + 0.587 * data[((y+1)*40 + x)*4+1] + 0.114 * data[((y+1)*40 + x)*4+2];
+        
+        const edgeX = Math.abs(currentLuma - rightLuma);
+        const edgeY = Math.abs(currentLuma - downLuma);
+        
+        if (edgeX > 40 || edgeY > 40) {
+          phoneScore++;
+        }
+      }
+    }
+    return phoneScore > 120;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -196,6 +380,22 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const isSubmittingRef = useRef(false);
   const startSessionVideoRecordingRef = useRef<((stream: MediaStream) => void) | null>(null);
 
+  const faceHistoryRef = useRef<{noseX: number, noseY: number, eyeToEye: number, brightness: number, timestamp: number}[]>([]);
+  const initialFaceFeaturesRef = useRef<{ eyeToEye: number, noseToEye: number, eyeNoseRatio: number } | null>(null);
+  const gazeDeviationStartRef = useRef<number | null>(null);
+  const lastBrowserIntegrityCheckRef = useRef<number>(0);
+  const lastPhoneCheckRef = useRef<number>(0);
+  const lastBlinkRef = useRef<number>(0);
+  const voiceCoachingDurationRef = useRef<number>(0);
+  const lastVoiceCoachingLogRef = useRef<number>(0);
+  const isListeningRef = useRef(false);
+  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
+  const objectDetectorRef = useRef<any>(null);
+
+  // ── heartbeat tracking (tamper-resistance) ──
+  const heartbeatSeqRef = useRef<number>(0);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // ── completion/feedback state ──
   const [showAllDoneModal, setShowAllDoneModal] = useState(false);
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
@@ -204,6 +404,67 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
 
   // ─── SECURITY VIOLATION ────────────────────────────────────────────────────
   const terminationSentRef = useRef(false);
+
+  const postMonitoringEvent = useCallback((
+    eventType: string,
+    confidenceScore: number,
+    video: HTMLVideoElement | null,
+    details?: string,
+    sequenceNumber?: number,
+  ): Promise<any> => {
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - sessionStartRef.current) / 1000));
+    const videoRefStr = `offset_${elapsedSeconds}s`;
+
+    const clientTimestamp = Date.now();
+    const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const secret = (typeof window !== 'undefined' ? sessionStorage.getItem('proctoring_secret') : null) || "rims_proctoring_secret_2026";
+    const tokenStr = token || "";
+    const raw_str = `${eventType}:${clientTimestamp}:${nonce}:${tokenStr}:${secret}`;
+
+    return computeHMAC(raw_str, secret).then((signature) => {
+      return fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/monitoring-events`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders(token),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          event_type: eventType,
+          confidence_score: confidenceScore,
+          frame_snapshot: captureFrame(video),
+          details: details,
+          video_reference: videoRefStr,
+          signature: signature,
+          client_timestamp: clientTimestamp,
+          nonce: nonce,
+          sequence_number: sequenceNumber,
+        }),
+      })
+        .then(async (res) => {
+          if (!res.ok) return null;
+          const data = await res.json().catch(() => null);
+          if (data && typeof data.strike_count === 'number') {
+            // Sync authoritative server strike count to local state
+            setFocusStrikes((prev) => {
+              const serverCount = data.strike_count as number;
+              if (serverCount !== prev) {
+                if (typeof window !== 'undefined') {
+                  sessionStorage.setItem(`strikes_${interviewId}`, serverCount.toString());
+                }
+              }
+              return serverCount;
+            });
+            // If the server revoked the token, force termination on the client
+            if (data.token_revoked === true && !terminationSentRef.current) {
+              terminationSentRef.current = true;
+              setIsTerminated(true);
+            }
+          }
+          return data;
+        })
+        .catch(() => null);
+    });
+  }, [interviewId, token]);
 
   const handleStrike = useCallback((reason: string, options?: { respectStartupGrace?: boolean }) => {
     if (!isStartedRef.current) return; // use ref — stable, no re-render dependency
@@ -220,20 +481,10 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         sessionStorage.setItem(`strikes_${interviewId}`, next.toString());
       }
 
-      // Capture the frame snapshot instantly when a violation happens
-      const snapshot = captureFrame(floatingVideoRef.current);
-
       // Record strike as a monitoring event to create a server-side audit trail
       const sanitizedReason = reason.replace(/\s+/g, '_').toLowerCase();
-      fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/monitoring-events`, {
-        method: 'POST',
-        headers: authHeaders(token),
-        body: JSON.stringify({
-          event_type: `focus_lost_strike_${next}_${sanitizedReason}`,
-          confidence_score: 0.0,
-          frame_snapshot: snapshot,
-        }),
-      }).catch((err) => console.error('Failed to post strike monitoring event:', err));
+      const eventType = `focus_lost_strike_${next}_${sanitizedReason}`;
+      postMonitoringEvent(eventType, 0.0, floatingVideoRef.current, JSON.stringify({ strikeNumber: next, reason }));
 
       if (next < 4) {
         toast.error(`Warning ${next}/3: ${reason}`, {
@@ -253,7 +504,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       }
       return next;
     });
-  }, [interviewId, token]); // NO isStarted dependency — uses isStartedRef instead
+  }, [interviewId, token, postMonitoringEvent]); // NO isStarted dependency — uses isStartedRef instead
 
   // ─── VIDEO UPLOAD ──────────────────────────────────────────────────────────
   const uploadVideo = useCallback(async (blob: Blob) => {
@@ -275,6 +526,22 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       console.error('Video upload failed:', err);
     }
   }, [interviewId]);
+
+  // Recovery: check for crashed recording chunks on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && interviewId) {
+      loadChunksFromIndexedDB(interviewId).then((savedChunks) => {
+        if (savedChunks && savedChunks.length > 0) {
+          console.log('[Resilience] Found recovered video chunks from a previous session crash. Uploading...');
+          const mimeType = savedChunks[0].type || 'video/webm';
+          const blob = new Blob(savedChunks, { type: mimeType });
+          uploadVideo(blob).then(() => {
+            clearChunksFromIndexedDB(interviewId);
+          }).catch(err => console.warn('Failed to upload recovered chunks:', err));
+        }
+      });
+    }
+  }, [interviewId, uploadVideo]);
 
   // ─── LOAD QUESTIONS (poll until ready) ────────────────────────────────────
   const loadCurrentQuestion = useCallback(async (questionNumber?: number) => {
@@ -756,12 +1023,16 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           if (!detectorRef.current) {
             detectorRef.current = await loadFaceDetector();
           }
+          if (!objectDetectorRef.current) {
+            const cocoSsd = await import('@tensorflow-models/coco-ssd');
+            objectDetectorRef.current = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+            console.info('[Proctoring] COCO-SSD object detector loaded.');
+          }
         } catch (modelErr) {
           console.warn(
-            '[FaceCheck] Face detector model failed to load during device check; continuing with camera/mic checks only.',
+            '[FaceCheck] Models failed to load during device check; continuing with fallback checks.',
             modelErr instanceof Error ? modelErr.message : modelErr
           );
-          detectorRef.current = null;
         }
 
         if (isAudioLive && activeStreamRef.current) {
@@ -791,6 +1062,28 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           activeStreamRef.current = stream;
         }
         
+        // Scan for virtual camera inputs
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const virtualCams = devices.filter(d => 
+            d.kind === 'videoinput' && 
+            (d.label.toLowerCase().includes('obs') || 
+             d.label.toLowerCase().includes('manycam') || 
+             d.label.toLowerCase().includes('virtual') || 
+             d.label.toLowerCase().includes('synthetic') ||
+             d.label.toLowerCase().includes('device-identification'))
+          );
+          if (virtualCams.length > 0) {
+            console.warn('[Proctoring] Virtual camera detected:', virtualCams.map(c => c.label));
+            postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
+              category: 'virtual_camera_detected',
+              devices: virtualCams.map(c => c.label)
+            }));
+          }
+        } catch (e) {
+          console.warn('Failed to enumerate devices:', e);
+        }
+
         // Ensure stream is bound to all relevant video elements
         if (sessionVideoRef.current) {
           sessionVideoRef.current.srcObject = stream;
@@ -814,6 +1107,30 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
             setIsCameraConnected(false);
             handleStrike('Camera hardware disconnected');
           };
+
+          // ─── VIRTUAL CAMERA DETECTION VIA TRACK CAPABILITIES ───
+          try {
+            const caps: any = typeof videoTrack.getCapabilities === 'function' ? videoTrack.getCapabilities() : {};
+            const settings: any = typeof videoTrack.getSettings === 'function' ? videoTrack.getSettings() : {};
+            
+            const hasStaticFps = caps.frameRate && (caps.frameRate.max === 0 || (caps.frameRate.min === caps.frameRate.max && caps.frameRate.max <= 5));
+            const isLowFps = settings.frameRate && settings.frameRate <= 5;
+            const isEmulated = caps.facingMode === undefined && caps.deviceId === undefined;
+            
+            if (hasStaticFps || isLowFps || isEmulated) {
+              console.warn('[Proctoring] Virtual camera track capabilities match:', { caps, settings });
+              postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
+                category: 'virtual_camera_detected',
+                details: 'Static framerate, missing standard device capabilities, or emulation signature detected.',
+                frameRateMax: caps.frameRate?.max,
+                frameRateMin: caps.frameRate?.min,
+                currentFrameRate: settings.frameRate,
+                facingMode: caps.facingMode
+              }));
+            }
+          } catch (capErr) {
+            console.warn('[Proctoring] Failed to audit track capabilities:', capErr);
+          }
         }
 
         // Only set up audio track handlers if we requested a new audio track
@@ -845,6 +1162,40 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                   if (volBar) {
                     volBar.style.width = Math.min(100, (avg / 64) * 100) + '%';
                   }
+
+                  // Voice Activity Detection (VAD) Speech-band extraction (bins 1 to 16)
+                  let speechSum = 0;
+                  let noiseSum = 0;
+                  const speechBins = 16;
+                  for (let i = 1; i <= speechBins && i < dataArray.length; i++) {
+                    speechSum += dataArray[i];
+                  }
+                  for (let i = speechBins + 1; i < dataArray.length; i++) {
+                    noiseSum += dataArray[i];
+                  }
+                  const avgSpeech = speechSum / speechBins;
+                  const avgNoise = noiseSum / Math.max(1, dataArray.length - speechBins - 1);
+                  const isSpeechDetected = avgSpeech > 25 && avgSpeech > avgNoise * 2.0;
+
+                  // Voice coaching / Speaker detection (audit-only)
+                  if (isSpeechDetected && !isListeningRef.current) {
+                    voiceCoachingDurationRef.current += 16.7;
+                    if (voiceCoachingDurationRef.current > 3000) {
+                      const now = Date.now();
+                      if (now - lastVoiceCoachingLogRef.current > 10000) {
+                        lastVoiceCoachingLogRef.current = now;
+                        postMonitoringEvent('voice_coaching_detected', 0.8, null, JSON.stringify({
+                          category: 'audio_energy_anomaly',
+                          averageVolume: avgSpeech,
+                          durationSeconds: 3
+                        }));
+                      }
+                      voiceCoachingDurationRef.current = 0;
+                    }
+                  } else {
+                    voiceCoachingDurationRef.current = Math.max(0, voiceCoachingDurationRef.current - 50);
+                  }
+
                   requestAnimationFrame(updateVolume);
                 };
                 updateVolume();
@@ -959,6 +1310,33 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       }
     }
   }, [isStarted, interviewId, token]);
+
+  // Remove duplicate postMonitoringEvent
+  const handleClipboardViolation = useCallback((type: 'copy' | 'paste' | 'cut') => {
+    toast.warning(`Clipboard operation (${type}) is disabled in this assessment.`, {
+      description: 'Your attempt has been logged for security review.',
+      duration: 5000,
+    });
+    postMonitoringEvent('clipboard_violation', 1.0, floatingVideoRef.current, JSON.stringify({ action: type }));
+  }, [postMonitoringEvent]);
+
+  // Global PrintScreen capture detector
+  useEffect(() => {
+    if (!isStarted) return;
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'PrintScreen') {
+        toast.warning('Screenshot capture attempt detected.', {
+          description: 'This event has been logged for security review.',
+          duration: 5000,
+        });
+        postMonitoringEvent('clipboard_violation', 1.0, floatingVideoRef.current, JSON.stringify({ action: 'printscreen_attempt' }));
+      }
+    };
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [isStarted, postMonitoringEvent]);
 
   const startSessionVideoRecording = useCallback((stream: MediaStream) => {
     // Initialize session video recorder
@@ -1076,22 +1454,17 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
 
     let checkCount = 0;
     const stream = activeStreamRef.current;
-    const postMonitoringEvent = (eventType: string, confidenceScore: number, video: HTMLVideoElement | null) => {
-      fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/monitoring-events`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          event_type: eventType,
-          confidence_score: confidenceScore,
-          frame_snapshot: captureFrame(video),
-        }),
-      }).catch(() => {});
-    };
 
     startSessionVideoRecording(stream);
+
+    // ─── HEARTBEAT INTERVAL SETUP (MONOTONIC SEQ) ───
+    if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (!isStartedRef.current) return;
+      const currentSeq = heartbeatSeqRef.current;
+      heartbeatSeqRef.current += 1;
+      postMonitoringEvent('normal', 1.0, null, JSON.stringify({ category: 'heartbeat' }), currentSeq);
+    }, 5000);
 
     if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
     faceCheckIntervalRef.current = setInterval(async () => {
@@ -1139,9 +1512,59 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       }
       
       try {
-        const predictions = await detectorRef.current.estimateFaces(video, false, true);
-        const faceFound = predictions.length > 0;
+        // 1. Ambient lighting verification (Audit-only)
+        const brightness = getAverageBrightness(video);
+        if (brightness < 40) {
+          postMonitoringEvent('low_lighting', 0.0, video, JSON.stringify({ brightness }));
+        }
+
+        const detectorObj = detectorRef.current;
+        let rawPredictions: any[] = [];
+        if (detectorObj.type === 'facemesh') {
+          rawPredictions = await detectorObj.detector.estimateFaces(video, {
+            flipHorizontal: false,
+            staticImageMode: false
+          });
+        } else {
+          rawPredictions = await detectorObj.detector.estimateFaces(video, false, true);
+        }
+
+        const faceFound = rawPredictions.length > 0;
         setIsFaceDetected(faceFound);
+
+        let mappedPredictions: any[] = [];
+        if (faceFound) {
+          const pred = rawPredictions[0];
+          if (detectorObj.type === 'facemesh') {
+            const box = pred.box;
+            const keypoints = pred.keypoints;
+            
+            const rightEye = keypoints[33] || keypoints[0];
+            const leftEye = keypoints[263] || keypoints[0];
+            const nose = keypoints[4] || keypoints[0];
+            const mouth = keypoints[13] || keypoints[0];
+            const rightEar = keypoints[234] || keypoints[0];
+            const leftEar = keypoints[454] || keypoints[0];
+
+            mappedPredictions.push({
+              topLeft: [box.xMin, box.yMin],
+              bottomRight: [box.xMax, box.yMax],
+              probability: pred.score ?? 1.0,
+              landmarks: [
+                [rightEye.x, rightEye.y],
+                [leftEye.x, leftEye.y],
+                [nose.x, nose.y],
+                [mouth.x, mouth.y],
+                [rightEar.x, rightEar.y],
+                [leftEar.x, leftEar.y]
+              ]
+            });
+          } else {
+            mappedPredictions.push(pred);
+          }
+        }
+
+        const predictions = mappedPredictions;
         const faceQuality = predictions.length === 1 ? getFaceQuality(predictions[0], video) : null;
         const faceInFocus = Boolean(faceQuality?.inFocus);
         setIsFocusingOnMonitor(predictions.length === 1 && faceInFocus);
@@ -1149,7 +1572,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         if (predictions.length === 0) {
           postMonitoringEvent('face_not_detected', 0, video);
           handleStrike('No face detected', { respectStartupGrace: false });
-        } else if (predictions.length > 1) {
+        } else if (rawPredictions.length > 1) {
           postMonitoringEvent('multiple_people', 0, video);
           handleStrike('Multiple people detected', { respectStartupGrace: false });
         } else if (!faceInFocus) {
@@ -1157,12 +1580,290 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           handleStrike('Face not in focus', { respectStartupGrace: false });
         }
 
+        // Advanced Proctoring Heuristics (Audit-only)
+        if (predictions.length === 1) {
+          const pred = predictions[0];
+          if (pred && pred.landmarks) {
+            const nose = pred.landmarks[2];
+            const leftEye = pred.landmarks[1];
+            const rightEye = pred.landmarks[0];
+            if (nose && leftEye && rightEye) {
+              const noseX = nose[0];
+              const noseY = nose[1];
+              const leftEyeX = leftEye[0];
+              const leftEyeY = leftEye[1];
+              const rightEyeX = rightEye[0];
+              const rightEyeY = rightEye[1];
+              
+              const eyeToEye = Math.sqrt(Math.pow(leftEyeX - rightEyeX, 2) + Math.pow(leftEyeY - rightEyeY, 2));
+              const eyeMidX = (leftEyeX + rightEyeX) / 2;
+              const eyeMidY = (leftEyeY + rightEyeY) / 2;
+              const noseToEye = Math.sqrt(Math.pow(noseX - eyeMidX, 2) + Math.pow(noseY - eyeMidY, 2));
+              
+              // ─── IDENTITY VERIFICATION & DRIFT (Cosine Similarity landmarks embedding) ───
+              const landmarks = pred.landmarks.map((l: any) => [l[0], l[1]]);
+              const currentEmbedding = computeFaceEmbedding(landmarks);
+              
+              if (!initialFaceFeaturesRef.current) {
+                (initialFaceFeaturesRef as any).current = currentEmbedding;
+                console.log('[Proctoring] Reference face embedding registered.');
+              } else {
+                const refEmbedding = (initialFaceFeaturesRef as any).current;
+                const similarity = cosineSimilarity(refEmbedding, currentEmbedding);
+                if (similarity < 0.96) {
+                  postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
+                    category: 'identity_drift',
+                    description: 'Candidate replacement detected / face structure shift (Cosine Similarity anomaly)',
+                    similarity,
+                    threshold: 0.96
+                  }));
+                }
+              }
+
+              // ─── 3D HEAD POSE & GAZE ANOMALY DETECTION (Yaw, Pitch, Roll) ───
+              let yaw = 0;
+              let pitch = 0;
+              let roll = 0;
+
+              if (detectorObj.type === 'facemesh') {
+                const kps = rawPredictions[0].keypoints;
+                if (kps && kps.length > 362) {
+                  const eyeMidXMesh = (kps[133].x + kps[362].x) / 2;
+                  const eyeMidYMesh = (kps[133].y + kps[362].y) / 2;
+                  const eyeWidth = Math.abs(kps[133].x - kps[362].x) || 1;
+                  
+                  const noseOffset = kps[4].x - eyeMidXMesh;
+                  yaw = (noseOffset / eyeWidth) * 100;
+                  
+                  const faceHeight = Math.abs(kps[152].y - eyeMidYMesh) || 1;
+                  const noseOffsetVer = kps[4].y - eyeMidYMesh;
+                  pitch = ((noseOffsetVer / faceHeight) - 0.35) * 120;
+                  
+                  roll = Math.atan2(kps[362].y - kps[133].y, kps[362].x - kps[133].x) * (180 / Math.PI);
+                }
+              } else {
+                const distLeft = Math.abs(noseX - leftEyeX);
+                const distRight = Math.abs(noseX - rightEyeX);
+                const total = distLeft + distRight;
+                const mouthY = pred.landmarks[3][1];
+                
+                yaw = Math.asin(Math.max(-1, Math.min(1, (distLeft - distRight) / (total || 1)))) * (180 / Math.PI);
+                roll = Math.atan2(rightEyeY - leftEyeY, rightEyeX - leftEyeX) * (180 / Math.PI);
+                const verticalRatio = (noseY - eyeMidY) / (mouthY - eyeMidY || 1);
+                pitch = (verticalRatio - 0.45) * 90;
+              }
+              
+              let gazeDirection: 'Center' | 'Left' | 'Right' | 'Upward' | 'Downward' = 'Center';
+              if (yaw < -25) {
+                gazeDirection = 'Left';
+              } else if (yaw > 25) {
+                gazeDirection = 'Right';
+              } else if (pitch < -20) {
+                gazeDirection = 'Downward';
+              } else if (pitch > 20) {
+                gazeDirection = 'Upward';
+              }
+
+              if (gazeDirection !== 'Center') {
+                if (gazeDeviationStartRef.current === null) {
+                  gazeDeviationStartRef.current = Date.now();
+                }
+                const duration = (Date.now() - gazeDeviationStartRef.current) / 1000;
+                postMonitoringEvent('gaze_deviation', 0.0, video, JSON.stringify({
+                  direction: gazeDirection,
+                  duration,
+                  yaw: Math.round(yaw),
+                  pitch: Math.round(pitch),
+                  roll: Math.round(roll),
+                  confidence: faceQuality?.confidence ?? 1.0
+                }));
+              } else {
+                gazeDeviationStartRef.current = null;
+              }
+
+              // ─── HISTORY FOR PHOTO ATTACK & FROZEN FRAME ───
+              faceHistoryRef.current.push({
+                noseX,
+                noseY,
+                eyeToEye,
+                brightness,
+                timestamp: Date.now()
+              });
+              if (faceHistoryRef.current.length > 10) {
+                faceHistoryRef.current.shift();
+              }
+
+              if (faceHistoryRef.current.length >= 5) {
+                const noseXs = faceHistoryRef.current.map(h => h.noseX);
+                const noseYs = faceHistoryRef.current.map(h => h.noseY);
+                const brightnesses = faceHistoryRef.current.map(h => h.brightness);
+                
+                const noseXVar = calculateVariance(noseXs);
+                const noseYVar = calculateVariance(noseYs);
+                const brightnessVar = calculateVariance(brightnesses);
+                
+                if (noseXVar < 0.005 && noseYVar < 0.005) {
+                  postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
+                    category: 'static_image_detected',
+                    description: 'Zero micro-movements detected over consecutive frames. Likely a static photo/image attack.',
+                    noseXVar,
+                    noseYVar
+                  }));
+                }
+                
+                if (brightnessVar < 0.0001) {
+                  postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
+                    category: 'frozen_frame_detected',
+                    description: 'Camera frame brightness is completely static. Likely frozen frame or feed replication.',
+                    brightnessVar
+                  }));
+                }
+
+                // Blink & Eye Closure / Anti-Spoofing Detection
+                let isBlinkDetected = false;
+                const nowTime = Date.now();
+                if (detectorObj.type === 'facemesh') {
+                  const kps = rawPredictions[0].keypoints;
+                  if (kps && kps.length > 386) {
+                    const dist3D = (kp1: any, kp2: any) => {
+                      return Math.sqrt(
+                        Math.pow(kp1.x - kp2.x, 2) +
+                        Math.pow(kp1.y - kp2.y, 2) +
+                        Math.pow((kp1.z ?? 0) - (kp2.z ?? 0), 2)
+                      );
+                    };
+                    const dLeftV = dist3D(kps[159], kps[145]);
+                    const dLeftH = dist3D(kps[33], kps[133]);
+                    const earLeft = dLeftV / (dLeftH || 1);
+
+                    const dRightV = dist3D(kps[386], kps[374]);
+                    const dRightH = dist3D(kps[362], kps[263]);
+                    const earRight = dRightV / (dRightH || 1);
+
+                    const currentEAR = (earLeft + earRight) / 2;
+                    
+                    if (currentEAR < 0.18) {
+                      if (nowTime - lastBlinkRef.current > 4000) {
+                        lastBlinkRef.current = nowTime;
+                        isBlinkDetected = true;
+                        postMonitoringEvent('normal', 1.0, null, JSON.stringify({
+                          category: 'blink_detected',
+                          ear: parseFloat(currentEAR.toFixed(3)),
+                          duration: 0.15
+                        }));
+                      }
+                    }
+                  }
+                }
+
+                if (!isBlinkDetected && detectorObj.type !== 'facemesh') {
+                  const eyeDistances = faceHistoryRef.current.map(h => h.eyeToEye);
+                  const maxEyeDist = Math.max(...eyeDistances);
+                  const minEyeDist = Math.min(...eyeDistances);
+                  if (maxEyeDist - minEyeDist > 2) {
+                    if (nowTime - lastBlinkRef.current > 4000) {
+                      lastBlinkRef.current = nowTime;
+                      postMonitoringEvent('normal', 1.0, null, JSON.stringify({
+                        category: 'blink_detected',
+                        duration: 0.15
+                      }));
+                    }
+                  }
+                }
+
+                // Spoofing check: warn if no blink for >20 seconds
+                if (nowTime - lastBlinkRef.current > 20000 && nowTime - sessionStartRef.current > 25000) {
+                  postMonitoringEvent('liveness_violation', 0.8, video, JSON.stringify({
+                    category: 'no_blink_detected',
+                    description: 'No blink detected for over 20 seconds. Potential static photo/spoofing attack.'
+                  }));
+                  lastBlinkRef.current = nowTime - 10000;
+                }
+              }
+
+              // ─── MOBILE PHONE / TABLET OBJECT DETECTION (COCO-SSD / Fallback) ───
+              const now = Date.now();
+              if (now - lastPhoneCheckRef.current > 6000) {
+                lastPhoneCheckRef.current = now;
+                
+                let phoneDetected = false;
+                if (objectDetectorRef.current) {
+                  try {
+                    const predictionsObj = await objectDetectorRef.current.detect(video);
+                    const phonePrediction = predictionsObj.find((p: any) => 
+                      (p.class === 'cell phone' || p.class === 'phone' || p.class === 'mobile phone' || p.class === 'tablet') &&
+                      p.score > 0.45
+                    );
+                    if (phonePrediction) {
+                      phoneDetected = true;
+                      postMonitoringEvent('liveness_violation', phonePrediction.score, video, JSON.stringify({
+                        category: 'mobile_phone_detected',
+                        description: `Object detector identified a ${phonePrediction.class} with ${Math.round(phonePrediction.score * 100)}% confidence.`,
+                        bbox: phonePrediction.bbox
+                      }));
+                    }
+                  } catch (objErr) {
+                    console.warn('Object detection failed:', objErr);
+                  }
+                }
+                
+                if (!phoneDetected) {
+                  const hasPhone = detectPhoneHeuristic(video, pred.topLeft, pred.bottomRight);
+                  if (hasPhone) {
+                    postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
+                      category: 'mobile_phone_detected',
+                      description: 'Candidate matches patterns consistent with phone/tablet usage near face (heuristic fallback).'
+                    }));
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // ─── BROWSER INTEGRITY & DEVTOOLS DETECTION (every 9 seconds) ───
+        const timeNow = Date.now();
+        if (timeNow - lastBrowserIntegrityCheckRef.current > 9000) {
+          lastBrowserIntegrityCheckRef.current = timeNow;
+          
+          const isWebdriver = navigator.webdriver || 
+                              (typeof document !== 'undefined' && document.documentElement.getAttribute('webdriver') !== null) ||
+                              '__webdriver_evaluate' in window ||
+                              '__selenium_evaluate' in window ||
+                              '__puppeteer_evaluate' in window;
+                              
+          const userAgentLower = navigator.userAgent.toLowerCase();
+          const isHeadless = userAgentLower.includes('headless') || 
+                             userAgentLower.includes('puppeteer') || 
+                             userAgentLower.includes('selenium') || 
+                             userAgentLower.includes('playwright');
+          
+          const widthThreshold = window.outerWidth - window.innerWidth > 160;
+          const heightThreshold = window.outerHeight - window.innerHeight > 160;
+          const isDevToolsOpen = widthThreshold || heightThreshold;
+          
+          if (isWebdriver || isHeadless || isDevToolsOpen) {
+            postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
+              category: 'browser_integrity_violation',
+              details: {
+                webdriver: isWebdriver,
+                headless: isHeadless,
+                devtools: isDevToolsOpen,
+                dimensions: {
+                  inner: `${window.innerWidth}x${window.innerHeight}`,
+                  outer: `${window.outerWidth}x${window.outerHeight}`
+                }
+              }
+            }));
+          }
+        }
+
         checkCount++;
         if (checkCount >= 5) {
           checkCount = 0;
           const statusType = predictions.length === 0
             ? 'face_not_detected'
-            : predictions.length > 1
+            : rawPredictions.length > 1
               ? 'multiple_people'
               : faceInFocus
                 ? 'normal'
@@ -1177,14 +1878,14 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     }, 3000);
 
     const handleVisibility = () => {
-      if (!isStartedRef.current) return; // Only detect during active interview
+      if (!isStartedRef.current) return;
       if (document.hidden) {
         console.log('[Proctoring] Tab switch detected');
         handleStrike('Tab switched');
       }
     };
     const handleBlur = () => {
-      if (!isStartedRef.current) return; // Only detect during active interview
+      if (!isStartedRef.current) return;
       console.log('[Proctoring] Window focus lost');
       handleStrike('Window focus lost');
     };
@@ -1196,11 +1897,12 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
       if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
       if (videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
         try { videoRecorderRef.current.stop(); } catch (e) {}
       }
     };
-  }, [isStarted, interviewId, token, handleStrike, uploadVideo]);
+  }, [isStarted, interviewId, token, handleStrike, uploadVideo, postMonitoringEvent]);
 
   if (isTerminated) {
     return (
@@ -1500,6 +2202,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
               initialValue={currentQuestion?.answer_text}
               isSubmitted={completedQuestions.includes(currentQuestionNumber)}
               questionId={currentQuestion?.id}
+              onClipboardViolation={handleClipboardViolation}
             />
 
             {/* Status bar */}

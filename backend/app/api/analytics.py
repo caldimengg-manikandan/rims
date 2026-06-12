@@ -790,6 +790,7 @@ def get_interview_reports(
                     "candidate_profile": candidate_profile,
                     "recommendation": getattr(report, 'recommendation', 'consider') if report else "consider",
                     "video_url": video_url,
+                    "risk_score": float(getattr(interview, 'risk_score', 0.0) if interview else 0.0),
                     "assigned_hr_id": getattr(app, 'hr_id', None),
                     "assigned_hr_name": getattr(app.hr, 'full_name', 'Unknown') if (app and getattr(app, 'hr', None)) else "Unknown",
                     "is_owner": (getattr(app, 'hr_id', None) == current_user.id) if (current_user and hasattr(current_user, 'id')) else False,

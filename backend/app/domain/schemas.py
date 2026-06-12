@@ -799,6 +799,11 @@ class MonitoringEventCreate(BaseModel):
     confidence_score: Optional[float] = None
     frame_snapshot: Optional[str] = None  # Base64 string
     video_reference: Optional[str] = None
+    details: Optional[str] = None
+    signature: Optional[str] = None
+    client_timestamp: Optional[int] = None
+    nonce: Optional[str] = None
+    sequence_number: Optional[int] = None
 
     @field_validator('event_type')
     @classmethod
@@ -810,7 +815,9 @@ class MonitoringEventCreate(BaseModel):
         
         valid_types = {
             "focus_lost", "face_not_visible", "multiple_faces", "normal", 
-            "tab_switch", "fullscreen_exit", "face_not_detected", "multiple_people"
+            "tab_switch", "fullscreen_exit", "face_not_detected", "multiple_people",
+            "gaze_deviation", "low_lighting", "clipboard_violation",
+            "liveness_violation", "voice_coaching_detected"
         }
         if v_clean in valid_types:
             return v_clean
@@ -843,6 +850,10 @@ class MonitoringEventResponse(BaseModel):
     frame_image_path: Optional[str] = None
     frame_image_url: Optional[str] = None  # Signed URL
     video_reference: Optional[str] = None
+    is_false_positive: Optional[bool] = False
+    details: Optional[str] = None
+    strike_count: Optional[int] = None
+    token_revoked: Optional[bool] = False
 
     model_config = ConfigDict(from_attributes=True)
 

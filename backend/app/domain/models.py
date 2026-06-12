@@ -457,6 +457,7 @@ class Interview(Base):
     first_level_completed = Column(Boolean, default=False)
     first_level_score = Column(Float, nullable=True)
     video_recording_path = Column(String(500), nullable=True)
+    risk_score = Column(Float, default=0.0, nullable=False, server_default='0.0')
     created_at = Column(DateTime, default=get_ist_now, server_default=func.now())
     updated_at = Column(DateTime, default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
 
@@ -731,6 +732,8 @@ class InterviewMonitoringEvent(Base):
     confidence_score = Column(Float, nullable=True)
     frame_image_path = Column(String(500), nullable=True)  # Cloud storage path
     video_reference = Column(String(255), nullable=True)  # Video offset or segment
+    is_false_positive = Column(Boolean, default=False, nullable=False, server_default='0')
+    details = Column(Text, nullable=True)
 
     interview = relationship(
         "Interview",
