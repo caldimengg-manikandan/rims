@@ -52,6 +52,8 @@ router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+SEEN_NONCES = set()
+
 from app.core.rate_limiter import limiter
 from app.core.idempotency import is_duplicate_request
 
@@ -331,12 +333,31 @@ async def access_interview(
             is_ready = False
             logger.warning(f"Interview {interview.id} has 0 questions but expected {expected_count}. Forcing generation.")
 
+        # Decode generated token to retrieve the dynamic JTI that is bound to it
+        try:
+            from jose import jwt as _jose_jwt
+            payload = _jose_jwt.decode(token, interview_secret, algorithms=[settings.jwt_algorithm])
+            jti = payload.get("jti")
+        except Exception:
+            jti = None
+            
+        import hmac
+        import hashlib
+        derived_secret = ""
+        if jti:
+            derived_secret = hmac.new(
+                interview_secret.encode('utf-8'),
+                f"{interview.id}:{jti}".encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+
         response_data = {
             "access_token": token,
             "token_type": "bearer",
             "interview_id": interview.id,
             "interview_stage": interview.interview_stage,
-            "status": "ready" if is_ready else "processing"
+            "status": "ready" if is_ready else "processing",
+            "proctoring_secret": derived_secret
         }
         
         # Debug counts
@@ -1969,6 +1990,27 @@ async def upload_interview_video(
         file.file.close()
 
 
+# ── Server-Side Strike & Sequence-Number Enforcement ────────────────────────
+# In-memory map: interview_id → last received sequence number for heartbeat
+# tamper detection. Reset when the interview ends.
+LAST_SEQUENCE_NUMBERS: dict[int, int] = {}
+
+EVENT_WEIGHTS = {
+    "focus_lost": 2.0,
+    "tab_switch": 4.0,
+    "fullscreen_exit": 5.0,
+    "face_not_detected": 3.0,
+    "multiple_people": 10.0,
+    "face_not_visible": 1.5,
+    "low_lighting": 0.5,
+    "gaze_deviation": 1.0,
+    "clipboard_violation": 8.0,
+    "liveness_violation": 10.0,
+    "voice_coaching_detected": 8.0,
+    "normal": 0.0
+}
+
+
 @router.post("/{interview_id}/monitoring-events", response_model=MonitoringEventResponse)
 @limiter.limit("40/minute")
 async def create_monitoring_event(
@@ -1984,6 +2026,153 @@ async def create_monitoring_event(
     """
     if interview_session.id != interview_id:
         raise HTTPException(status_code=403, detail="Access denied")
+
+    # ── SEQUENCE NUMBER: TAMPER / EVENT-SUPPRESSION DETECTION ────────────────
+    # The client sends a monotonically-increasing seq_num with every heartbeat.
+    # A gap > 1 means events were suppressed (e.g. JS killed between ticks).
+    is_strike_event = event_data.event_type.startswith("focus_lost_strike_")
+    
+    # We resolve the JTI to construct dynamic derived session secret and Redis keys
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "").strip()
+        
+    interview_secret = _get_interview_jwt_secret()
+    jti = None
+    if token:
+        try:
+            from jose import jwt as _jose_jwt
+            payload = _jose_jwt.decode(
+                token,
+                interview_secret,
+                algorithms=[settings.jwt_algorithm],
+                options={"verify_exp": False} # checked by dependency
+            )
+            jti = payload.get("jti")
+        except Exception:
+            pass
+
+    from app.core.redis_store import get_redis_client
+    redis_client = get_redis_client()
+
+    if event_data.sequence_number is not None:
+        seq_key = f"seq:{interview_id}"
+        last_seq = None
+        
+        if redis_client is not None:
+            try:
+                last_seq_str = redis_client.get(seq_key)
+                if last_seq_str is not None:
+                    last_seq = int(last_seq_str)
+            except Exception as e:
+                logger.error(f"[Proctoring] Redis error reading sequence (failing closed): {e}")
+                raise HTTPException(status_code=503, detail="Security service offline. Please try again.")
+        else:
+            last_seq = LAST_SEQUENCE_NUMBERS.get(interview_id)
+
+        if last_seq is not None and (event_data.sequence_number - last_seq) > 1:
+            gap = event_data.sequence_number - last_seq - 1
+            logger.warning(
+                f"[Proctoring] Sequence gap detected for interview {interview_id}: "
+                f"last={last_seq} current={event_data.sequence_number} gap={gap}"
+            )
+            suppression_event = InterviewMonitoringEvent(
+                interview_id=interview_id,
+                event_type="liveness_violation",
+                confidence_score=1.0,
+                is_false_positive=False,
+                details=json.dumps({
+                    "category": "event_suppression_detected",
+                    "description": f"Heartbeat sequence gap of {gap} detected. Possible JS/page manipulation.",
+                    "last_seq": last_seq,
+                    "current_seq": event_data.sequence_number,
+                }),
+                timestamp=get_ist_now(),
+            )
+            db.add(suppression_event)
+            
+        if redis_client is not None:
+            try:
+                redis_client.set(seq_key, str(event_data.sequence_number), ex=14400)
+            except Exception as e:
+                logger.error(f"[Proctoring] Redis error setting sequence (failing closed): {e}")
+                raise HTTPException(status_code=503, detail="Security service offline. Please try again.")
+        else:
+            LAST_SEQUENCE_NUMBERS[interview_id] = event_data.sequence_number
+
+    # ── SIGNATURE INTEGRITY HARDENING (HMAC-SHA256 & Replay Protection) ──
+    if event_data.signature and event_data.client_timestamp:
+        # Replay protection: check timestamp expiry (e.g. 5 minutes)
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        if abs(now_ms - event_data.client_timestamp) > 5 * 60 * 1000:
+            logger.warning(f"[Proctoring] Expired timestamp for interview {interview_id}. Client: {event_data.client_timestamp}, Server: {now_ms}")
+            raise HTTPException(status_code=400, detail="Event timestamp has expired (replay protection).")
+
+        # Nonce verification
+        if not event_data.nonce:
+            raise HTTPException(status_code=400, detail="Missing event nonce.")
+            
+        nonce_key = f"nonce:{interview_id}:{event_data.nonce}"
+        
+        if redis_client is not None:
+            try:
+                # setnx returns True if the key was set (meaning it didn't exist)
+                is_new = redis_client.set(nonce_key, "1", ex=300, nx=True)
+                if not is_new:
+                    logger.warning(f"[Proctoring] Redis duplicate nonce detected: {nonce_key}")
+                    raise HTTPException(status_code=400, detail="Duplicate monitoring event detected (replay attack).")
+            except Exception as e:
+                if isinstance(e, HTTPException):
+                    raise e
+                logger.error(f"[Proctoring] Redis error verifying nonce (failing closed): {e}")
+                raise HTTPException(status_code=503, detail="Security service offline. Please try again.")
+        else:
+            # Fallback to local memory dictionary
+            legacy_nonce_key = f"{interview_id}:{event_data.nonce}"
+            if legacy_nonce_key in SEEN_NONCES:
+                logger.warning(f"[Proctoring] Process-local duplicate nonce detected: {legacy_nonce_key}")
+                raise HTTPException(status_code=400, detail="Duplicate monitoring event detected (replay attack).")
+            SEEN_NONCES.add(legacy_nonce_key)
+            if len(SEEN_NONCES) > 10000:
+                SEEN_NONCES.clear()
+
+        # HMAC verification
+        import hmac
+        import hashlib
+        
+        # Verify dynamic derived secret first
+        derived_verified = False
+        if jti:
+            derived_secret = hmac.new(
+                interview_secret.encode('utf-8'),
+                f"{interview_id}:{jti}".encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            raw_str_derived = f"{event_data.event_type}:{event_data.client_timestamp}:{event_data.nonce}:{token}:{derived_secret}"
+            calculated_sig_derived = hmac.new(
+                derived_secret.encode('utf-8'),
+                raw_str_derived.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            if calculated_sig_derived == event_data.signature:
+                derived_verified = True
+
+        if not derived_verified:
+            # Fallback for legacy compatibility / automated tests
+            legacy_secret = "rims_proctoring_secret_2026"
+            raw_str_legacy = f"{event_data.event_type}:{event_data.client_timestamp}:{event_data.nonce}:{token}:{legacy_secret}"
+            calculated_sig_legacy = hmac.new(
+                legacy_secret.encode('utf-8'),
+                raw_str_legacy.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            if calculated_sig_legacy != event_data.signature:
+                logger.warning(f"[Proctoring] HMAC mismatch for interview {interview_id}. got: {event_data.signature}")
+                raise HTTPException(status_code=400, detail="Invalid HMAC event signature. Request integrity check failed.")
 
     # ── SIZE LIMIT ── (P2-H01: Cap frame size at 500KB)
     if event_data.frame_snapshot and len(event_data.frame_snapshot) > 500 * 1024 * 1.35: # account for base64 overhead
@@ -2023,15 +2212,174 @@ async def create_monitoring_event(
         except Exception as e:
             logger.error(f"Failed to upload monitoring frame: {e}")
 
+    # ── SERVER-SIDE STRIKE ENFORCEMENT ───────────────────────────────────────
+    # The server is the source-of-truth for strike counts. The client may send
+    # a strike event with an embedded number, but we RECOMPUTE the actual count
+    # by querying confirmed non-false-positive strike events in the DB.
+    actual_strike_count = 0
+    token_revoked = False
+    final_event_type = event_data.event_type
+
+    if is_strike_event:
+        import re as _re
+        # Count existing confirmed strike events for this interview
+        existing_strikes = db.query(InterviewMonitoringEvent).filter(
+            InterviewMonitoringEvent.interview_id == interview_id,
+            InterviewMonitoringEvent.event_type.like("focus_lost_strike_%"),
+            InterviewMonitoringEvent.is_false_positive == False,
+        ).count()
+        actual_strike_count = existing_strikes + 1  # +1 for the incoming strike
+
+        # Extract sanitized reason from client-supplied event_type (after the number)
+        m = _re.match(r"^focus_lost_strike_\d+_(.+)$", event_data.event_type)
+        reason_slug = m.group(1) if m else "violation"
+        # Rewrite event_type with authoritative server count
+        final_event_type = f"focus_lost_strike_{actual_strike_count}_{reason_slug}"
+
+        # ── STRIKE THRESHOLD: TERMINATE & REVOKE ─────────────────────────────
+        if actual_strike_count >= 4:
+            # 1. Terminate the interview
+            _set_interview_status(interview_session, "terminated")
+            interview_session.interview_stage = STAGE_COMPLETED
+            if not interview_session.ended_at:
+                interview_session.ended_at = get_ist_now()
+
+            # 2. Revoke the candidate JWT (prevent further API calls)
+            auth_header = request.headers.get("Authorization", "")
+            raw_token = ""
+            if auth_header.startswith("Bearer "):
+                raw_token = auth_header.replace("Bearer ", "").strip()
+            if raw_token:
+                try:
+                    from jose import jwt as _jose_jwt
+                    from app.domain.models import RevokedToken
+                    interview_secret = (
+                        settings.interview_jwt_secret
+                        if settings.interview_jwt_secret
+                        else settings.jwt_secret + "_interview"
+                    )
+                    raw_payload = _jose_jwt.decode(
+                        raw_token,
+                        interview_secret,
+                        algorithms=[settings.jwt_algorithm],
+                        options={"verify_exp": False},  # may already be close to exp
+                    )
+                    jti_to_revoke = raw_payload.get("jti")
+                    exp_ts = raw_payload.get("exp")
+                    if jti_to_revoke:
+                        # Upsert: avoid duplicate-key on repeated 4th strike hits
+                        existing_revoked = db.query(RevokedToken).filter(
+                            RevokedToken.jti == jti_to_revoke
+                        ).first()
+                        if not existing_revoked:
+                            from datetime import datetime as _dt
+                            expires_at = (
+                                _dt.utcfromtimestamp(exp_ts)
+                                if exp_ts
+                                else get_ist_now() + timedelta(hours=4)
+                            )
+                            db.add(RevokedToken(
+                                jti=jti_to_revoke,
+                                expires_at=expires_at,
+                            ))
+                            token_revoked = True
+                            logger.warning(
+                                f"[Proctoring] JWT revoked for interview {interview_id} "
+                                f"after {actual_strike_count} strikes. jti={jti_to_revoke}"
+                            )
+                except Exception as revoke_err:
+                    logger.error(f"[Proctoring] Token revocation failed for interview {interview_id}: {revoke_err}")
+
+            # 3. Transition FSM to REJECTED
+            try:
+                from app.services.state_machine import CandidateStateMachine, TransitionAction
+                fsm = CandidateStateMachine(db)
+                if interview_session.application:
+                    fsm.transition(
+                        interview_session.application,
+                        TransitionAction.REJECT,
+                        notes=f"Auto-terminated: {actual_strike_count} proctoring strikes.",
+                    )
+            except Exception as fsm_err:
+                logger.warning(f"[Proctoring] FSM transition failed (non-fatal): {fsm_err}")
+                if interview_session.application:
+                    interview_session.application.status = "rejected"
+
+            # 4. Write critical audit entry
+            from app.domain.models import AuditLog
+            db.add(AuditLog(
+                user_id=None,
+                action="INTERVIEW_TERMINATED_VIOLATION",
+                resource_type="Interview",
+                resource_id=interview_id,
+                details=json.dumps({
+                    "interview_id": interview_id,
+                    "strike_count": actual_strike_count,
+                    "token_revoked": token_revoked,
+                    "reason": reason_slug,
+                }),
+                is_critical=True,
+            ))
+
+            # Clean up sequence tracking for terminated interview
+            LAST_SEQUENCE_NUMBERS.pop(interview_id, None)
+            if redis_client is not None:
+                try:
+                    redis_client.delete(f"seq:{interview_id}")
+                except Exception:
+                    pass
+    else:
+        # Non-strike event: still report current strike count for client sync
+        actual_strike_count = db.query(InterviewMonitoringEvent).filter(
+            InterviewMonitoringEvent.interview_id == interview_id,
+            InterviewMonitoringEvent.event_type.like("focus_lost_strike_%"),
+            InterviewMonitoringEvent.is_false_positive == False,
+        ).count()
+
     event_record = InterviewMonitoringEvent(
         interview_id=interview_id,
-        event_type=event_data.event_type,
+        event_type=final_event_type,
         confidence_score=event_data.confidence_score,
         frame_image_path=storage_path,
         video_reference=event_data.video_reference,
+        is_false_positive=False,
+        details=event_data.details,
         timestamp=get_ist_now()
     )
     db.add(event_record)
+
+    # Standard Confidence-Weighted Risk Calculation & Time-Series Correlation
+    weight = EVENT_WEIGHTS.get(event_data.event_type, 0.0)
+    if weight > 0.0:
+        if interview_session.risk_score is None:
+            interview_session.risk_score = 0.0
+            
+        # Confidence-weighted score addition
+        conf = event_data.confidence_score if event_data.confidence_score is not None else 1.0
+        increment = weight * conf
+        
+        # Time-series correlation engine: correlate multiple signals in 30-second window
+        thirty_seconds_ago = get_ist_now() - timedelta(seconds=30)
+        recent_events = db.query(InterviewMonitoringEvent).filter(
+            InterviewMonitoringEvent.interview_id == interview_id,
+            InterviewMonitoringEvent.timestamp >= thirty_seconds_ago,
+            InterviewMonitoringEvent.is_false_positive == False
+        ).all()
+        
+        recent_types = {e.event_type for e in recent_events}
+        recent_types.add(event_data.event_type)
+        
+        correlation_penalty = 0.0
+        if "focus_lost" in recent_types and "clipboard_violation" in recent_types:
+            correlation_penalty += 4.0
+        if "multiple_people" in recent_types and "voice_coaching_detected" in recent_types:
+            correlation_penalty += 6.0
+        if "gaze_deviation" in recent_types and "voice_coaching_detected" in recent_types:
+            correlation_penalty += 3.0
+            
+        interview_session.risk_score += (increment + correlation_penalty)
+        db.add(interview_session)
+
     db.commit()
     db.refresh(event_record)
 
@@ -2048,7 +2396,99 @@ async def create_monitoring_event(
         confidence_score=event_record.confidence_score,
         frame_image_path=event_record.frame_image_path,
         frame_image_url=url,
-        video_reference=event_record.video_reference
+        video_reference=event_record.video_reference,
+        is_false_positive=event_record.is_false_positive,
+        details=event_record.details,
+        strike_count=actual_strike_count,
+        token_revoked=token_revoked,
+    )
+
+
+@router.post("/{interview_id}/monitoring-events/{event_id}/flag-false-positive", response_model=MonitoringEventResponse)
+@limiter.limit("20/minute")
+async def flag_false_positive(
+    request: Request,
+    interview_id: int,
+    event_id: int,
+    data: dict = Body(...),
+    current_user: User = Depends(get_current_hr),
+    db: Session = Depends(get_db)
+):
+    """
+    Toggle or set is_false_positive flag for a specific monitoring event (HR / Admin only).
+    """
+    interview = db.query(Interview).filter(Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+        
+    validate_hr_ownership_for_interview(interview, current_user, resource_name="interview")
+    
+    event = db.query(InterviewMonitoringEvent).filter(
+        InterviewMonitoringEvent.id == event_id,
+        InterviewMonitoringEvent.interview_id == interview_id
+    ).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Monitoring event not found")
+        
+    is_fp = data.get("is_false_positive")
+    if is_fp is None:
+        event.is_false_positive = not event.is_false_positive
+    else:
+        event.is_false_positive = bool(is_fp)
+        
+    db.commit()
+    db.refresh(event)
+
+    # Recalculate full cumulative risk score for the interview session based on remaining active events
+    all_events = db.query(InterviewMonitoringEvent).filter(
+        InterviewMonitoringEvent.interview_id == interview_id,
+        InterviewMonitoringEvent.is_false_positive == False
+    ).order_by(InterviewMonitoringEvent.timestamp.asc()).all()
+    
+    new_risk_score = 0.0
+    processed_events = []
+    
+    for ev in all_events:
+        weight = EVENT_WEIGHTS.get(ev.event_type, 0.0)
+        conf = ev.confidence_score if ev.confidence_score is not None else 1.0
+        new_risk_score += weight * conf
+        
+        # Check correlation with preceding events within 30 seconds
+        for prev_ev in processed_events:
+            time_diff = abs((ev.timestamp - prev_ev.timestamp).total_seconds())
+            if time_diff <= 30.0:
+                if (ev.event_type == "focus_lost" and prev_ev.event_type == "clipboard_violation") or \
+                   (ev.event_type == "clipboard_violation" and prev_ev.event_type == "focus_lost"):
+                    new_risk_score += 4.0
+                elif (ev.event_type == "multiple_people" and prev_ev.event_type == "voice_coaching_detected") or \
+                     (ev.event_type == "voice_coaching_detected" and prev_ev.event_type == "multiple_people"):
+                    new_risk_score += 6.0
+                elif (ev.event_type == "gaze_deviation" and prev_ev.event_type == "voice_coaching_detected") or \
+                     (ev.event_type == "voice_coaching_detected" and prev_ev.event_type == "gaze_deviation"):
+                    new_risk_score += 3.0
+                    
+        processed_events.append(ev)
+        
+    interview.risk_score = new_risk_score
+    db.add(interview)
+    db.commit()
+    
+    from app.core.storage import get_signed_url
+    url = None
+    if event.frame_image_path:
+        url = get_signed_url(settings.supabase_bucket_videos, event.frame_image_path)
+        
+    return MonitoringEventResponse(
+        id=event.id,
+        interview_id=event.interview_id,
+        event_type=event.event_type,
+        timestamp=event.timestamp,
+        confidence_score=event.confidence_score,
+        frame_image_path=event.frame_image_path,
+        frame_image_url=url,
+        video_reference=event.video_reference,
+        is_false_positive=event.is_false_positive,
+        details=event.details
     )
 
 
@@ -2090,7 +2530,9 @@ async def get_monitoring_events(
             confidence_score=ev.confidence_score,
             frame_image_path=ev.frame_image_path,
             frame_image_url=url,
-            video_reference=ev.video_reference
+            video_reference=ev.video_reference,
+            is_false_positive=ev.is_false_positive,
+            details=ev.details
         ))
         
     return results

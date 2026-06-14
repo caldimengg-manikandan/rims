@@ -22,6 +22,7 @@ interface AnswerInputProps {
     initialValue?: string | null;
     isSubmitted?: boolean;
     questionId?: number;
+    onClipboardViolation?: (type: 'copy' | 'paste' | 'cut') => void;
 }
 
 
@@ -42,12 +43,22 @@ export default function AnswerInput({
     initialValue = '',
     isSubmitted = false,
     questionId,
+    onClipboardViolation,
 }: AnswerInputProps) {
     const [text, setText] = useState('');
     const [selectedOption, setSelectedOption] = useState<number | null>(null);
 
-    // Sync initial value when question changes
+    const isMCQ = options && options.length > 0;
+
+    // Load draft from sessionStorage when questionId changes
     useEffect(() => {
+        if (!isSubmitted && questionId && interviewId) {
+            const savedDraft = sessionStorage.getItem(`draft_${interviewId}_${questionId}`);
+            if (savedDraft !== null && !isMCQ) {
+                setText(savedDraft);
+                return;
+            }
+        }
         if (isSubmitted) {
             setSelectedOption(null);
             setText('');
@@ -66,7 +77,18 @@ export default function AnswerInput({
             setSelectedOption(null);
             setText(initialValue || '');
         }
-    }, [questionId, initialValue, isSubmitted]); // Reset state when questionId, initialValue or isSubmitted changes
+    }, [questionId, initialValue, isSubmitted, interviewId, isMCQ]);
+
+    // Save draft to sessionStorage when text changes
+    useEffect(() => {
+        if (!isSubmitted && questionId && interviewId && !isMCQ) {
+            if (text.trim()) {
+                sessionStorage.setItem(`draft_${interviewId}_${questionId}`, text);
+            } else {
+                sessionStorage.removeItem(`draft_${interviewId}_${questionId}`);
+            }
+        }
+    }, [text, questionId, interviewId, isSubmitted, isMCQ]);
 
     const handleTranscriptionResult = (transcribedText: string) => {
         setText((prev) => {
@@ -94,12 +116,13 @@ export default function AnswerInput({
 
         if (finalAnswer && !disabled) {
             onSubmit(finalAnswer);
+            if (interviewId && questionId) {
+                sessionStorage.removeItem(`draft_${interviewId}_${questionId}`);
+            }
             setText('');
             setSelectedOption(null);
         }
     };
-
-    const isMCQ = options && options.length > 0;
 
     return (
         <Card className="w-full bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] hover:shadow-[0_15px_30px_rgb(0,0,0,0.05)] transition-all duration-300 rounded-2xl overflow-hidden">
@@ -144,6 +167,9 @@ export default function AnswerInput({
                                 className="min-h-[120px] lg:min-h-[180px] resize-y text-sm lg:text-lg p-4 lg:p-8 bg-background/50 focus:bg-background hover:border-primary/40 focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all rounded-2xl lg:rounded-3xl border-border"
                                 value={text}
                                 onChange={(e) => setText(e.target.value)}
+                                onCopy={(e) => { e.preventDefault(); onClipboardViolation?.('copy'); }}
+                                onPaste={(e) => { e.preventDefault(); onClipboardViolation?.('paste'); }}
+                                onCut={(e) => { e.preventDefault(); onClipboardViolation?.('cut'); }}
                                 disabled={disabled || isEvaluating}
                             />
                         </div>
