@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "next build",
+    "build": "next build --webpack",
     "dev": "npx --yes kill-port 3000 && next dev -p 3000 --webpack",
     "lint": "eslint .",
     "start": "next start",
