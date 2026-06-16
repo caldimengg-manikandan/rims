@@ -12,9 +12,9 @@ import { APIClient } from '@/app/dashboard/lib/api-client';
 
 import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
+import '@tensorflow/tfjs-backend-cpu';
 import '@tensorflow/tfjs-converter';
 import * as blazeface from '@tensorflow-models/blazeface';
-import * as faceLandmarksDetection from '@tensorflow-models/face-landmarks-detection';
 import {
   Loader2, ShieldCheck, ShieldAlert,
   UserCheck, Eye, BrainCircuit, CheckCircle2, Trophy, LogOut, CameraOff, AlertTriangle
@@ -26,21 +26,22 @@ import { FeedbackDialog, IssueReportDialog } from '@/components/interview-suppor
 const BLAZEFACE_MODEL_URL = '/calrims/models/blazeface/model.json';
 
 async function loadFaceDetector() {
-  await tf.setBackend('webgl');
-  await tf.ready();
   try {
-    const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
-    const detector = await faceLandmarksDetection.createDetector(model, {
-      runtime: 'tfjs',
-      refineLandmarks: true,
-    });
-    console.info('[FaceCheck] FaceLandmarksDetection (FaceMesh) loaded successfully.');
-    return { type: 'facemesh', detector };
-  } catch (err) {
-    console.warn('[FaceCheck] Failed to load FaceMesh landmarks detector, falling back to BlazeFace:', err);
+    await tf.setBackend('webgl');
+    await tf.ready();
+  } catch (backendErr) {
+    console.warn('[FaceCheck] WebGL backend failed, falling back to CPU:', backendErr);
+    await tf.setBackend('cpu');
+    await tf.ready();
+  }
+
+  try {
     const detector = await blazeface.load({ modelUrl: BLAZEFACE_MODEL_URL });
-    console.info('[FaceCheck] BlazeFace fallback loaded successfully.');
+    console.info('[FaceCheck] BlazeFace loaded successfully.');
     return { type: 'blazeface', detector };
+  } catch (err) {
+    console.error('[FaceCheck] Failed to load BlazeFace detector:', err);
+    throw err;
   }
 }
 
@@ -266,23 +267,29 @@ function getFaceQuality(prediction: any, video: HTMLVideoElement) {
   const frameArea = Math.max(1, video.videoWidth * video.videoHeight);
   const areaRatio = (width * height) / frameArea;
   const rawProbability = prediction?.probability;
-  let confidence = 0;
+  let confidence = 0.8; // default to high confidence when face IS detected but probability parsing fails
   if (typeof rawProbability === 'number') {
     confidence = rawProbability;
   } else if (Array.isArray(rawProbability)) {
     const first = rawProbability[0];
-    confidence = typeof first === 'number' ? first : Number(first?.[0] ?? 0);
+    confidence = typeof first === 'number' ? first : Number(first?.[0] ?? 0.8);
+  } else if (rawProbability && typeof rawProbability === 'object' && typeof rawProbability[0] === 'number') {
+    // Handle Float32Array / TypedArray (ArrayIsArray returns false for typed arrays)
+    confidence = rawProbability[0];
   }
-  const hasReasonableSize = areaRatio >= 0.035;
-  const isInsideFrame = left >= 0 && top >= 0 && right <= video.videoWidth && bottom <= video.videoHeight;
+  const hasReasonableSize = areaRatio >= 0.008; // allow sitting at comfortable distance
+  // Allow a 25% margin for bounding box coordinates going slightly off-screen
+  const marginX = video.videoWidth * 0.25;
+  const marginY = video.videoHeight * 0.25;
+  const isInsideFrame = left >= -marginX && top >= -marginY && right <= video.videoWidth + marginX && bottom <= video.videoHeight + marginY;
 
   return {
     confidence,
-    inFocus: confidence >= 0.75 && hasReasonableSize && isInsideFrame,
+    inFocus: confidence >= 0.4 && hasReasonableSize && isInsideFrame,
   };
 }
 
-export default function InterviewSession({ sessionId, token }: InterviewSessionProps) {
+function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const interviewId = sessionId;
 
   // ── session state ──
@@ -387,6 +394,9 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const lastPhoneCheckRef = useRef<number>(0);
   const lastBlinkRef = useRef<number>(0);
   const voiceCoachingDurationRef = useRef<number>(0);
+  // Consecutive face miss counter — prevents single-frame glitches from firing strikes
+  const consecutiveFacesMissedRef = useRef<number>(0);
+  const FACE_MISS_THRESHOLD = 3; // require 3 consecutive misses (~9 sec) before a strike
   const lastVoiceCoachingLogRef = useRef<number>(0);
   const isListeningRef = useRef(false);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
@@ -1511,6 +1521,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         return;
       }
       
+      tf.engine().startScope();
       try {
         // 1. Ambient lighting verification (Audit-only)
         const brightness = getAverageBrightness(video);
@@ -1569,15 +1580,24 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         const faceInFocus = Boolean(faceQuality?.inFocus);
         setIsFocusingOnMonitor(predictions.length === 1 && faceInFocus);
 
-        if (predictions.length === 0) {
-          postMonitoringEvent('face_not_detected', 0, video);
-          handleStrike('No face detected', { respectStartupGrace: false });
-        } else if (rawPredictions.length > 1) {
+        if (rawPredictions.length > 1) {
+          // Multiple people — immediate strike (clear intent), but still with grace period
+          consecutiveFacesMissedRef.current = 0;
           postMonitoringEvent('multiple_people', 0, video);
-          handleStrike('Multiple people detected', { respectStartupGrace: false });
-        } else if (!faceInFocus) {
-          postMonitoringEvent('face_not_visible', faceQuality?.confidence ?? 0, video);
-          handleStrike('Face not in focus', { respectStartupGrace: false });
+          handleStrike('Multiple people detected');
+        } else if (predictions.length === 0 || !faceInFocus) {
+          // Face not detected or not in focus — require N consecutive misses before striking
+          consecutiveFacesMissedRef.current += 1;
+          const reason = predictions.length === 0 ? 'No face detected' : 'Face not in focus';
+          const eventType = predictions.length === 0 ? 'face_not_detected' : 'face_not_visible';
+          postMonitoringEvent(eventType, faceQuality?.confidence ?? 0, video);
+          if (consecutiveFacesMissedRef.current >= FACE_MISS_THRESHOLD) {
+            // Only strike after FACE_MISS_THRESHOLD consecutive bad frames (respects grace period)
+            handleStrike(reason);
+          }
+        } else {
+          // Face is good — reset miss counter
+          consecutiveFacesMissedRef.current = 0;
         }
 
         // Advanced Proctoring Heuristics (Audit-only)
@@ -1874,6 +1894,8 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         }
       } catch (err) {
         console.error('Face check error:', err);
+      } finally {
+        tf.engine().endScope();
       }
     }, 3000);
 
@@ -2331,5 +2353,53 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         </div>
       )}
     </div>
+  );
+}
+
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an unhandled error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-6">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center space-y-6">
+            <div className="w-16 h-16 bg-red-500/10 border border-red-500/20 rounded-full flex items-center justify-center mx-auto">
+              <ShieldAlert className="w-8 h-8 text-red-500 animate-pulse" />
+            </div>
+            <h1 className="text-2xl font-black tracking-tight text-white">Something Went Wrong</h1>
+            <p className="text-slate-400 text-sm leading-relaxed font-semibold">
+              An unexpected error occurred during your interview session. Please try reloading the page.
+            </p>
+            <Button 
+              onClick={() => window.location.reload()} 
+              className="w-full bg-primary text-primary-foreground font-black uppercase py-4 rounded-xl hover:bg-primary/90 transition-all cursor-pointer"
+            >
+              Reload Session
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function InterviewSessionWithErrorBoundary(props: InterviewSessionProps) {
+  return (
+    <ErrorBoundary>
+      <InterviewSession {...props} />
+    </ErrorBoundary>
   );
 }

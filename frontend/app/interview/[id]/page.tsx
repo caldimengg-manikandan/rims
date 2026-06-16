@@ -2,7 +2,12 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import InterviewSession from '@/modules/interview/InterviewSession';
+import dynamic from 'next/dynamic';
+
+const InterviewSession = dynamic(
+    () => import('@/modules/interview/InterviewSession'),
+    { ssr: false }
+);
 
 export default function CandidateInterviewPage() {
     const params = useParams();
