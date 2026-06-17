@@ -136,7 +136,7 @@ async function clearChunksFromIndexedDB(interviewId: string) {
     const store = tx.objectStore('video-chunks');
     store.delete(interviewId);
     await new Promise((resolve) => { tx.oncomplete = resolve; });
-  } catch (err) {}
+  } catch (err) { }
 }
 
 // ─── Brightness Calculation helper ───────────────────────────────────────────
@@ -153,8 +153,8 @@ function getAverageBrightness(video: HTMLVideoElement): number {
     let colorSum = 0;
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
-      const g = data[i+1];
-      const b = data[i+2];
+      const g = data[i + 1];
+      const b = data[i + 2];
       const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
       colorSum += brightness;
     }
@@ -230,18 +230,18 @@ function detectPhoneHeuristic(video: HTMLVideoElement, topLeft: any, bottomRight
     ctx.drawImage(video, 0, 0, 40, 40);
     const imgData = ctx.getImageData(0, 0, 40, 40);
     const data = imgData.data;
-    
+
     let phoneScore = 0;
     for (let y = 5; y < 35; y++) {
       for (let x = 5; x < 35; x++) {
         const idx = (y * 40 + x) * 4;
-        const currentLuma = 0.299 * data[idx] + 0.587 * data[idx+1] + 0.114 * data[idx+2];
-        const rightLuma = 0.299 * data[idx+4] + 0.587 * data[idx+5] + 0.114 * data[idx+6];
-        const downLuma = 0.299 * data[((y+1)*40 + x)*4] + 0.587 * data[((y+1)*40 + x)*4+1] + 0.114 * data[((y+1)*40 + x)*4+2];
-        
+        const currentLuma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        const rightLuma = 0.299 * data[idx + 4] + 0.587 * data[idx + 5] + 0.114 * data[idx + 6];
+        const downLuma = 0.299 * data[((y + 1) * 40 + x) * 4] + 0.587 * data[((y + 1) * 40 + x) * 4 + 1] + 0.114 * data[((y + 1) * 40 + x) * 4 + 2];
+
         const edgeX = Math.abs(currentLuma - rightLuma);
         const edgeY = Math.abs(currentLuma - downLuma);
-        
+
         if (edgeX > 40 || edgeY > 40) {
           phoneScore++;
         }
@@ -334,7 +334,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const [incorrectQuestions, setIncorrectQuestions] = useState<number[]>([]);
   const [visitedQuestions, setVisitedQuestions] = useState<number[]>([]);
   const skippedQuestions = React.useMemo(() => {
-    return visitedQuestions.filter(qNum => 
+    return visitedQuestions.filter(qNum =>
       !completedQuestions.includes(qNum) && qNum !== currentQuestionNumber
     );
   }, [visitedQuestions, completedQuestions, currentQuestionNumber]);
@@ -380,7 +380,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const isSubmittingRef = useRef(false);
   const startSessionVideoRecordingRef = useRef<((stream: MediaStream) => void) | null>(null);
 
-  const faceHistoryRef = useRef<{noseX: number, noseY: number, eyeToEye: number, brightness: number, timestamp: number}[]>([]);
+  const faceHistoryRef = useRef<{ noseX: number, noseY: number, eyeToEye: number, brightness: number, timestamp: number }[]>([]);
   const initialFaceFeaturesRef = useRef<{ eyeToEye: number, noseToEye: number, eyeNoseRatio: number } | null>(null);
   const gazeDeviationStartRef = useRef<number | null>(null);
   const lastBrowserIntegrityCheckRef = useRef<number>(0);
@@ -400,7 +400,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const [showAllDoneModal, setShowAllDoneModal] = useState(false);
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
   const [showIssueDialog, setShowIssueDialog] = useState(false);
-  const [finalScores, setFinalScores] = useState<Array<{question_number: number; question_type: string; score: number | null}>>([]);
+  const [finalScores, setFinalScores] = useState<Array<{ question_number: number; question_type: string; score: number | null }>>([]);
 
   // ─── SECURITY VIOLATION ────────────────────────────────────────────────────
   const terminationSentRef = useRef(false);
@@ -638,13 +638,13 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         }
       } catch (e: any) {
         const errorMsg = e.message || '';
-        const isPermanentError = 
-          errorMsg.includes('credentials') || 
-          errorMsg.includes('required') || 
-          errorMsg.includes('not found') || 
-          errorMsg.includes('completed') || 
-          errorMsg.includes('terminated') || 
-          errorMsg.includes('no longer active') || 
+        const isPermanentError =
+          errorMsg.includes('credentials') ||
+          errorMsg.includes('required') ||
+          errorMsg.includes('not found') ||
+          errorMsg.includes('completed') ||
+          errorMsg.includes('terminated') ||
+          errorMsg.includes('no longer active') ||
           errorMsg.includes('expired') ||
           errorMsg.includes('mismatch');
 
@@ -708,20 +708,20 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       if (allAptitudeCompleted && currentQuestion.question_type === 'aptitude') {
         // Complete the aptitude round
         await apiFetch(`/api/interviews/${interviewId}/complete-aptitude`, token, { method: 'POST' }).catch(() => null);
-        
+
         // Refresh question list to get the new technical questions
         const updatedQuestions: any[] = await apiFetch(`/api/interviews/${interviewId}/questions`, token);
         setAllQuestions(updatedQuestions);
         setTotalQuestions(updatedQuestions.length);
-        
+
         const firstTech = updatedQuestions.find(q => q.question_type !== 'aptitude');
         if (firstTech) {
-           await loadCurrentQuestion(firstTech.question_number);
+          await loadCurrentQuestion(firstTech.question_number);
         } else {
-           // All done — show completion modal instead of instantly navigating away
-           const scores = updatedQuestions.map(q => ({ question_number: q.question_number, question_type: q.question_type || 'general', score: q.answer_score ?? null }));
-           setFinalScores(scores);
-           setShowAllDoneModal(true);
+          // All done — show completion modal instead of instantly navigating away
+          const scores = updatedQuestions.map(q => ({ question_number: q.question_number, question_type: q.question_type || 'general', score: q.answer_score ?? null }));
+          setFinalScores(scores);
+          setShowAllDoneModal(true);
         }
       } else {
         // Check if ALL questions across all types are now completed
@@ -810,7 +810,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const isQuestionLocked = useCallback((qNum: number) => {
     const targetQ = allQuestions.find(q => q.question_number === qNum);
     if (!targetQ) return true;
-    
+
     // Group all questions by type
     const groups: Record<string, any[]> = {};
     allQuestions.forEach((q) => {
@@ -818,14 +818,14 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       if (!groups[type]) groups[type] = [];
       groups[type].push(q);
     });
-    
+
     const orderedTypes = ['aptitude', 'technical', 'behavioral'];
     const otherTypes = Object.keys(groups).filter(t => !orderedTypes.includes(t));
     const displayOrder = [...orderedTypes, ...otherTypes];
-    
+
     const targetType = (targetQ.question_type || 'General').toLowerCase();
     const targetTypeIdx = displayOrder.indexOf(targetType);
-    
+
     // Check if any previous type has incomplete questions
     for (let i = 0; i < targetTypeIdx; i++) {
       const prevType = displayOrder[i];
@@ -854,7 +854,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   }, [totalQuestions, isEvaluating, loadCurrentQuestion, allQuestions, isQuestionLocked]);
 
   const handleNext = () => {
-    const nextQ = [...allQuestions].sort((a,b) => a.question_number - b.question_number).find(q => q.question_number > currentQuestionNumber);
+    const nextQ = [...allQuestions].sort((a, b) => a.question_number - b.question_number).find(q => q.question_number > currentQuestionNumber);
     if (nextQ) {
       if (isQuestionLocked(nextQ.question_number)) {
         toast.warning('Please complete all questions in the current section first.');
@@ -864,7 +864,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     }
   };
   const handlePrev = () => {
-    const prevQ = [...allQuestions].sort((a,b) => b.question_number - a.question_number).find(q => q.question_number < currentQuestionNumber);
+    const prevQ = [...allQuestions].sort((a, b) => b.question_number - a.question_number).find(q => q.question_number < currentQuestionNumber);
     if (prevQ) {
       if (isQuestionLocked(prevQ.question_number)) {
         toast.warning('Please complete all questions in the current section first.');
@@ -890,7 +890,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         const blob = new Blob(audioChunksRef.current, { type: selectedType || 'audio/webm' });
         // Stop the stream tracks instantly so the browser mic indicator turns off immediately, preventing device locking
         stream.getTracks().forEach(t => t.stop());
-        
+
         if (blob.size > 500) {
           setIsTranscribing(true);
           try {
@@ -903,17 +903,17 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
               toast.error("Transcription returned empty. Please speak clearly or check your mic.");
             }
           } catch (e: any) {
-             console.error('Transcription failed', e);
-             const errorMsg = e.message || String(e);
-             const isTerminatedError = errorMsg.toLowerCase().includes('terminated') || 
-                                     errorMsg.toLowerCase().includes('proctoring violation');
-             
-             if (isTerminatedError) {
-               toast.error('Voice service is unavailable as the session has been terminated.');
-               setIsTerminated(true);
-             } else {
-               toast.error('Voice transcription failed. You can type your response.');
-             }
+            console.error('Transcription failed', e);
+            const errorMsg = e.message || String(e);
+            const isTerminatedError = errorMsg.toLowerCase().includes('terminated') ||
+              errorMsg.toLowerCase().includes('proctoring violation');
+
+            if (isTerminatedError) {
+              toast.error('Voice service is unavailable as the session has been terminated.');
+              setIsTerminated(true);
+            } else {
+              toast.error('Voice transcription failed. You can type your response.');
+            }
           } finally { setIsTranscribing(false); }
         } else if (blob.size > 0) {
           toast.error("Audio recording was too short or silent. Please try again.");
@@ -976,18 +976,18 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
             // Enumerate devices to confirm video input is available
             const devices = await navigator.mediaDevices.enumerateDevices();
             const hasVideoInput = devices.some(device => device.kind === 'videoinput');
-            
+
             if (hasVideoInput) {
               console.log(`[Camera] Video device detected (attempt ${attempts}/${maxAttempts}), attempting reinitialization...`);
               // Call initCamera to reinitialize the stream
               if (initCameraRef.current) {
                 await initCameraRef.current();
               }
-              
+
               const postVideoTrack = activeStreamRef.current?.getVideoTracks()[0];
               const postVideoEnded = !postVideoTrack || postVideoTrack.readyState === 'ended';
               const postOffline = !cameraInitializedRef.current || postVideoEnded;
-              
+
               if (!postOffline) {
                 console.log('[Camera] Reconnection successful!');
                 break;
@@ -1015,9 +1015,9 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       // Check if we can reuse the existing audio track to prevent audio interruption
       const existingAudioTrack = activeStreamRef.current?.getAudioTracks()[0];
       const isAudioLive = existingAudioTrack && existingAudioTrack.readyState === 'live';
-      
+
       let stream: MediaStream;
-      
+
       try {
         try {
           if (!detectorRef.current) {
@@ -1042,11 +1042,11 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           if (oldVideoTrack) {
             try { oldVideoTrack.stop(); } catch (e) { console.warn(e); }
           }
-          
+
           // Request ONLY video
           const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
           const newVideoTrack = videoStream.getVideoTracks()[0];
-          
+
           if (oldVideoTrack) {
             try { activeStreamRef.current.removeTrack(oldVideoTrack); } catch (e) { console.warn(e); }
           }
@@ -1057,21 +1057,21 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           // Clean up everything first
           activeStreamRef.current?.getTracks().forEach(track => track.stop());
           activeStreamRef.current = null;
-          
+
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
           activeStreamRef.current = stream;
         }
-        
+
         // Scan for virtual camera inputs
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
-          const virtualCams = devices.filter(d => 
-            d.kind === 'videoinput' && 
-            (d.label.toLowerCase().includes('obs') || 
-             d.label.toLowerCase().includes('manycam') || 
-             d.label.toLowerCase().includes('virtual') || 
-             d.label.toLowerCase().includes('synthetic') ||
-             d.label.toLowerCase().includes('device-identification'))
+          const virtualCams = devices.filter(d =>
+            d.kind === 'videoinput' &&
+            (d.label.toLowerCase().includes('obs') ||
+              d.label.toLowerCase().includes('manycam') ||
+              d.label.toLowerCase().includes('virtual') ||
+              d.label.toLowerCase().includes('synthetic') ||
+              d.label.toLowerCase().includes('device-identification'))
           );
           if (virtualCams.length > 0) {
             console.warn('[Proctoring] Virtual camera detected:', virtualCams.map(c => c.label));
@@ -1112,11 +1112,11 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           try {
             const caps: any = typeof videoTrack.getCapabilities === 'function' ? videoTrack.getCapabilities() : {};
             const settings: any = typeof videoTrack.getSettings === 'function' ? videoTrack.getSettings() : {};
-            
+
             const hasStaticFps = caps.frameRate && (caps.frameRate.max === 0 || (caps.frameRate.min === caps.frameRate.max && caps.frameRate.max <= 5));
             const isLowFps = settings.frameRate && settings.frameRate <= 5;
             const isEmulated = caps.facingMode === undefined && caps.deviceId === undefined;
-            
+
             if (hasStaticFps || isLowFps || isEmulated) {
               console.warn('[Proctoring] Virtual camera track capabilities match:', { caps, settings });
               postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
@@ -1141,7 +1141,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
             audioTrack.onended = () => {
               handleStrike('Microphone hardware disconnected');
             };
-            
+
             try {
               const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
               if (AudioContext) {
@@ -1151,12 +1151,12 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 source.connect(analyser);
                 analyser.fftSize = 256;
                 const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                
+
                 const updateVolume = () => {
                   if (cameraInitializedRef.current === false) return; // stopped
                   analyser.getByteFrequencyData(dataArray);
                   let sum = 0;
-                  for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+                  for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
                   const avg = sum / dataArray.length;
                   const volBar = document.getElementById('mic-volume-bar');
                   if (volBar) {
@@ -1200,7 +1200,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 };
                 updateVolume();
               }
-            } catch(e) {
+            } catch (e) {
               console.error('AudioContext setup failed', e);
             }
           }
@@ -1219,12 +1219,12 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         setDeviceTestError(e.message || String(e));
       }
     }
-    
+
     // Store initCamera in ref so handleDeviceChange can call it
     initCameraRef.current = initCamera;
-    
+
     initCamera();
-    
+
     // Register devicechange event listener to detect camera reconnection
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
 
@@ -1233,7 +1233,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     return () => {
       // Remove devicechange event listener
       navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
-      
+
       // Only stop tracks when the whole component unmounts (user leaves interview)
       if (mountedStream.ref.current) {
         mountedStream.ref.current.getTracks().forEach(t => t.stop());
@@ -1298,7 +1298,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         const reason = "Bypassed device hardware verification test directly into live session.";
         setTerminationReason(reason);
         setIsTerminated(true);
-        
+
         fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/fail-device-test`, {
           method: 'POST',
           headers: {
@@ -1351,7 +1351,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     const tryStartRecorder = (mediaStream: MediaStream, mimeTypes: string[]): { recorder: MediaRecorder | null, started: boolean } => {
       let recorderInstance: MediaRecorder | null = null;
       let isStarted = false;
-      
+
       // Try mimetypes in order of preference
       for (const mime of mimeTypes) {
         if (MediaRecorder.isTypeSupported(mime)) {
@@ -1405,10 +1405,10 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
       'video/mp4'
     ];
-    
+
     console.log("Attempting combined audio and video session recording...");
     const attempt1 = tryStartRecorder(stream, comboMimeTypes);
-    
+
     if (attempt1.started && attempt1.recorder) {
       vRecorder = attempt1.recorder;
       recordingStarted = true;
@@ -1507,10 +1507,10 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           video.srcObject = activeStreamRef.current;
           console.log('[FaceCheck] Reattached stream to floating widget.');
         }
-        video.play().catch(() => {});
+        video.play().catch(() => { });
         return;
       }
-      
+
       try {
         // 1. Ambient lighting verification (Audit-only)
         const brightness = getAverageBrightness(video);
@@ -1538,7 +1538,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           if (detectorObj.type === 'facemesh') {
             const box = pred.box;
             const keypoints = pred.keypoints;
-            
+
             const rightEye = keypoints[33] || keypoints[0];
             const leftEye = keypoints[263] || keypoints[0];
             const nose = keypoints[4] || keypoints[0];
@@ -1594,16 +1594,16 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
               const leftEyeY = leftEye[1];
               const rightEyeX = rightEye[0];
               const rightEyeY = rightEye[1];
-              
+
               const eyeToEye = Math.sqrt(Math.pow(leftEyeX - rightEyeX, 2) + Math.pow(leftEyeY - rightEyeY, 2));
               const eyeMidX = (leftEyeX + rightEyeX) / 2;
               const eyeMidY = (leftEyeY + rightEyeY) / 2;
               const noseToEye = Math.sqrt(Math.pow(noseX - eyeMidX, 2) + Math.pow(noseY - eyeMidY, 2));
-              
+
               // ─── IDENTITY VERIFICATION & DRIFT (Cosine Similarity landmarks embedding) ───
               const landmarks = pred.landmarks.map((l: any) => [l[0], l[1]]);
               const currentEmbedding = computeFaceEmbedding(landmarks);
-              
+
               if (!initialFaceFeaturesRef.current) {
                 (initialFaceFeaturesRef as any).current = currentEmbedding;
                 console.log('[Proctoring] Reference face embedding registered.');
@@ -1631,14 +1631,14 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                   const eyeMidXMesh = (kps[133].x + kps[362].x) / 2;
                   const eyeMidYMesh = (kps[133].y + kps[362].y) / 2;
                   const eyeWidth = Math.abs(kps[133].x - kps[362].x) || 1;
-                  
+
                   const noseOffset = kps[4].x - eyeMidXMesh;
                   yaw = (noseOffset / eyeWidth) * 100;
-                  
+
                   const faceHeight = Math.abs(kps[152].y - eyeMidYMesh) || 1;
                   const noseOffsetVer = kps[4].y - eyeMidYMesh;
                   pitch = ((noseOffsetVer / faceHeight) - 0.35) * 120;
-                  
+
                   roll = Math.atan2(kps[362].y - kps[133].y, kps[362].x - kps[133].x) * (180 / Math.PI);
                 }
               } else {
@@ -1646,13 +1646,13 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 const distRight = Math.abs(noseX - rightEyeX);
                 const total = distLeft + distRight;
                 const mouthY = pred.landmarks[3][1];
-                
+
                 yaw = Math.asin(Math.max(-1, Math.min(1, (distLeft - distRight) / (total || 1)))) * (180 / Math.PI);
                 roll = Math.atan2(rightEyeY - leftEyeY, rightEyeX - leftEyeX) * (180 / Math.PI);
                 const verticalRatio = (noseY - eyeMidY) / (mouthY - eyeMidY || 1);
                 pitch = (verticalRatio - 0.45) * 90;
               }
-              
+
               let gazeDirection: 'Center' | 'Left' | 'Right' | 'Upward' | 'Downward' = 'Center';
               if (yaw < -25) {
                 gazeDirection = 'Left';
@@ -1697,11 +1697,11 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 const noseXs = faceHistoryRef.current.map(h => h.noseX);
                 const noseYs = faceHistoryRef.current.map(h => h.noseY);
                 const brightnesses = faceHistoryRef.current.map(h => h.brightness);
-                
+
                 const noseXVar = calculateVariance(noseXs);
                 const noseYVar = calculateVariance(noseYs);
                 const brightnessVar = calculateVariance(brightnesses);
-                
+
                 if (noseXVar < 0.005 && noseYVar < 0.005) {
                   postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
                     category: 'static_image_detected',
@@ -1710,7 +1710,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                     noseYVar
                   }));
                 }
-                
+
                 if (brightnessVar < 0.0001) {
                   postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
                     category: 'frozen_frame_detected',
@@ -1741,7 +1741,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                     const earRight = dRightV / (dRightH || 1);
 
                     const currentEAR = (earLeft + earRight) / 2;
-                    
+
                     if (currentEAR < 0.18) {
                       if (nowTime - lastBlinkRef.current > 4000) {
                         lastBlinkRef.current = nowTime;
@@ -1785,12 +1785,12 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
               const now = Date.now();
               if (now - lastPhoneCheckRef.current > 6000) {
                 lastPhoneCheckRef.current = now;
-                
+
                 let phoneDetected = false;
                 if (objectDetectorRef.current) {
                   try {
                     const predictionsObj = await objectDetectorRef.current.detect(video);
-                    const phonePrediction = predictionsObj.find((p: any) => 
+                    const phonePrediction = predictionsObj.find((p: any) =>
                       (p.class === 'cell phone' || p.class === 'phone' || p.class === 'mobile phone' || p.class === 'tablet') &&
                       p.score > 0.45
                     );
@@ -1806,7 +1806,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                     console.warn('Object detection failed:', objErr);
                   }
                 }
-                
+
                 if (!phoneDetected) {
                   const hasPhone = detectPhoneHeuristic(video, pred.topLeft, pred.bottomRight);
                   if (hasPhone) {
@@ -1825,23 +1825,23 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         const timeNow = Date.now();
         if (timeNow - lastBrowserIntegrityCheckRef.current > 9000) {
           lastBrowserIntegrityCheckRef.current = timeNow;
-          
-          const isWebdriver = navigator.webdriver || 
-                              (typeof document !== 'undefined' && document.documentElement.getAttribute('webdriver') !== null) ||
-                              '__webdriver_evaluate' in window ||
-                              '__selenium_evaluate' in window ||
-                              '__puppeteer_evaluate' in window;
-                              
+
+          const isWebdriver = navigator.webdriver ||
+            (typeof document !== 'undefined' && document.documentElement.getAttribute('webdriver') !== null) ||
+            '__webdriver_evaluate' in window ||
+            '__selenium_evaluate' in window ||
+            '__puppeteer_evaluate' in window;
+
           const userAgentLower = navigator.userAgent.toLowerCase();
-          const isHeadless = userAgentLower.includes('headless') || 
-                             userAgentLower.includes('puppeteer') || 
-                             userAgentLower.includes('selenium') || 
-                             userAgentLower.includes('playwright');
-          
+          const isHeadless = userAgentLower.includes('headless') ||
+            userAgentLower.includes('puppeteer') ||
+            userAgentLower.includes('selenium') ||
+            userAgentLower.includes('playwright');
+
           const widthThreshold = window.outerWidth - window.innerWidth > 160;
           const heightThreshold = window.outerHeight - window.innerHeight > 160;
           const isDevToolsOpen = widthThreshold || heightThreshold;
-          
+
           if (isWebdriver || isHeadless || isDevToolsOpen) {
             postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
               category: 'browser_integrity_violation',
@@ -1869,7 +1869,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 ? 'normal'
                 : 'face_not_visible';
           const confidence = predictions.length === 1 ? (faceQuality?.confidence ?? 0) : 0.0;
-          
+
           postMonitoringEvent(statusType, confidence, video);
         }
       } catch (err) {
@@ -1889,7 +1889,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       console.log('[Proctoring] Window focus lost');
       handleStrike('Window focus lost');
     };
-    
+
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
 
@@ -1899,7 +1899,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
       if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
       if (videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
-        try { videoRecorderRef.current.stop(); } catch (e) {}
+        try { videoRecorderRef.current.stop(); } catch (e) { }
       }
     };
   }, [isStarted, interviewId, token, handleStrike, uploadVideo, postMonitoringEvent]);
@@ -1959,7 +1959,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-primary/10 via-background to-accent/10 space-y-6">
         <Loader2 className="w-12 h-12 animate-spin text-primary" />
-        <h2 className="text-2xl font-black text-foreground tracking-tight">Initializing AI Board...</h2>
+        <h2 className="text-2xl font-black text-foreground tracking-tight">Initializing AI Interview...</h2>
         <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Preparing Your Questions</p>
       </div>
     );
@@ -1998,11 +1998,11 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
               {/* Microphone Volume Indicator */}
               <div className="w-full max-w-md mt-4 p-4 bg-muted/40 rounded-2xl border border-border/60 flex flex-col gap-2 shadow-sm">
                 <div className="flex justify-between items-center w-full">
-                   <span className="text-xs font-black text-foreground uppercase tracking-widest">Microphone Test</span>
-                   <span className="text-[10px] font-bold text-muted-foreground">Speak to check levels</span>
+                  <span className="text-xs font-black text-foreground uppercase tracking-widest">Microphone Test</span>
+                  <span className="text-[10px] font-bold text-muted-foreground">Speak to check levels</span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                   <div id="mic-volume-bar" className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-100 ease-out" style={{ width: '0%' }} />
+                  <div id="mic-volume-bar" className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-100 ease-out" style={{ width: '0%' }} />
                 </div>
               </div>
             </div>
@@ -2025,7 +2025,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                   <div>
                     <h4 className="font-black text-red-500 uppercase tracking-wider text-xs mb-1">Hardware Authorization Required</h4>
                     <p className="text-xs text-red-600/90 font-bold leading-relaxed">
-                      Camera and Microphone permissions are strictly mandatory to start the assessment. 
+                      Camera and Microphone permissions are strictly mandatory to start the assessment.
                       {deviceTestError && <span className="block mt-1 font-mono text-[10px] text-red-500/70">Error: {deviceTestError}</span>}
                     </p>
                   </div>
@@ -2034,11 +2034,10 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
 
               <Button
                 disabled={!isDeviceTestSuccess || isStarting}
-                className={`w-full h-16 rounded-2xl font-black text-xl shadow-xl transition-all duration-300 active:scale-[0.99] ${
-                  !isDeviceTestSuccess 
-                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none hover:bg-slate-300' 
+                className={`w-full h-16 rounded-2xl font-black text-xl shadow-xl transition-all duration-300 active:scale-[0.99] ${!isDeviceTestSuccess
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none hover:bg-slate-300'
                     : 'shadow-primary/20 cursor-pointer'
-                }`}
+                  }`}
                 onClick={async () => {
                   if (isStarting) return;
                   setIsStarting(true);
@@ -2069,7 +2068,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                   }
                 }}
               >
-                {isStarting ? 'Starting...' : 'Enter Interview Board'}
+                {isStarting ? 'Starting...' : 'Enter Interview'}
               </Button>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">By clicking, you agree to the assessment monitoring protocol</p>
             </div>
@@ -2140,8 +2139,8 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                   <BrainCircuit className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-black text-foreground tracking-tight">Assessment Board</h1>
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Secure Experience Protocol</p>
+
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Secure Protocol</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -2167,28 +2166,28 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 </Button>
               </div>
             </div>
-            
+
             {(() => {
-               let relNum = currentQuestionNumber;
-               if (allQuestions && currentQuestion) {
-                 const sameType = allQuestions.filter(q => q.question_type === currentQuestion.question_type)
-                                              .sort((a, b) => a.question_number - b.question_number);
-                 const idx = sameType.findIndex(q => q.question_number === currentQuestionNumber);
-                 if (idx >= 0) relNum = idx + 1;
-               }
-               return (
-                 <QuestionPanel
-                   question={currentQuestion}
-                   isLoading={!currentQuestion || isEvaluating || isQuestionSwapping}
-                   currentQuestionNumber={relNum}
-                 />
-               );
+              let relNum = currentQuestionNumber;
+              if (allQuestions && currentQuestion) {
+                const sameType = allQuestions.filter(q => q.question_type === currentQuestion.question_type)
+                  .sort((a, b) => a.question_number - b.question_number);
+                const idx = sameType.findIndex(q => q.question_number === currentQuestionNumber);
+                if (idx >= 0) relNum = idx + 1;
+              }
+              return (
+                <QuestionPanel
+                  question={currentQuestion}
+                  isLoading={!currentQuestion || isEvaluating || isQuestionSwapping}
+                  currentQuestionNumber={relNum}
+                />
+              );
             })()}
 
             <AnswerInput
               onSubmit={handleSubmitAnswer}
-              onPrev={([...allQuestions].sort((a,b) => a.question_number - b.question_number)[0]?.question_number < currentQuestionNumber) ? handlePrev : undefined}
-              onNext={([...allQuestions].sort((a,b) => b.question_number - a.question_number)[0]?.question_number > currentQuestionNumber) ? handleNext : undefined}
+              onPrev={([...allQuestions].sort((a, b) => a.question_number - b.question_number)[0]?.question_number < currentQuestionNumber) ? handlePrev : undefined}
+              onNext={([...allQuestions].sort((a, b) => b.question_number - a.question_number)[0]?.question_number > currentQuestionNumber) ? handleNext : undefined}
               disabled={!currentQuestion || isEvaluating || isQuestionSwapping}
               isEvaluating={isEvaluating}
               interviewId={interviewId}
@@ -2197,7 +2196,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
               onStartRecording={startRecording}
               onStopRecording={stopRecording}
               isStuck={false}
-              onRetry={() => {}}
+              onRetry={() => { }}
               options={currentQuestion?.options}
               initialValue={currentQuestion?.answer_text}
               isSubmitted={completedQuestions.includes(currentQuestionNumber)}
@@ -2257,8 +2256,8 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-[2px] p-2 text-center">
             <CameraOff className="w-8 h-8 text-red-500 mb-2 animate-pulse" />
             <p className="text-[10px] font-bold text-white mb-2">Camera Disconnected</p>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               className="h-7 px-3 text-[9px] font-black uppercase tracking-widest bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg"
               onClick={async () => {
                 if (initCameraRef.current) {
