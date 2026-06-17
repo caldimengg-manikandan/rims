@@ -84,6 +84,88 @@ STAGE_COMPLETED = "completed"
 
 # --- Imported Refactored Services ---
 
+@router.post("/demo", response_model=dict)
+def create_demo_interview(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Private endpoint to generate a 'Demo Interview' without requiring a real application or approval.
+    Creates a mock job, mock application, and returns a valid interview access key.
+    """
+    from app.services.candidate_service import CandidateService
+    import uuid
+
+    # 1. Ensure a Demo HR User exists (or pick the first HR user to own the job)
+    hr_user = db.query(User).filter(User.role == 'hr').first()
+    if not hr_user:
+        # If no HR user exists, create a dummy one just for the demo
+        hr_user = User(
+            email=f"demo_hr_{uuid.uuid4().hex[:6]}@demo.com",
+            password_hash="mock",
+            full_name="System Demo HR",
+            role="hr",
+            is_active=True,
+            is_verified=True
+        )
+        db.add(hr_user)
+        db.commit()
+        db.refresh(hr_user)
+    
+    # 2. Ensure Demo Job exists
+    job = db.query(Job).filter(Job.title == "INTERNAL_DEMO_JOB").first()
+    if not job:
+        job = Job(
+            title="INTERNAL_DEMO_JOB",
+            description="Private job for testing demo interviews.",
+            experience_level="Entry-Level",
+            primary_evaluated_skills="React, Python, Communication",
+            hr_id=hr_user.id,
+            status="open"
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+    # 3. Create Demo Application
+    uid = uuid.uuid4().hex[:6]
+    app = Application(
+        job_id=job.id,
+        hr_id=hr_user.id,
+        candidate_name=f"Demo Candidate {uid.upper()}",
+        candidate_email=f"demo_{uid}@example.com",
+        status="interview_scheduled"
+    )
+    db.add(app)
+    db.commit()
+    db.refresh(app)
+
+    # 4. Generate Interview using existing business logic
+    svc = CandidateService(db)
+    access_key = svc.ensure_interview_record_exists(app)
+
+    interview = db.query(Interview).filter(Interview.application_id == app.id).first()
+
+    # Generate a valid JWT token for this interview
+    from datetime import timedelta
+    from app.core.auth import create_access_token
+    token_expiry_delta = timedelta(hours=4)
+    interview_secret = _get_interview_jwt_secret()
+    access_token = create_access_token(
+        data={"sub": str(interview.id), "role": "interview"},
+        expires_delta=token_expiry_delta,
+        secret=interview_secret
+    )
+
+    db.commit()
+
+    # Trigger fallback question generation for demo interviews
+    background_tasks.add_task(_generate_fallback_questions_direct, interview.id)
+
+    return {
+        "interview_id": interview.id,
+        "access_key": access_key,
+        "access_token": access_token,
+        "demo_url": f"/calrims/interview/{interview.id}?token={access_token}"
+    }
+
 from app.services.interview_evaluation_service import evaluate_answer_task
 from app.services.interview_reporting_service import _finalize_interview_and_report, _finalize_interview_and_report_internal
 from app.services.interview_generation_service import (
@@ -478,6 +560,7 @@ async def start_interview_session(
     request: Request,
     interview_id: int,
     data: InterviewStart,
+    background_tasks: BackgroundTasks,
     interview_session: Interview = Depends(get_current_interview_any_status),
     db: Session = Depends(get_db),
 ):
@@ -552,6 +635,10 @@ async def start_interview_session(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Interview cannot be started in current state: {interview.status}",
         )
+
+    # Trigger fallback generation if questions are missing (critical for direct demo links)
+    if _question_count_for_stage(db, interview.id, interview.interview_stage) == 0:
+        background_tasks.add_task(_generate_fallback_questions_direct, interview.id)
 
     return {
         "ok": True,
@@ -710,7 +797,7 @@ async def get_all_questions(
 async def get_current_question(
     request: Request,
     interview_id: int,
-    interview_session: Interview = Depends(get_current_interview),
+    interview_session: Interview = Depends(get_current_interview_any_status),
     db: Session = Depends(get_db)
 ):
     """Get current unanswered question for the current stage."""
@@ -722,7 +809,7 @@ async def get_current_question(
     if interview.interview_stage == STAGE_COMPLETED:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Interview fully completed")
 
-    if interview.status != "in_progress":
+    if interview.status not in ("in_progress", "not_started"):
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Interview complete")
     
     # ── READINESS CHECK ──
@@ -1119,17 +1206,7 @@ async def submit_answer(
                 answer.evaluated_at = get_ist_now()
                 answer.answer_evaluation = json.dumps({"auto_graded": True, "is_correct": is_correct})
 
-            # Record monitoring event for answer submission
-            try:
-                monitoring_event = InterviewMonitoringEvent(
-                    interview_id=interview_id,
-                    event_type="answer_submitted",
-                    confidence_score=1.0,
-                    timestamp=get_ist_now()
-                )
-                db.add(monitoring_event)
-            except Exception as e:
-                logger.warning(f"Failed to record monitoring event for interview {interview_id}: {e}")
+            # Event removed to fix blank snapshot UI bugs
 
             if not existing_answer:
                 db.add(answer)
@@ -1893,101 +1970,7 @@ async def transcribe_interview_audio(
             os.remove(tmp_path)
 
 
-@router.post("/{interview_id}/upload-video")
-@limiter.limit("20/minute")
-async def upload_interview_video(
-    request: Request,
-    interview_id: int,
-    file: UploadFile = File(...),
-    interview_session: Interview = Depends(get_current_interview),
-    db: Session = Depends(get_db)
-):
-    """
-    Upload the recorded video for the interview session.
-    Replays identical JSON for the same X-Request-ID within TTL (Redis when REDIS_URL is set).
-    """
-    if interview_session.id != interview_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    rid = (request.headers.get("X-Request-ID") or "").strip()
-    if rid and settings.enable_request_id_idempotency:
-        vkey = f"idem:interviews.upload_video:{interview_id}:{rid}"
-        cached = _idem_cache_get(vkey)
-        if cached is not None:
-            log_json(
-                logger,
-                "upload_video_idempotent_replay",
-                level="info",
-                extra={"interview_id": interview_id, "request_id_prefix": rid[:12]},
-            )
-            return cached
-
-    # 6. Upload to Supabase
-    from app.core.storage import upload_file
-    from datetime import datetime
-    timestamp = int(get_ist_now().timestamp())
-    filename = f"interview_{interview_id}_{timestamp}.webm"
-    storage_path = f"{interview_id}/{filename}"
-    
-    try:
-        # P2-C02: MIME type validation
-        mime_type = file.content_type
-        if not mime_type or mime_type not in ["video/webm", "video/mp4"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid video format. Only video/webm and video/mp4 are accepted."
-            )
-
-        # P2-C02: Chunk-based size enforcement to prevent OOM DoS
-        MAX_SIZE = 150 * 1024 * 1024
-        chunks = []
-        total_size = 0
-        chunk_size = 1024 * 1024 # 1MB chunks
-        while True:
-            chunk = await file.read(chunk_size)
-            if not chunk:
-                break
-            total_size += len(chunk)
-            if total_size > MAX_SIZE:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail="Video file exceeds 150MB limit."
-                )
-            chunks.append(chunk)
-        content = b"".join(chunks)
-
-        # Validate magic bytes for video
-        is_webm = content.startswith(b"\x1a\x45\xdf\xa3")
-        is_mp4 = len(content) > 8 and content[4:8] == b"ftyp"
-        if not (is_webm or is_mp4):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid video file content. Must be a valid WebM or MP4 video."
-            )
-
-        logger.info(f"Uploading video for interview {interview_id}: size={len(content)} bytes, type={mime_type}")
-        returned_path = upload_file(
-            settings.supabase_bucket_videos, 
-            storage_path, 
-            content, 
-            content_type=mime_type
-        )
-        
-        # Save cloud path to DB
-        interview_session.video_recording_path = returned_path
-        db.add(interview_session)
-        db.commit()
-
-        out = {"success": True, "path": returned_path}
-        if rid and settings.enable_request_id_idempotency:
-            _idem_cache_set(f"idem:interviews.upload_video:{interview_id}:{rid}", out, ttl_seconds=90)
-        return out
-    except Exception as e:
-        logger.error(f"Video cloud upload failure: {e}")
-        logger.error(f"Failed to save video to cloud storage: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An error occurred while saving the interview video. Please try again.")
-    finally:
-        file.file.close()
 
 
 # ── Server-Side Strike & Sequence-Number Enforcement ────────────────────────
@@ -2017,6 +2000,7 @@ async def create_monitoring_event(
     request: Request,
     interview_id: int,
     event_data: MonitoringEventCreate,
+    background_tasks: BackgroundTasks,
     interview_session: Interview = Depends(get_current_interview),
     db: Session = Depends(get_db)
 ):
@@ -2201,16 +2185,26 @@ async def create_monitoring_event(
             filename = f"monitoring_{interview_id}_{timestamp}_{event_data.event_type}.jpg"
             cloud_path = f"monitoring_frames/{interview_id}/{filename}"
             
-            returned_path = upload_file(
+            # Use BackgroundTasks to prevent 2.5s network lag
+            def _background_upload(bucket, path, data, ct):
+                try:
+                    upload_file(bucket, path, data, content_type=ct)
+                except Exception as e:
+                    logger.error(f"Failed to upload monitoring frame in background: {e}")
+
+            background_tasks.add_task(
+                _background_upload,
                 settings.supabase_bucket_videos,
                 cloud_path,
                 image_bytes,
-                content_type="image/jpeg"
+                "image/jpeg"
             )
-            if returned_path:
-                storage_path = returned_path
+            # Optimistically set storage path without waiting for upload
+            storage_path = cloud_path
         except Exception as e:
-            logger.error(f"Failed to upload monitoring frame: {e}")
+            if isinstance(e, HTTPException):
+                raise e
+            logger.error(f"Failed to process monitoring frame: {e}")
 
     # ── SERVER-SIDE STRIKE ENFORCEMENT ───────────────────────────────────────
     # The server is the source-of-truth for strike counts. The client may send
@@ -2222,112 +2216,177 @@ async def create_monitoring_event(
 
     if is_strike_event:
         import re as _re
-        # Count existing confirmed strike events for this interview
-        existing_strikes = db.query(InterviewMonitoringEvent).filter(
-            InterviewMonitoringEvent.interview_id == interview_id,
-            InterviewMonitoringEvent.event_type.like("focus_lost_strike_%"),
-            InterviewMonitoringEvent.is_false_positive == False,
-        ).count()
-        actual_strike_count = existing_strikes + 1  # +1 for the incoming strike
 
-        # Extract sanitized reason from client-supplied event_type (after the number)
-        m = _re.match(r"^focus_lost_strike_\d+_(.+)$", event_data.event_type)
-        reason_slug = m.group(1) if m else "violation"
-        # Rewrite event_type with authoritative server count
-        final_event_type = f"focus_lost_strike_{actual_strike_count}_{reason_slug}"
+        # FIX Issue #4: Acquire a row-level lock on the interview row before
+        # counting existing strikes.  Without this lock, concurrent requests
+        # executing a simultaneous burst of focus_lost_strike events all read
+        # existing_strikes = 0, independently compute actual_strike_count = 1,
+        # and persist duplicate strike_1 events.  On the next burst the count
+        # jumps from 0 → 5+, immediately exceeding the threshold and causing
+        # instant termination.
+        #
+        # with_for_update() serialises concurrent transactions that touch the
+        # same row, so only one request at a time passes the count query and
+        # the write.  This is a no-op on SQLite (it serialises writes already),
+        # but is critical correctness for PostgreSQL in production.
+        locked_interview = (
+            db.query(Interview)
+            .filter(Interview.id == interview_id)
+            .with_for_update()
+            .first()
+        )
 
-        # ── STRIKE THRESHOLD: TERMINATE & REVOKE ─────────────────────────────
-        if actual_strike_count >= 4:
-            # 1. Terminate the interview
-            _set_interview_status(interview_session, "terminated")
-            interview_session.interview_stage = STAGE_COMPLETED
-            if not interview_session.ended_at:
-                interview_session.ended_at = get_ist_now()
+        # FIX Issue #4: Idempotency guard — if another concurrent request
+        # already terminated this interview (and committed), skip all
+        # termination logic so we do not revoke the token twice or write
+        # duplicate audit rows.  Return the already-committed strike count.
+        if locked_interview and locked_interview.status == "terminated":
+            logger.info(
+                f"[Proctoring] interview={interview_id} already terminated; "
+                f"skipping duplicate strike processing."
+            )
+            actual_strike_count = db.query(InterviewMonitoringEvent).filter(
+                InterviewMonitoringEvent.interview_id == interview_id,
+                InterviewMonitoringEvent.event_type.like("focus_lost_strike_%"),
+                InterviewMonitoringEvent.is_false_positive == False,
+            ).count()
+            # Still persist the event record (for audit completeness) but skip
+            # all termination side-effects.  We fall through to event_record
+            # creation below.
+            final_event_type = event_data.event_type  # keep original, no rewrite needed
+            is_strike_event = False  # suppress termination branch
 
-            # 2. Revoke the candidate JWT (prevent further API calls)
-            auth_header = request.headers.get("Authorization", "")
-            raw_token = ""
-            if auth_header.startswith("Bearer "):
-                raw_token = auth_header.replace("Bearer ", "").strip()
-            if raw_token:
+        if is_strike_event:
+            # FIX Issue #1: 5-second server-side cooldown.
+            # Reject strike if the last strike was registered less than 5 seconds ago.
+            last_strike = db.query(InterviewMonitoringEvent).filter(
+                InterviewMonitoringEvent.interview_id == interview_id,
+                InterviewMonitoringEvent.event_type.like("focus_lost_strike_%"),
+                InterviewMonitoringEvent.is_false_positive == False,
+            ).order_by(InterviewMonitoringEvent.timestamp.desc()).first()
+            
+            if last_strike and (get_ist_now() - to_naive_ist(last_strike.timestamp)).total_seconds() < 5:
+                logger.warning(
+                    f"[Proctoring] Strike ignored due to 5s server cooldown for interview {interview_id}"
+                )
+                final_event_type = event_data.event_type
+                is_strike_event = False
+
+        if is_strike_event:
+            # Count existing confirmed strike events for this interview.
+            # The row lock above ensures this count is stable for the duration
+            # of this transaction.
+            existing_strikes = db.query(InterviewMonitoringEvent).filter(
+                InterviewMonitoringEvent.interview_id == interview_id,
+                InterviewMonitoringEvent.event_type.like("focus_lost_strike_%"),
+                InterviewMonitoringEvent.is_false_positive == False,
+            ).count()
+            actual_strike_count = existing_strikes + 1  # +1 for the incoming strike
+
+            logger.info(
+                f"[Proctoring] strike_check | interview={interview_id} | "
+                f"event={event_data.event_type} | existing={existing_strikes} | "
+                f"computed={actual_strike_count}"
+            )
+
+            # Extract sanitized reason from client-supplied event_type (after the number)
+            m = _re.match(r"^focus_lost_strike_\d+_(.+)$", event_data.event_type)
+            reason_slug = m.group(1) if m else "violation"
+            # Rewrite event_type with authoritative server count
+            final_event_type = f"focus_lost_strike_{actual_strike_count}_{reason_slug}"
+
+            # ── MAX_STRIKES THRESHOLD: TERMINATE & REVOKE ─────────────────────────────
+            if actual_strike_count >= 4:
+                # 1. Terminate the interview
+                _set_interview_status(interview_session, "terminated")
+                interview_session.interview_stage = STAGE_COMPLETED
+                if not interview_session.ended_at:
+                    interview_session.ended_at = get_ist_now()
+
+                # 2. Revoke the candidate JWT (prevent further API calls)
+                auth_header = request.headers.get("Authorization", "")
+                raw_token = ""
+                if auth_header.startswith("Bearer "):
+                    raw_token = auth_header.replace("Bearer ", "").strip()
+                if raw_token:
+                    try:
+                        from jose import jwt as _jose_jwt
+                        from app.domain.models import RevokedToken
+                        interview_secret = (
+                            settings.interview_jwt_secret
+                            if settings.interview_jwt_secret
+                            else settings.jwt_secret + "_interview"
+                        )
+                        raw_payload = _jose_jwt.decode(
+                            raw_token,
+                            interview_secret,
+                            algorithms=[settings.jwt_algorithm],
+                            options={"verify_exp": False},  # may already be close to exp
+                        )
+                        jti_to_revoke = raw_payload.get("jti")
+                        exp_ts = raw_payload.get("exp")
+                        if jti_to_revoke:
+                            # Upsert: avoid duplicate-key on repeated 4th strike hits
+                            existing_revoked = db.query(RevokedToken).filter(
+                                RevokedToken.jti == jti_to_revoke
+                            ).first()
+                            if not existing_revoked:
+                                from datetime import datetime as _dt
+                                expires_at = (
+                                    _dt.utcfromtimestamp(exp_ts)
+                                    if exp_ts
+                                    else get_ist_now() + timedelta(hours=4)
+                                )
+                                db.add(RevokedToken(
+                                    jti=jti_to_revoke,
+                                    expires_at=expires_at,
+                                ))
+                                token_revoked = True
+                                logger.warning(
+                                    f"[Proctoring] JWT revoked for interview {interview_id} "
+                                    f"after {actual_strike_count} strikes. jti={jti_to_revoke}"
+                                )
+                    except Exception as revoke_err:
+                        logger.error(f"[Proctoring] Token revocation failed for interview {interview_id}: {revoke_err}")
+
+                # 3. Transition FSM to REJECTED
                 try:
-                    from jose import jwt as _jose_jwt
-                    from app.domain.models import RevokedToken
-                    interview_secret = (
-                        settings.interview_jwt_secret
-                        if settings.interview_jwt_secret
-                        else settings.jwt_secret + "_interview"
-                    )
-                    raw_payload = _jose_jwt.decode(
-                        raw_token,
-                        interview_secret,
-                        algorithms=[settings.jwt_algorithm],
-                        options={"verify_exp": False},  # may already be close to exp
-                    )
-                    jti_to_revoke = raw_payload.get("jti")
-                    exp_ts = raw_payload.get("exp")
-                    if jti_to_revoke:
-                        # Upsert: avoid duplicate-key on repeated 4th strike hits
-                        existing_revoked = db.query(RevokedToken).filter(
-                            RevokedToken.jti == jti_to_revoke
-                        ).first()
-                        if not existing_revoked:
-                            from datetime import datetime as _dt
-                            expires_at = (
-                                _dt.utcfromtimestamp(exp_ts)
-                                if exp_ts
-                                else get_ist_now() + timedelta(hours=4)
-                            )
-                            db.add(RevokedToken(
-                                jti=jti_to_revoke,
-                                expires_at=expires_at,
-                            ))
-                            token_revoked = True
-                            logger.warning(
-                                f"[Proctoring] JWT revoked for interview {interview_id} "
-                                f"after {actual_strike_count} strikes. jti={jti_to_revoke}"
-                            )
-                except Exception as revoke_err:
-                    logger.error(f"[Proctoring] Token revocation failed for interview {interview_id}: {revoke_err}")
+                    from app.services.state_machine import CandidateStateMachine, TransitionAction
+                    fsm = CandidateStateMachine(db)
+                    if interview_session.application:
+                        fsm.transition(
+                            interview_session.application,
+                            TransitionAction.REJECT,
+                            notes=f"Auto-terminated: {actual_strike_count} proctoring strikes.",
+                        )
+                except Exception as fsm_err:
+                    logger.warning(f"[Proctoring] FSM transition failed (non-fatal): {fsm_err}")
+                    if interview_session.application:
+                        interview_session.application.status = "rejected"
 
-            # 3. Transition FSM to REJECTED
-            try:
-                from app.services.state_machine import CandidateStateMachine, TransitionAction
-                fsm = CandidateStateMachine(db)
-                if interview_session.application:
-                    fsm.transition(
-                        interview_session.application,
-                        TransitionAction.REJECT,
-                        notes=f"Auto-terminated: {actual_strike_count} proctoring strikes.",
-                    )
-            except Exception as fsm_err:
-                logger.warning(f"[Proctoring] FSM transition failed (non-fatal): {fsm_err}")
-                if interview_session.application:
-                    interview_session.application.status = "rejected"
+                # 4. Write critical audit entry
+                from app.domain.models import AuditLog
+                db.add(AuditLog(
+                    user_id=None,
+                    action="INTERVIEW_TERMINATED_VIOLATION",
+                    resource_type="Interview",
+                    resource_id=interview_id,
+                    details=json.dumps({
+                        "interview_id": interview_id,
+                        "strike_count": actual_strike_count,
+                        "token_revoked": token_revoked,
+                        "reason": reason_slug,
+                    }),
+                    is_critical=True,
+                ))
 
-            # 4. Write critical audit entry
-            from app.domain.models import AuditLog
-            db.add(AuditLog(
-                user_id=None,
-                action="INTERVIEW_TERMINATED_VIOLATION",
-                resource_type="Interview",
-                resource_id=interview_id,
-                details=json.dumps({
-                    "interview_id": interview_id,
-                    "strike_count": actual_strike_count,
-                    "token_revoked": token_revoked,
-                    "reason": reason_slug,
-                }),
-                is_critical=True,
-            ))
-
-            # Clean up sequence tracking for terminated interview
-            LAST_SEQUENCE_NUMBERS.pop(interview_id, None)
-            if redis_client is not None:
-                try:
-                    redis_client.delete(f"seq:{interview_id}")
-                except Exception:
-                    pass
+                # Clean up sequence tracking for terminated interview
+                LAST_SEQUENCE_NUMBERS.pop(interview_id, None)
+                if redis_client is not None:
+                    try:
+                        redis_client.delete(f"seq:{interview_id}")
+                    except Exception:
+                        pass
     else:
         # Non-strike event: still report current strike count for client sync
         actual_strike_count = db.query(InterviewMonitoringEvent).filter(

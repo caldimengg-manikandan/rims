@@ -518,21 +518,21 @@ export default function OnboardingPage() {
                                 paginatedCandidates?.map((candidate) => (
                                     <TableRow key={candidate.id} className="border-b border-border/10 last:border-b-0 group premium-table-row">
                                         <TableCell className="py-4">
-                                            <div className="flex items-center gap-3">
-                                                <Avatar className="h-9 w-9 shrink-0 border border-border">
-                                                    <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs uppercase">
-                                                        {candidate.candidate_name[0]}
-                                                    </AvatarFallback>
-                                                </Avatar>
-                                                <div className="flex flex-col">
-                                                    <Link href={`/dashboard/hr/applications/${candidate.id}`} className="font-bold text-sm text-foreground hover:text-primary hover:underline transition-colors block">
+                                            <Link href={`/dashboard/hr/applications/${candidate.id}`} className="font-bold text-sm text-foreground  transition-colors block">
+                                                <div className="flex items-center gap-3">
+                                                    <Avatar className="h-9 w-9 shrink-0 border border-border">
+                                                        <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs uppercase">
+                                                            {candidate.candidate_name[0]}
+                                                        </AvatarFallback>
+                                                    </Avatar>
+                                                    <div className="flex flex-col">
                                                         {candidate.candidate_name}
-                                                    </Link>
-                                                    <span className="text-xs text-muted-foreground block mt-0.5">
-                                                        {candidate.candidate_email}
-                                                    </span>
+                                                        <span className="text-xs text-muted-foreground block mt-0.5">
+                                                            {candidate.candidate_email}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            </Link>
                                         </TableCell>
                                         <TableCell>
                                             <div>

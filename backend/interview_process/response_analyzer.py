@@ -503,7 +503,11 @@ class ResponseAnalyzer:
         
         is_repetition = (
             similarity > 0.85 or 
-            (answer_clean and question_clean and (answer_clean == question_clean or (len(answer_clean) > 10 and answer_clean in question_clean)))
+            (answer_clean and question_clean and (
+                answer_clean == question_clean or 
+                (len(answer_clean) > 10 and answer_clean in question_clean) or
+                (len(question_clean) > 10 and question_clean in answer_clean)
+            ))
         )
         
         is_gibberish_input = metrics.get("is_gibberish", False)
@@ -539,6 +543,10 @@ class ResponseAnalyzer:
                     Evaluate this behavioral interview answer using behavioral competency metrics.
                     Question: {question}
                     <candidate_response>{sanitized_answer}</candidate_response>
+                    
+                    Strict Constraints:
+                    1. If the candidate's answer is extremely short (e.g. a single sentence definition) and lacks depth or context, cap Relevance and Action & Impact at 4.0/10.
+                    2. If the candidate merely repeats the question or pastes UI metadata, assign all scores as 0.0.
                     
                     Return JSON ONLY:
                     {{
@@ -588,6 +596,10 @@ class ResponseAnalyzer:
                     Evaluate technical answer:
                     Question: {question}
                     <candidate_response>{sanitized_answer}</candidate_response>
+                    
+                    Strict Constraints:
+                    1. If the candidate's answer is extremely short (e.g. a single sentence definition) and lacks depth or architectural examples, cap Technical Accuracy at 4.0/10 and Depth at 2.0/10.
+                    2. If the candidate merely repeats the question or pastes UI metadata, assign all scores as 0.0.
                     
                     Return JSON ONLY:
                     {{
@@ -656,6 +668,7 @@ class ResponseAnalyzer:
         - Return false if it is merely in the same broad domain but does not address the requested concept, role, action, or impact.
         - For behavioral questions, the response must address the requested experience/situation, role, action, and contribution.
         - For technical questions, the response must address the requested technical concept.
+        - Strict Rule: If the response consists primarily of the question text or platform UI metadata (e.g., 'Current Question', 'Medium Round'), you must return addresses_question=false.
 
         Return JSON ONLY:
         {{

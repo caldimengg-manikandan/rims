@@ -66,7 +66,7 @@ function InterviewAccessForm() {
            <div className="absolute bottom-[-10%] left-[-10%] w-[300px] h-[300px] bg-accent/8 rounded-full blur-[100px] animate-pulse duration-[8s] delay-1000" />
         </div>
 
-        <Card className="max-w-md w-full bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] rounded-2xl overflow-hidden relative z-10">
+        <Card className="max-w-md w-full bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] rounded-2xl overflow-hidden pb-5 relative z-10">
             <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-primary to-accent" />
             <CardHeader className="text-center pt-8 pb-4">
                 <CardTitle className="text-3xl font-black text-foreground tracking-tight">Interview Access</CardTitle>

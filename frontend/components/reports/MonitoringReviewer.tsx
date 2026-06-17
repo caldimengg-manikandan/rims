@@ -48,7 +48,7 @@ interface MonitoringEvent {
   confidence_score?: number
   frame_image_path?: string
   frame_image_url?: string
-  video_reference?: string
+
   is_false_positive?: boolean
   details?: string
 }
@@ -84,10 +84,9 @@ const normalizeEventType = (type: string): 'focus_lost' | 'multiple_faces' | 'no
 
 interface MonitoringReviewerProps {
   interviewId: number
-  videoUrl?: string | null
 }
 
-export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ interviewId, videoUrl }) => {
+export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ interviewId }) => {
   const { data: events = [], isLoading, error: monitoringError, mutate } = useSWR<MonitoringEvent[]>(
     interviewId ? `/api/interviews/${interviewId}/monitoring-events` : null,
     fetcher
@@ -204,16 +203,6 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
     return 'border-emerald-500/30 bg-emerald-500/[0.02] dark:bg-emerald-500/[0.04] hover:border-emerald-500 transition-all duration-300'
   }
 
-  const handleCardClick = (ev: MonitoringEvent) => {
-    if (ev.video_reference?.startsWith('offset_')) {
-      const sec = parseInt(ev.video_reference.replace('offset_', '').replace('s', ''), 10)
-      if (!isNaN(sec) && videoRef.current) {
-        videoRef.current.currentTime = sec
-        videoRef.current.play().catch(() => {})
-      }
-    }
-  }
-
   const toggleFalsePositive = async (eventId: number, currentVal?: boolean) => {
     try {
       await APIClient.post(`/api/interviews/${interviewId}/monitoring-events/${eventId}/flag-false-positive`, {
@@ -240,7 +229,7 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
     const rows = sortedEvents.map(ev => [
       ev.id,
       ev.original_event_type || ev.event_type,
-      formatTimeOffset(ev.video_reference, ev.timestamp),
+      ev.timestamp,
       ev.confidence_score !== undefined ? ev.confidence_score.toFixed(2) : 'N/A',
       ev.is_false_positive ? 'True' : 'False',
       ev.details ? ev.details.replace(/"/g, '""') : ''
@@ -284,23 +273,9 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
 
   if (events.length === 0) {
     return (
-      <div className="space-y-4">
-        {videoUrl ? (
-          <div className="bg-foreground/90 rounded-2xl overflow-hidden shadow-xl aspect-video relative group border border-border/80">
-            <video
-              src={videoUrl?.startsWith('http') ? videoUrl : `${getApiBaseUrl()}${videoUrl}`}
-              controls
-              preload="metadata"
-              className="w-full h-full"
-              crossOrigin="use-credentials"
-            />
-          </div>
-        ) : (
-          <div className="bg-muted/30 border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center border-border">
-            <CameraOff className="h-10 w-10 text-muted-foreground/40 mb-3" />
-            <p className="text-sm font-medium text-muted-foreground">No monitoring frames or video available.</p>
-          </div>
-        )}
+      <div className="bg-muted/30 border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center border-border">
+        <CameraOff className="h-10 w-10 text-muted-foreground/40 mb-3" />
+        <p className="text-sm font-medium text-muted-foreground">No monitoring frames available.</p>
       </div>
     )
   }
@@ -421,19 +396,6 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
         </div>
       </div>
 
-      {videoUrl && (
-        <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-xl max-w-2xl mx-auto aspect-video relative group border border-border/80">
-          <video
-            ref={videoRef}
-            src={videoUrl?.startsWith('http') ? videoUrl : `${getApiBaseUrl()}${videoUrl}`}
-            controls
-            preload="metadata"
-            className="w-full h-full"
-            crossOrigin="use-credentials"
-          />
-        </div>
-      )}
-
       <ScrollArea className="h-[480px] rounded-2xl border border-border/80 bg-card/45 backdrop-blur-xl p-4 shadow-[0_8px_30px_rgb(0,0,0,0.02)] scrollbar-premium">
         {filteredEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
@@ -445,7 +407,7 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
             {filteredEvents.map((ev) => (
               <div
                 key={ev.id}
-                onClick={() => handleCardClick(ev)}
+                onClick={() => setSelectedEvent(ev)}
                 className={`group relative flex flex-col rounded-2xl border-2 transition-all duration-300 hover:-translate-y-0.5 active:scale-[0.99] hover:shadow-[0_15px_30px_rgb(0,0,0,0.05)] cursor-pointer overflow-hidden ${getEventColorStyle(
                   ev.event_type
                 )} ${ev.is_false_positive ? 'opacity-50 grayscale-[30%] border-slate-300/40' : ''}`}
@@ -475,21 +437,10 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
                   
                   <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 text-xs font-bold text-white bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg">
                     <Clock className="w-3.5 h-3.5 text-blue-400" />
-                    {formatTimeOffset(ev.video_reference, ev.timestamp)}
+                    {new Date(ev.timestamp).toLocaleTimeString()}
                   </div>
 
                   <div className="absolute inset-0 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/55 backdrop-blur-sm gap-2 p-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="w-11/12 text-xs font-bold rounded-xl h-8"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCardClick(ev);
-                      }}
-                    >
-                      <Play className="w-3 h-3 mr-1" /> Jump to Video
-                    </Button>
                     <Button
                       size="sm"
                       className="w-11/12 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white h-8"
@@ -538,7 +489,7 @@ export const MonitoringReviewer: React.FC<MonitoringReviewerProps> = ({ intervie
                 </div>
                 <span className="flex items-center gap-1.5 text-sm font-black text-primary bg-primary/10 px-3 py-1.5 rounded-xl border border-primary/20">
                   <Clock className="w-4 h-4" />
-                  {selectedEvent && formatTimeOffset(selectedEvent.video_reference, selectedEvent.timestamp)}
+                  {selectedEvent && new Date(selectedEvent.timestamp).toLocaleTimeString()}
                 </span>
               </div>
               <DialogDescription className="text-xs font-bold text-muted-foreground pt-1">

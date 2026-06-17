@@ -57,9 +57,10 @@ _TRANSITION_TABLE: Dict[Tuple[CandidateState, TransitionAction], CandidateState]
     (CandidateState.SCREENED, TransitionAction.APPROVE_FOR_INTERVIEW): CandidateState.INTERVIEW_SCHEDULED,
     (CandidateState.SCREENED, TransitionAction.REJECT): CandidateState.REJECTED,
 
-    # 3. interview_scheduled -> interview_completed (system action only)
+    # 3. interview_scheduled -> interview_completed (system action only) or rejected
     (CandidateState.INTERVIEW_SCHEDULED, TransitionAction.SYSTEM_INTERVIEW_COMPLETE): CandidateState.INTERVIEW_COMPLETED,
     (CandidateState.INTERVIEW_SCHEDULED, TransitionAction.COMPLETE_INTERVIEW): CandidateState.INTERVIEW_COMPLETED,
+    (CandidateState.INTERVIEW_SCHEDULED, TransitionAction.REJECT): CandidateState.REJECTED,
 
     # 4. interview_completed -> hire / physical_interview / review_later
     #    NOTE: No reject from interview_completed per spec.

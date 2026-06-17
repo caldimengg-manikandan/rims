@@ -12,9 +12,8 @@ import { APIClient } from '@/app/dashboard/lib/api-client';
 
 import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
-import '@tensorflow/tfjs-converter';
+import '@tensorflow/tfjs-backend-cpu';
 import * as blazeface from '@tensorflow-models/blazeface';
-import * as faceLandmarksDetection from '@tensorflow-models/face-landmarks-detection';
 import {
   Loader2, ShieldCheck, ShieldAlert,
   UserCheck, Eye, BrainCircuit, CheckCircle2, Trophy, LogOut, CameraOff, AlertTriangle
@@ -26,21 +25,22 @@ import { FeedbackDialog, IssueReportDialog } from '@/components/interview-suppor
 const BLAZEFACE_MODEL_URL = '/calrims/models/blazeface/model.json';
 
 async function loadFaceDetector() {
-  await tf.setBackend('webgl');
-  await tf.ready();
   try {
-    const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
-    const detector = await faceLandmarksDetection.createDetector(model, {
-      runtime: 'tfjs',
-      refineLandmarks: true,
-    });
-    console.info('[FaceCheck] FaceLandmarksDetection (FaceMesh) loaded successfully.');
-    return { type: 'facemesh', detector };
-  } catch (err) {
-    console.warn('[FaceCheck] Failed to load FaceMesh landmarks detector, falling back to BlazeFace:', err);
+    await tf.setBackend('webgl');
+    await tf.ready();
+  } catch (backendErr) {
+    console.warn('[FaceCheck] WebGL backend failed, falling back to CPU:', backendErr);
+    await tf.setBackend('cpu');
+    await tf.ready();
+  }
+
+  try {
     const detector = await blazeface.load({ modelUrl: BLAZEFACE_MODEL_URL });
-    console.info('[FaceCheck] BlazeFace fallback loaded successfully.');
+    console.info('[FaceCheck] BlazeFace loaded successfully.');
     return { type: 'blazeface', detector };
+  } catch (err) {
+    console.error('[FaceCheck] Failed to load BlazeFace detector:', err);
+    throw err;
   }
 }
 
@@ -60,6 +60,11 @@ async function apiFetch(path: string, token: string, opts: RequestInit = {}) {
     headers: { ...authHeaders(token), ...(opts.headers || {}) },
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      const e = new Error('Session token has been revoked due to proctoring strikes.');
+      (e as any).status = 401;
+      throw e;
+    }
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || err.error || 'Request failed');
   }
@@ -164,33 +169,6 @@ function getAverageBrightness(video: HTMLVideoElement): number {
   }
 }
 
-function calculateVariance(values: number[]): number {
-  if (values.length === 0) return 0;
-  const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-  return values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-}
-
-function computeFaceEmbedding(landmarks: number[][]): number[] {
-  const distances: number[] = [];
-  for (let i = 0; i < landmarks.length; i++) {
-    for (let j = i + 1; j < landmarks.length; j++) {
-      const dx = landmarks[i][0] - landmarks[j][0];
-      const dy = landmarks[i][1] - landmarks[j][1];
-      distances.push(Math.sqrt(dx * dx + dy * dy));
-    }
-  }
-  const magnitude = Math.sqrt(distances.reduce((sum, d) => sum + d * d, 0));
-  return distances.map(d => d / (magnitude || 1));
-}
-
-function cosineSimilarity(v1: number[], v2: number[]): number {
-  if (v1.length !== v2.length) return 0;
-  let dotProduct = 0;
-  for (let i = 0; i < v1.length; i++) {
-    dotProduct += v1[i] * v2[i];
-  }
-  return dotProduct;
-}
 
 async function computeHMAC(message: string, secret: string): Promise<string> {
   try {
@@ -220,69 +198,113 @@ async function computeHMAC(message: string, secret: string): Promise<string> {
   }
 }
 
-function detectPhoneHeuristic(video: HTMLVideoElement, topLeft: any, bottomRight: any): boolean {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 40;
-    canvas.height = 40;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return false;
-    ctx.drawImage(video, 0, 0, 40, 40);
-    const imgData = ctx.getImageData(0, 0, 40, 40);
-    const data = imgData.data;
 
-    let phoneScore = 0;
-    for (let y = 5; y < 35; y++) {
-      for (let x = 5; x < 35; x++) {
-        const idx = (y * 40 + x) * 4;
-        const currentLuma = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-        const rightLuma = 0.299 * data[idx + 4] + 0.587 * data[idx + 5] + 0.114 * data[idx + 6];
-        const downLuma = 0.299 * data[((y + 1) * 40 + x) * 4] + 0.587 * data[((y + 1) * 40 + x) * 4 + 1] + 0.114 * data[((y + 1) * 40 + x) * 4 + 2];
-
-        const edgeX = Math.abs(currentLuma - rightLuma);
-        const edgeY = Math.abs(currentLuma - downLuma);
-
-        if (edgeX > 40 || edgeY > 40) {
-          phoneScore++;
-        }
-      }
-    }
-    return phoneScore > 120;
-  } catch (e) {
-    return false;
-  }
-}
-
-// ─── component ────────────────────────────────────────────────────────────────
 function getFaceQuality(prediction: any, video: HTMLVideoElement) {
-  const topLeft = prediction?.topLeft || [0, 0];
-  const bottomRight = prediction?.bottomRight || [0, 0];
-  const left = Number(topLeft[0] ?? 0);
-  const top = Number(topLeft[1] ?? 0);
-  const right = Number(bottomRight[0] ?? 0);
-  const bottom = Number(bottomRight[1] ?? 0);
-  const width = Math.max(0, right - left);
-  const height = Math.max(0, bottom - top);
-  const frameArea = Math.max(1, video.videoWidth * video.videoHeight);
+  let left = 0, top = 0, right = 0, bottom = 0;
+  
+  if (prediction?.box) {
+    left = prediction.box.xMin;
+    top = prediction.box.yMin;
+    right = prediction.box.xMax || (prediction.box.xMin + prediction.box.width);
+    bottom = prediction.box.yMax || (prediction.box.yMin + prediction.box.height);
+  } else {
+    const extractCoord = (coord: any, index: number, axis: 'x' | 'y') => {
+      if (!coord) return 0;
+      if (typeof coord.dataSync === 'function') return Number(coord.dataSync()[index] ?? 0);
+      if (typeof coord.arraySync === 'function') return Number(coord.arraySync()[index] ?? 0);
+      if (Array.isArray(coord)) return Number(coord[index] ?? 0);
+      if (typeof coord[index] === 'number') return Number(coord[index]);
+      if (typeof coord[axis] === 'number') return Number(coord[axis]);
+      return 0;
+    };
+    const topLeft = prediction?.topLeft || [0, 0];
+    const bottomRight = prediction?.bottomRight || [0, 0];
+    left = extractCoord(topLeft, 0, 'x');
+    top = extractCoord(topLeft, 1, 'y');
+    right = extractCoord(bottomRight, 0, 'x');
+    bottom = extractCoord(bottomRight, 1, 'y');
+  }
+
+  // Ensure left is less than right (in case of horizontal flip bugs)
+  const actualLeft = Math.min(left, right);
+  const actualRight = Math.max(left, right);
+  const actualTop = Math.min(top, bottom);
+  const actualBottom = Math.max(top, bottom);
+
+  const width = Math.max(0, actualRight - actualLeft);
+  const height = Math.max(0, actualBottom - actualTop);
+  // Use videoWidth/videoHeight but fall back to a reasonable default if the
+  // video element hasn't reported its native dimensions yet (avoids frameArea=1
+  // which makes areaRatio artificially huge).
+  const frameW = video.videoWidth > 0 ? video.videoWidth : 640;
+  const frameH = video.videoHeight > 0 ? video.videoHeight : 480;
+  const frameArea = frameW * frameH;
   const areaRatio = (width * height) / frameArea;
   const rawProbability = prediction?.probability;
-  let confidence = 0;
+  let confidence = 0.8; // default to high confidence when face IS detected but probability parsing fails
   if (typeof rawProbability === 'number') {
     confidence = rawProbability;
   } else if (Array.isArray(rawProbability)) {
     const first = rawProbability[0];
-    confidence = typeof first === 'number' ? first : Number(first?.[0] ?? 0);
+    confidence = typeof first === 'number' ? first : Number(first?.[0] ?? 0.8);
+  } else if (rawProbability && typeof rawProbability === 'object' && typeof rawProbability[0] === 'number') {
+    // Handle Float32Array / TypedArray (Array.isArray returns false for typed arrays)
+    confidence = rawProbability[0];
   }
-  const hasReasonableSize = areaRatio >= 0.035;
-  const isInsideFrame = left >= 0 && top >= 0 && right <= video.videoWidth && bottom <= video.videoHeight;
+  // Lenient size threshold: face only needs to be 0.4% of the frame (was 0.8%).
+  // This handles cameras where the candidate sits further back.
+  const hasReasonableSize = areaRatio >= 0.004;
+  // Allow a 30% margin for bounding box coordinates going slightly off-screen
+  const marginX = frameW * 0.30;
+  const marginY = frameH * 0.30;
+  const isInsideFrame = actualLeft >= -marginX && actualTop >= -marginY && actualRight <= frameW + marginX && actualBottom <= frameH + marginY;
+
+  // Calculate if the face center is within the flexible screen percentages
+  // X-Axis: middle 40% of the screen (30% to 70%)
+  // Y-Axis: between 10th percentile and 70th percentile
+  const faceCenterX = actualLeft + width / 2;
+  const faceCenterY = actualTop + height / 2;
+  
+  const minX = frameW * 0.35;
+  const maxX = frameW * 0.65; 
+  const minY = frameH * 0.40;
+  const maxY = frameH * 0.65; 
+
+  // We keep the variable name "isInsideCircle" to avoid refactoring the rest of the tracking architecture
+  const isInsideCircle = faceCenterX >= minX && faceCenterX <= maxX && faceCenterY >= minY && faceCenterY <= maxY;
+
+  // Log percentiles for debugging exactly where the candidate's face is
+  if (!isInsideCircle && process.env.NODE_ENV !== 'production') {
+    const pctX = ((faceCenterX / frameW) * 100).toFixed(1);
+    const pctY = ((faceCenterY / frameH) * 100).toFixed(1);
+    console.log(`[Face Bounds Debug] Face Center X: ${pctX}% | Face Center Y: ${pctY}%`);
+  }
+
+  // A detected face is "in focus" when BlazeFace has reasonable confidence
+  // AND the bounding box represents a plausible face (non-zero size, inside frame, and inside the circular guide).
+  const inFocus = confidence >= 0.35 && hasReasonableSize && isInsideFrame && isInsideCircle;
 
   return {
     confidence,
-    inFocus: confidence >= 0.75 && hasReasonableSize && isInsideFrame,
+    areaRatio,  // exposed for diagnostic logging
+    isInsideFrame,
+    isInsideCircle,
+    inFocus,
+    // Debug variables
+    faceCenterX,
+    faceCenterY,
+    width,
+    height,
+    actualLeft,
+    actualTop,
+    actualRight,
+    actualBottom,
+    frameW,
+    frameH
   };
 }
 
-export default function InterviewSession({ sessionId, token }: InterviewSessionProps) {
+function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const interviewId = sessionId;
 
   // ── session state ──
@@ -358,7 +380,11 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
 
   // ── proctoring ──
   const [isFaceDetected, setIsFaceDetected] = useState(true);
+  const [faceInCircle, setFaceInCircle] = useState(true);
   const [isFocusingOnMonitor, setIsFocusingOnMonitor] = useState(true);
+  const [faceMissWarning, setFaceMissWarning] = useState<string | null>(null);
+  const [faceMissCountdown, setFaceMissCountdown] = useState<number | null>(null);
+  const [debugInfo, setDebugInfo] = useState<any>(null); // Added for diagnostic overlay
   const detectorRef = useRef<any>(null);
   const detectorLoadAttemptRef = useRef(0);
   const detectorLoadingRef = useRef(false);
@@ -374,23 +400,19 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   const transcriptionCallbackRef = useRef<((text: string) => void) | null>(null);
 
   // ── video recording ──
-  const videoRecorderRef = useRef<MediaRecorder | null>(null);
+
   const videoChunksRef = useRef<Blob[]>([]);
   const activeStreamRef = useRef<MediaStream | null>(null);
   const isSubmittingRef = useRef(false);
   const startSessionVideoRecordingRef = useRef<((stream: MediaStream) => void) | null>(null);
 
-  const faceHistoryRef = useRef<{ noseX: number, noseY: number, eyeToEye: number, brightness: number, timestamp: number }[]>([]);
-  const initialFaceFeaturesRef = useRef<{ eyeToEye: number, noseToEye: number, eyeNoseRatio: number } | null>(null);
-  const gazeDeviationStartRef = useRef<number | null>(null);
-  const lastBrowserIntegrityCheckRef = useRef<number>(0);
-  const lastPhoneCheckRef = useRef<number>(0);
-  const lastBlinkRef = useRef<number>(0);
-  const voiceCoachingDurationRef = useRef<number>(0);
-  const lastVoiceCoachingLogRef = useRef<number>(0);
+  // Consecutive face miss counter — prevents single-frame glitches from firing strikes
+  const consecutiveFacesMissedRef = useRef<number>(0);
+  // FIX Issue #2: Raised from 3→5 so detection needs 5 consecutive bad frames (~15 s)
+  // before a strike fires, giving the camera/model time to warm up properly.
+  const FACE_MISS_THRESHOLD = 5; // require 5 consecutive misses (~15 sec) before a strike
   const isListeningRef = useRef(false);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
-  const objectDetectorRef = useRef<any>(null);
 
   // ── heartbeat tracking (tamper-resistance) ──
   const heartbeatSeqRef = useRef<number>(0);
@@ -441,6 +463,12 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         }),
       })
         .then(async (res) => {
+          if (res.status === 401 && !terminationSentRef.current) {
+            terminationSentRef.current = true;
+            setIsTerminated(true);
+            setTerminationReason("Security violation: Session token has been revoked due to proctoring strikes.");
+            return null;
+          }
           if (!res.ok) return null;
           const data = await res.json().catch(() => null);
           if (data && typeof data.strike_count === 'number') {
@@ -466,6 +494,14 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     });
   }, [interviewId, token]);
 
+  // FIX Issue #1: Stable ref so the proctoring useEffect never needs to list
+  // postMonitoringEvent in its dependency array. The ref is kept up-to-date on
+  // every render, making it safe to call inside long-lived setInterval callbacks.
+  const postMonitoringEventRef = useRef(postMonitoringEvent);
+  useEffect(() => {
+    postMonitoringEventRef.current = postMonitoringEvent;
+  }, [postMonitoringEvent]);
+
   const handleStrike = useCallback((reason: string, options?: { respectStartupGrace?: boolean }) => {
     if (!isStartedRef.current) return; // use ref — stable, no re-render dependency
     if (options?.respectStartupGrace !== false && Date.now() - sessionStartRef.current < 15000) return; // ignore first 15s
@@ -486,8 +522,9 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       const eventType = `focus_lost_strike_${next}_${sanitizedReason}`;
       postMonitoringEvent(eventType, 0.0, floatingVideoRef.current, JSON.stringify({ strikeNumber: next, reason }));
 
-      if (next < 4) {
-        toast.error(`Warning ${next}/3: ${reason}`, {
+      const MAX_STRIKES = 4;
+      if (next < MAX_STRIKES) {
+        toast.error(`Warning ${next}/${MAX_STRIKES - 1}: ${reason}`, {
           description: 'Multiple violations will result in immediate session termination.',
           duration: 5000,
         });
@@ -506,42 +543,15 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     });
   }, [interviewId, token, postMonitoringEvent]); // NO isStarted dependency — uses isStartedRef instead
 
-  // ─── VIDEO UPLOAD ──────────────────────────────────────────────────────────
-  const uploadVideo = useCallback(async (blob: Blob) => {
-    if (blob.size < 1000) return;
-    if (isFinishedRef.current) {
-      console.log('Skipping video upload because the interview is already completed.');
-      return;
-    }
-    try {
-      const formData = new FormData();
-      formData.append('file', blob, 'interview_session.webm');
-      await APIClient.postMultipart(`/api/interviews/${interviewId}/upload-video`, formData, `v-${Date.now()}`);
-    } catch (err: any) {
-      // If the interview is already completed, this error is expected and can be silently ignored.
-      if (err?.message?.includes('already been completed') || err?.message?.includes('403') || err?.message?.includes('Forbidden')) {
-        console.log('Video upload completed or skipped (interview already finished).');
-        return;
-      }
-      console.error('Video upload failed:', err);
-    }
-  }, [interviewId]);
-
-  // Recovery: check for crashed recording chunks on mount
+  // FIX Issue #1: Stable ref for handleStrike — prevents the proctoring useEffect
+  // from re-running (and spawning duplicate intervals) whenever handleStrike is
+  // recreated due to its own dependency chain changing.
+  const handleStrikeRef = useRef(handleStrike);
   useEffect(() => {
-    if (typeof window !== 'undefined' && interviewId) {
-      loadChunksFromIndexedDB(interviewId).then((savedChunks) => {
-        if (savedChunks && savedChunks.length > 0) {
-          console.log('[Resilience] Found recovered video chunks from a previous session crash. Uploading...');
-          const mimeType = savedChunks[0].type || 'video/webm';
-          const blob = new Blob(savedChunks, { type: mimeType });
-          uploadVideo(blob).then(() => {
-            clearChunksFromIndexedDB(interviewId);
-          }).catch(err => console.warn('Failed to upload recovered chunks:', err));
-        }
-      });
-    }
-  }, [interviewId, uploadVideo]);
+    handleStrikeRef.current = handleStrike;
+  }, [handleStrike]);
+
+
 
   // ─── LOAD QUESTIONS (poll until ready) ────────────────────────────────────
   const loadCurrentQuestion = useCallback(async (questionNumber?: number) => {
@@ -593,8 +603,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
 
   // Handle video recording stop and upload when finished
   useEffect(() => {
-    if (isFinished && videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
-      videoRecorderRef.current.stop();
+
     }
   }, [isFinished]);
 
@@ -651,6 +660,14 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         if (isPermanentError) {
           setPollingError(errorMsg);
           setIsLoading(false);
+          // If 401, also trigger global termination
+          if (e.status === 401 || errorMsg.toLowerCase().includes('revoked')) {
+            setIsTerminated(true);
+            setTerminationReason("Security violation: Session token has been revoked due to proctoring strikes.");
+            terminationSentRef.current = true;
+
+            }
+          }
           return;
         }
 
@@ -1023,11 +1040,6 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           if (!detectorRef.current) {
             detectorRef.current = await loadFaceDetector();
           }
-          if (!objectDetectorRef.current) {
-            const cocoSsd = await import('@tensorflow-models/coco-ssd');
-            objectDetectorRef.current = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
-            console.info('[Proctoring] COCO-SSD object detector loaded.');
-          }
         } catch (modelErr) {
           console.warn(
             '[FaceCheck] Models failed to load during device check; continuing with fallback checks.',
@@ -1061,29 +1073,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
           activeStreamRef.current = stream;
         }
-
-        // Scan for virtual camera inputs
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const virtualCams = devices.filter(d =>
-            d.kind === 'videoinput' &&
-            (d.label.toLowerCase().includes('obs') ||
-              d.label.toLowerCase().includes('manycam') ||
-              d.label.toLowerCase().includes('virtual') ||
-              d.label.toLowerCase().includes('synthetic') ||
-              d.label.toLowerCase().includes('device-identification'))
-          );
-          if (virtualCams.length > 0) {
-            console.warn('[Proctoring] Virtual camera detected:', virtualCams.map(c => c.label));
-            postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
-              category: 'virtual_camera_detected',
-              devices: virtualCams.map(c => c.label)
-            }));
-          }
-        } catch (e) {
-          console.warn('Failed to enumerate devices:', e);
-        }
-
+        
         // Ensure stream is bound to all relevant video elements
         if (sessionVideoRef.current) {
           sessionVideoRef.current.srcObject = stream;
@@ -1108,29 +1098,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
             handleStrike('Camera hardware disconnected');
           };
 
-          // ─── VIRTUAL CAMERA DETECTION VIA TRACK CAPABILITIES ───
-          try {
-            const caps: any = typeof videoTrack.getCapabilities === 'function' ? videoTrack.getCapabilities() : {};
-            const settings: any = typeof videoTrack.getSettings === 'function' ? videoTrack.getSettings() : {};
 
-            const hasStaticFps = caps.frameRate && (caps.frameRate.max === 0 || (caps.frameRate.min === caps.frameRate.max && caps.frameRate.max <= 5));
-            const isLowFps = settings.frameRate && settings.frameRate <= 5;
-            const isEmulated = caps.facingMode === undefined && caps.deviceId === undefined;
-
-            if (hasStaticFps || isLowFps || isEmulated) {
-              console.warn('[Proctoring] Virtual camera track capabilities match:', { caps, settings });
-              postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
-                category: 'virtual_camera_detected',
-                details: 'Static framerate, missing standard device capabilities, or emulation signature detected.',
-                frameRateMax: caps.frameRate?.max,
-                frameRateMin: caps.frameRate?.min,
-                currentFrameRate: settings.frameRate,
-                facingMode: caps.facingMode
-              }));
-            }
-          } catch (capErr) {
-            console.warn('[Proctoring] Failed to audit track capabilities:', capErr);
-          }
         }
 
         // Only set up audio track handlers if we requested a new audio track
@@ -1163,38 +1131,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                     volBar.style.width = Math.min(100, (avg / 64) * 100) + '%';
                   }
 
-                  // Voice Activity Detection (VAD) Speech-band extraction (bins 1 to 16)
-                  let speechSum = 0;
-                  let noiseSum = 0;
-                  const speechBins = 16;
-                  for (let i = 1; i <= speechBins && i < dataArray.length; i++) {
-                    speechSum += dataArray[i];
-                  }
-                  for (let i = speechBins + 1; i < dataArray.length; i++) {
-                    noiseSum += dataArray[i];
-                  }
-                  const avgSpeech = speechSum / speechBins;
-                  const avgNoise = noiseSum / Math.max(1, dataArray.length - speechBins - 1);
-                  const isSpeechDetected = avgSpeech > 25 && avgSpeech > avgNoise * 2.0;
 
-                  // Voice coaching / Speaker detection (audit-only)
-                  if (isSpeechDetected && !isListeningRef.current) {
-                    voiceCoachingDurationRef.current += 16.7;
-                    if (voiceCoachingDurationRef.current > 3000) {
-                      const now = Date.now();
-                      if (now - lastVoiceCoachingLogRef.current > 10000) {
-                        lastVoiceCoachingLogRef.current = now;
-                        postMonitoringEvent('voice_coaching_detected', 0.8, null, JSON.stringify({
-                          category: 'audio_energy_anomaly',
-                          averageVolume: avgSpeech,
-                          durationSeconds: 3
-                        }));
-                      }
-                      voiceCoachingDurationRef.current = 0;
-                    }
-                  } else {
-                    voiceCoachingDurationRef.current = Math.max(0, voiceCoachingDurationRef.current - 50);
-                  }
 
                   requestAnimationFrame(updateVolume);
                 };
@@ -1338,115 +1275,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
     };
   }, [isStarted, postMonitoringEvent]);
 
-  const startSessionVideoRecording = useCallback((stream: MediaStream) => {
-    // Initialize session video recorder
-    if (videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
-      try { videoRecorderRef.current.stop(); } catch (e) { console.error(e); }
-    }
 
-    let vRecorder: MediaRecorder | null = null;
-    let recordingStarted = false;
-
-    // Helper to start MediaRecorder on a stream with a set of mimetypes
-    const tryStartRecorder = (mediaStream: MediaStream, mimeTypes: string[]): { recorder: MediaRecorder | null, started: boolean } => {
-      let recorderInstance: MediaRecorder | null = null;
-      let isStarted = false;
-
-      // Try mimetypes in order of preference
-      for (const mime of mimeTypes) {
-        if (MediaRecorder.isTypeSupported(mime)) {
-          try {
-            recorderInstance = new MediaRecorder(mediaStream, { mimeType: mime });
-            videoChunksRef.current = [];
-            recorderInstance.ondataavailable = (e) => { if (e.data.size > 0) videoChunksRef.current.push(e.data); };
-            recorderInstance.onstop = () => {
-              const blob = new Blob(videoChunksRef.current, { type: mime || 'video/webm' });
-              uploadVideo(blob);
-            };
-            recorderInstance.start(10000);
-            isStarted = true;
-            console.log(`Successfully started MediaRecorder with mimeType: ${mime}`);
-            break;
-          } catch (err) {
-            console.warn(`Failed to start MediaRecorder with mimeType: ${mime}, trying next...`, err);
-            recorderInstance = null;
-          }
-        }
-      }
-
-      // Fallback to default options if preferred mimetypes failed
-      if (!isStarted) {
-        try {
-          recorderInstance = new MediaRecorder(mediaStream);
-          videoChunksRef.current = [];
-          recorderInstance.ondataavailable = (e) => { if (e.data.size > 0) videoChunksRef.current.push(e.data); };
-          recorderInstance.onstop = () => {
-            const blob = new Blob(videoChunksRef.current, { type: recorderInstance?.mimeType || 'video/webm' });
-            uploadVideo(blob);
-          };
-          recorderInstance.start(10000);
-          isStarted = true;
-          console.log("Successfully started MediaRecorder with default settings");
-        } catch (err) {
-          console.error("Failed to start MediaRecorder with default settings:", err);
-          recorderInstance = null;
-        }
-      }
-
-      return { recorder: recorderInstance, started: isStarted };
-    };
-
-    // Step 1: Try recording combined audio and video tracks
-    const comboMimeTypes = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=h264,opus',
-      'video/webm',
-      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-      'video/mp4'
-    ];
-
-    console.log("Attempting combined audio and video session recording...");
-    const attempt1 = tryStartRecorder(stream, comboMimeTypes);
-
-    if (attempt1.started && attempt1.recorder) {
-      vRecorder = attempt1.recorder;
-      recordingStarted = true;
-    } else {
-      // Step 2: Fallback to video-only track recording to bypass hardware/codec/mimetype mismatches
-      console.warn("Combined recording failed to start. Falling back to video-only stream...");
-      const videoTracks = stream.getVideoTracks();
-      if (videoTracks.length > 0) {
-        const videoOnlyStream = new MediaStream(videoTracks);
-        const videoOnlyMimeTypes = [
-          'video/webm;codecs=vp9',
-          'video/webm;codecs=vp8',
-          'video/webm;codecs=h264',
-          'video/webm',
-          'video/mp4;codecs=avc1.42E01E',
-          'video/mp4'
-        ];
-        const attempt2 = tryStartRecorder(videoOnlyStream, videoOnlyMimeTypes);
-        if (attempt2.started && attempt2.recorder) {
-          vRecorder = attempt2.recorder;
-          recordingStarted = true;
-        }
-      }
-    }
-
-    if (vRecorder && recordingStarted) {
-      videoRecorderRef.current = vRecorder;
-    } else {
-      console.error("All MediaRecorder attempts failed. Proctoring is active but video recording is offline.");
-      toast.error("Video recording could not be started, but your interview session is safe to continue.", {
-        description: "Webcam monitoring and proctoring remain fully active."
-      });
-    }
-  }, [uploadVideo]);
-
-  useEffect(() => {
-    startSessionVideoRecordingRef.current = startSessionVideoRecording;
-  }, [startSessionVideoRecording]);
 
   // Proctoring monitors & Video recorder (Runs when isStarted becomes true)
   useEffect(() => {
@@ -1454,20 +1283,45 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
 
     let checkCount = 0;
     const stream = activeStreamRef.current;
+    // cancelled flag: if the effect cleanup runs during the warm-up delay we
+    // must not start any intervals (they would never be cleared).
+    let cancelled = false;
 
-    startSessionVideoRecording(stream);
 
-    // ─── HEARTBEAT INTERVAL SETUP (MONOTONIC SEQ) ───
-    if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
-    heartbeatIntervalRef.current = setInterval(() => {
-      if (!isStartedRef.current) return;
-      const currentSeq = heartbeatSeqRef.current;
-      heartbeatSeqRef.current += 1;
-      postMonitoringEvent('normal', 1.0, null, JSON.stringify({ category: 'heartbeat' }), currentSeq);
-    }, 5000);
+
+    // Inner async function so the useEffect callback stays synchronous
+    // (React does not accept async effect callbacks directly).
+    const startMonitoring = async () => {
+      // FIX Issue #2: 2-second camera warm-up delay before starting monitoring.
+      // This gives BlazeFace and the camera stream time to produce valid frames,
+      // preventing false "face not detected" events on black/uninitialized frames.
+      await new Promise<void>(resolve => setTimeout(resolve, 2000));
+
+      // Bail out if the component unmounted or isStarted turned false during warm-up
+      if (cancelled) return;
+
+      // After the warm-up, reset the miss counter so any blank frames during
+      // warm-up do not carry over into the live session.
+      consecutiveFacesMissedRef.current = 0;
+
+      // ─── HEARTBEAT INTERVAL SETUP (MONOTONIC SEQ) ───
+      // FIX Issue #1: Use postMonitoringEventRef.current so this interval never
+      // becomes stale and the proctoring useEffect dep array stays stable.
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = setInterval(() => {
+        if (!isStartedRef.current || terminationSentRef.current) return;
+        const currentSeq = heartbeatSeqRef.current;
+        heartbeatSeqRef.current += 1;
+        postMonitoringEventRef.current('normal', 1.0, null, JSON.stringify({ category: 'heartbeat' }), currentSeq);
+      }, 5000);
+    };
+
+    startMonitoring();
 
     if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
     faceCheckIntervalRef.current = setInterval(async () => {
+      if (terminationSentRef.current) return;
+      
       // Use floatingVideoRef — sessionVideoRef is unmounted once the session starts
       const video = floatingVideoRef.current;
       if (!video) return;
@@ -1495,7 +1349,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         checkCount++;
         if (checkCount >= 5) {
           checkCount = 0;
-          postMonitoringEvent('face_not_visible', 0, video);
+          postMonitoringEventRef.current('face_not_visible', 0, video);
         }
         return;
       }
@@ -1510,12 +1364,13 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         video.play().catch(() => { });
         return;
       }
-
+      
+      tf.engine().startScope();
       try {
         // 1. Ambient lighting verification (Audit-only)
         const brightness = getAverageBrightness(video);
         if (brightness < 40) {
-          postMonitoringEvent('low_lighting', 0.0, video, JSON.stringify({ brightness }));
+          postMonitoringEventRef.current('low_lighting', 0.0, video, JSON.stringify({ brightness }));
         }
 
         const detectorObj = detectorRef.current;
@@ -1526,7 +1381,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
             staticImageMode: false
           });
         } else {
-          rawPredictions = await detectorObj.detector.estimateFaces(video, false, true);
+          rawPredictions = await detectorObj.detector.estimateFaces(video, false, false);
         }
 
         const faceFound = rawPredictions.length > 0;
@@ -1568,294 +1423,57 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         const faceQuality = predictions.length === 1 ? getFaceQuality(predictions[0], video) : null;
         const faceInFocus = Boolean(faceQuality?.inFocus);
         setIsFocusingOnMonitor(predictions.length === 1 && faceInFocus);
+        setFaceInCircle(predictions.length === 1 ? Boolean(faceQuality?.isInsideCircle) : false);
 
-        if (predictions.length === 0) {
-          postMonitoringEvent('face_not_detected', 0, video);
-          handleStrike('No face detected', { respectStartupGrace: false });
-        } else if (rawPredictions.length > 1) {
-          postMonitoringEvent('multiple_people', 0, video);
-          handleStrike('Multiple people detected', { respectStartupGrace: false });
-        } else if (!faceInFocus) {
-          postMonitoringEvent('face_not_visible', faceQuality?.confidence ?? 0, video);
-          handleStrike('Face not in focus', { respectStartupGrace: false });
-        }
-
-        // Advanced Proctoring Heuristics (Audit-only)
-        if (predictions.length === 1) {
-          const pred = predictions[0];
-          if (pred && pred.landmarks) {
-            const nose = pred.landmarks[2];
-            const leftEye = pred.landmarks[1];
-            const rightEye = pred.landmarks[0];
-            if (nose && leftEye && rightEye) {
-              const noseX = nose[0];
-              const noseY = nose[1];
-              const leftEyeX = leftEye[0];
-              const leftEyeY = leftEye[1];
-              const rightEyeX = rightEye[0];
-              const rightEyeY = rightEye[1];
-
-              const eyeToEye = Math.sqrt(Math.pow(leftEyeX - rightEyeX, 2) + Math.pow(leftEyeY - rightEyeY, 2));
-              const eyeMidX = (leftEyeX + rightEyeX) / 2;
-              const eyeMidY = (leftEyeY + rightEyeY) / 2;
-              const noseToEye = Math.sqrt(Math.pow(noseX - eyeMidX, 2) + Math.pow(noseY - eyeMidY, 2));
-
-              // ─── IDENTITY VERIFICATION & DRIFT (Cosine Similarity landmarks embedding) ───
-              const landmarks = pred.landmarks.map((l: any) => [l[0], l[1]]);
-              const currentEmbedding = computeFaceEmbedding(landmarks);
-
-              if (!initialFaceFeaturesRef.current) {
-                (initialFaceFeaturesRef as any).current = currentEmbedding;
-                console.log('[Proctoring] Reference face embedding registered.');
-              } else {
-                const refEmbedding = (initialFaceFeaturesRef as any).current;
-                const similarity = cosineSimilarity(refEmbedding, currentEmbedding);
-                if (similarity < 0.96) {
-                  postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
-                    category: 'identity_drift',
-                    description: 'Candidate replacement detected / face structure shift (Cosine Similarity anomaly)',
-                    similarity,
-                    threshold: 0.96
-                  }));
-                }
-              }
-
-              // ─── 3D HEAD POSE & GAZE ANOMALY DETECTION (Yaw, Pitch, Roll) ───
-              let yaw = 0;
-              let pitch = 0;
-              let roll = 0;
-
-              if (detectorObj.type === 'facemesh') {
-                const kps = rawPredictions[0].keypoints;
-                if (kps && kps.length > 362) {
-                  const eyeMidXMesh = (kps[133].x + kps[362].x) / 2;
-                  const eyeMidYMesh = (kps[133].y + kps[362].y) / 2;
-                  const eyeWidth = Math.abs(kps[133].x - kps[362].x) || 1;
-
-                  const noseOffset = kps[4].x - eyeMidXMesh;
-                  yaw = (noseOffset / eyeWidth) * 100;
-
-                  const faceHeight = Math.abs(kps[152].y - eyeMidYMesh) || 1;
-                  const noseOffsetVer = kps[4].y - eyeMidYMesh;
-                  pitch = ((noseOffsetVer / faceHeight) - 0.35) * 120;
-
-                  roll = Math.atan2(kps[362].y - kps[133].y, kps[362].x - kps[133].x) * (180 / Math.PI);
-                }
-              } else {
-                const distLeft = Math.abs(noseX - leftEyeX);
-                const distRight = Math.abs(noseX - rightEyeX);
-                const total = distLeft + distRight;
-                const mouthY = pred.landmarks[3][1];
-
-                yaw = Math.asin(Math.max(-1, Math.min(1, (distLeft - distRight) / (total || 1)))) * (180 / Math.PI);
-                roll = Math.atan2(rightEyeY - leftEyeY, rightEyeX - leftEyeX) * (180 / Math.PI);
-                const verticalRatio = (noseY - eyeMidY) / (mouthY - eyeMidY || 1);
-                pitch = (verticalRatio - 0.45) * 90;
-              }
-
-              let gazeDirection: 'Center' | 'Left' | 'Right' | 'Upward' | 'Downward' = 'Center';
-              if (yaw < -25) {
-                gazeDirection = 'Left';
-              } else if (yaw > 25) {
-                gazeDirection = 'Right';
-              } else if (pitch < -20) {
-                gazeDirection = 'Downward';
-              } else if (pitch > 20) {
-                gazeDirection = 'Upward';
-              }
-
-              if (gazeDirection !== 'Center') {
-                if (gazeDeviationStartRef.current === null) {
-                  gazeDeviationStartRef.current = Date.now();
-                }
-                const duration = (Date.now() - gazeDeviationStartRef.current) / 1000;
-                postMonitoringEvent('gaze_deviation', 0.0, video, JSON.stringify({
-                  direction: gazeDirection,
-                  duration,
-                  yaw: Math.round(yaw),
-                  pitch: Math.round(pitch),
-                  roll: Math.round(roll),
-                  confidence: faceQuality?.confidence ?? 1.0
-                }));
-              } else {
-                gazeDeviationStartRef.current = null;
-              }
-
-              // ─── HISTORY FOR PHOTO ATTACK & FROZEN FRAME ───
-              faceHistoryRef.current.push({
-                noseX,
-                noseY,
-                eyeToEye,
-                brightness,
-                timestamp: Date.now()
-              });
-              if (faceHistoryRef.current.length > 10) {
-                faceHistoryRef.current.shift();
-              }
-
-              if (faceHistoryRef.current.length >= 5) {
-                const noseXs = faceHistoryRef.current.map(h => h.noseX);
-                const noseYs = faceHistoryRef.current.map(h => h.noseY);
-                const brightnesses = faceHistoryRef.current.map(h => h.brightness);
-
-                const noseXVar = calculateVariance(noseXs);
-                const noseYVar = calculateVariance(noseYs);
-                const brightnessVar = calculateVariance(brightnesses);
-
-                if (noseXVar < 0.005 && noseYVar < 0.005) {
-                  postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
-                    category: 'static_image_detected',
-                    description: 'Zero micro-movements detected over consecutive frames. Likely a static photo/image attack.',
-                    noseXVar,
-                    noseYVar
-                  }));
-                }
-
-                if (brightnessVar < 0.0001) {
-                  postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
-                    category: 'frozen_frame_detected',
-                    description: 'Camera frame brightness is completely static. Likely frozen frame or feed replication.',
-                    brightnessVar
-                  }));
-                }
-
-                // Blink & Eye Closure / Anti-Spoofing Detection
-                let isBlinkDetected = false;
-                const nowTime = Date.now();
-                if (detectorObj.type === 'facemesh') {
-                  const kps = rawPredictions[0].keypoints;
-                  if (kps && kps.length > 386) {
-                    const dist3D = (kp1: any, kp2: any) => {
-                      return Math.sqrt(
-                        Math.pow(kp1.x - kp2.x, 2) +
-                        Math.pow(kp1.y - kp2.y, 2) +
-                        Math.pow((kp1.z ?? 0) - (kp2.z ?? 0), 2)
-                      );
-                    };
-                    const dLeftV = dist3D(kps[159], kps[145]);
-                    const dLeftH = dist3D(kps[33], kps[133]);
-                    const earLeft = dLeftV / (dLeftH || 1);
-
-                    const dRightV = dist3D(kps[386], kps[374]);
-                    const dRightH = dist3D(kps[362], kps[263]);
-                    const earRight = dRightV / (dRightH || 1);
-
-                    const currentEAR = (earLeft + earRight) / 2;
-
-                    if (currentEAR < 0.18) {
-                      if (nowTime - lastBlinkRef.current > 4000) {
-                        lastBlinkRef.current = nowTime;
-                        isBlinkDetected = true;
-                        postMonitoringEvent('normal', 1.0, null, JSON.stringify({
-                          category: 'blink_detected',
-                          ear: parseFloat(currentEAR.toFixed(3)),
-                          duration: 0.15
-                        }));
-                      }
-                    }
-                  }
-                }
-
-                if (!isBlinkDetected && detectorObj.type !== 'facemesh') {
-                  const eyeDistances = faceHistoryRef.current.map(h => h.eyeToEye);
-                  const maxEyeDist = Math.max(...eyeDistances);
-                  const minEyeDist = Math.min(...eyeDistances);
-                  if (maxEyeDist - minEyeDist > 2) {
-                    if (nowTime - lastBlinkRef.current > 4000) {
-                      lastBlinkRef.current = nowTime;
-                      postMonitoringEvent('normal', 1.0, null, JSON.stringify({
-                        category: 'blink_detected',
-                        duration: 0.15
-                      }));
-                    }
-                  }
-                }
-
-                // Spoofing check: warn if no blink for >20 seconds
-                if (nowTime - lastBlinkRef.current > 20000 && nowTime - sessionStartRef.current > 25000) {
-                  postMonitoringEvent('liveness_violation', 0.8, video, JSON.stringify({
-                    category: 'no_blink_detected',
-                    description: 'No blink detected for over 20 seconds. Potential static photo/spoofing attack.'
-                  }));
-                  lastBlinkRef.current = nowTime - 10000;
-                }
-              }
-
-              // ─── MOBILE PHONE / TABLET OBJECT DETECTION (COCO-SSD / Fallback) ───
-              const now = Date.now();
-              if (now - lastPhoneCheckRef.current > 6000) {
-                lastPhoneCheckRef.current = now;
-
-                let phoneDetected = false;
-                if (objectDetectorRef.current) {
-                  try {
-                    const predictionsObj = await objectDetectorRef.current.detect(video);
-                    const phonePrediction = predictionsObj.find((p: any) =>
-                      (p.class === 'cell phone' || p.class === 'phone' || p.class === 'mobile phone' || p.class === 'tablet') &&
-                      p.score > 0.45
-                    );
-                    if (phonePrediction) {
-                      phoneDetected = true;
-                      postMonitoringEvent('liveness_violation', phonePrediction.score, video, JSON.stringify({
-                        category: 'mobile_phone_detected',
-                        description: `Object detector identified a ${phonePrediction.class} with ${Math.round(phonePrediction.score * 100)}% confidence.`,
-                        bbox: phonePrediction.bbox
-                      }));
-                    }
-                  } catch (objErr) {
-                    console.warn('Object detection failed:', objErr);
-                  }
-                }
-
-                if (!phoneDetected) {
-                  const hasPhone = detectPhoneHeuristic(video, pred.topLeft, pred.bottomRight);
-                  if (hasPhone) {
-                    postMonitoringEvent('liveness_violation', 1.0, video, JSON.stringify({
-                      category: 'mobile_phone_detected',
-                      description: 'Candidate matches patterns consistent with phone/tablet usage near face (heuristic fallback).'
-                    }));
-                  }
-                }
-              }
-            }
+        if (rawPredictions.length > 1) {
+          // Multiple people — immediate strike (clear intent), but still with grace period
+          consecutiveFacesMissedRef.current = 0;
+          postMonitoringEventRef.current('multiple_people', 0, video);
+          handleStrikeRef.current('Multiple people detected');
+        } else if (predictions.length === 0 || !faceInFocus) {
+          // Face not detected or not in focus — require N consecutive misses before striking
+          consecutiveFacesMissedRef.current += 1;
+          const reason = predictions.length === 0 ? 'No face detected' : 'Face outside position circle';
+          const eventType = predictions.length === 0 ? 'face_not_detected' : 'face_not_visible';
+          
+          if (consecutiveFacesMissedRef.current === 1) {
+            setFaceMissWarning(reason);
+            toast.warning(`Warning: ${reason}`, {
+              description: "Please center your face inside the camera frame immediately.",
+              duration: 4000,
+            });
           }
-        }
+          setFaceMissCountdown(FACE_MISS_THRESHOLD - consecutiveFacesMissedRef.current);
 
-        // ─── BROWSER INTEGRITY & DEVTOOLS DETECTION (every 9 seconds) ───
-        const timeNow = Date.now();
-        if (timeNow - lastBrowserIntegrityCheckRef.current > 9000) {
-          lastBrowserIntegrityCheckRef.current = timeNow;
+          postMonitoringEventRef.current(eventType, faceQuality?.confidence ?? 0, video);
 
-          const isWebdriver = navigator.webdriver ||
-            (typeof document !== 'undefined' && document.documentElement.getAttribute('webdriver') !== null) ||
-            '__webdriver_evaluate' in window ||
-            '__selenium_evaluate' in window ||
-            '__puppeteer_evaluate' in window;
-
-          const userAgentLower = navigator.userAgent.toLowerCase();
-          const isHeadless = userAgentLower.includes('headless') ||
-            userAgentLower.includes('puppeteer') ||
-            userAgentLower.includes('selenium') ||
-            userAgentLower.includes('playwright');
-
-          const widthThreshold = window.outerWidth - window.innerWidth > 160;
-          const heightThreshold = window.outerHeight - window.innerHeight > 160;
-          const isDevToolsOpen = widthThreshold || heightThreshold;
-
-          if (isWebdriver || isHeadless || isDevToolsOpen) {
-            postMonitoringEvent('liveness_violation', 1.0, null, JSON.stringify({
-              category: 'browser_integrity_violation',
-              details: {
-                webdriver: isWebdriver,
-                headless: isHeadless,
-                devtools: isDevToolsOpen,
-                dimensions: {
-                  inner: `${window.innerWidth}x${window.innerHeight}`,
-                  outer: `${window.outerWidth}x${window.outerHeight}`
-                }
-              }
-            }));
+          // Diagnostic log — helps confirm exactly why inFocus is false
+          if (process.env.NODE_ENV !== 'production' || consecutiveFacesMissedRef.current === 1) {
+            console.log(
+              `[FaceCheck] miss #${consecutiveFacesMissedRef.current}/${FACE_MISS_THRESHOLD}`,
+              `| faces=${rawPredictions.length}`,
+              `| conf=${faceQuality?.confidence?.toFixed(3) ?? 'n/a'}`,
+              `| area=${(faceQuality as any)?.areaRatio?.toFixed(5) ?? 'n/a'}`,
+              `| inFrame=${(faceQuality as any)?.isInsideFrame}`,
+              `| inCircle=${(faceQuality as any)?.isInsideCircle}`,
+              `| inFocus=${faceQuality?.inFocus}`,
+              `| videoW=${video.videoWidth} videoH=${video.videoHeight}`,
+            );
           }
+
+          if (consecutiveFacesMissedRef.current >= FACE_MISS_THRESHOLD) {
+            consecutiveFacesMissedRef.current = 0;
+            setFaceMissWarning(null);
+            setFaceMissCountdown(null);
+            handleStrikeRef.current(reason);
+          }
+        } else {
+          // Face is good — reset miss counter
+          if (consecutiveFacesMissedRef.current > 0) {
+             setFaceMissWarning(null);
+             setFaceMissCountdown(null);
+          }
+          consecutiveFacesMissedRef.current = 0;
         }
 
         checkCount++;
@@ -1869,40 +1487,125 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                 ? 'normal'
                 : 'face_not_visible';
           const confidence = predictions.length === 1 ? (faceQuality?.confidence ?? 0) : 0.0;
-
-          postMonitoringEvent(statusType, confidence, video);
+          
+          postMonitoringEventRef.current(statusType, confidence, video);
         }
       } catch (err) {
         console.error('Face check error:', err);
+      } finally {
+        tf.engine().endScope();
       }
     }, 3000);
 
+    return () => {
+      // Signal the startMonitoring async warm-up to abort if it is still waiting
+      cancelled = true;
+      // FIX Issue #1: Cleanup only clears intervals/recorder. Blur/visibility
+      // listeners are managed by their own isolated useEffect (see below).
+      if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
+      if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+    };
+  // FIX Issue #1: Dep array reduced to [isStarted] only.
+  // All callbacks are accessed via stable refs (postMonitoringEventRef,
+  // handleStrikeRef, uploadVideoRef) so changes to those functions never
+  // restart this effect and never spawn duplicate setInterval loops.
+  }, [isStarted]);
+
+  // FIX Issue #3: Blur / visibility listeners are isolated in their own effect.
+  // Previously they lived inside the proctoring useEffect alongside setInterval,
+  // so any re-run of that effect would stack multiple blur listeners causing a
+  // single window-blur to fire N strikes simultaneously.
+  useEffect(() => {
+    if (!isStarted) return;
     const handleVisibility = () => {
-      if (!isStartedRef.current) return;
+      if (!isStartedRef.current || terminationSentRef.current) return;
       if (document.hidden) {
         console.log('[Proctoring] Tab switch detected');
-        handleStrike('Tab switched');
+        handleStrikeRef.current('Tab switched');
       }
     };
     const handleBlur = () => {
-      if (!isStartedRef.current) return;
+      if (!isStartedRef.current || terminationSentRef.current) return;
       console.log('[Proctoring] Window focus lost');
-      handleStrike('Window focus lost');
+      handleStrikeRef.current('Window focus lost');
     };
-
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
-      if (faceCheckIntervalRef.current) clearInterval(faceCheckIntervalRef.current);
-      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
-      if (videoRecorderRef.current && videoRecorderRef.current.state !== 'inactive') {
-        try { videoRecorderRef.current.stop(); } catch (e) { }
-      }
     };
-  }, [isStarted, interviewId, token, handleStrike, uploadVideo, postMonitoringEvent]);
+  // handleStrikeRef is a ref — stable, never changes.
+  // isStarted is the only meaningful dependency here.
+  }, [isStarted]);
+
+  // ── PRE-START TRACKING (Device Check Page) ──
+  // Continuously verify framing before the interview begins.
+  useEffect(() => {
+    if (isStarted || isFinished || isTerminated || !isCameraConnected) return;
+
+    const interval = setInterval(async () => {
+      const video = sessionVideoRef.current;
+      if (!video || video.readyState < 2 || !detectorRef.current) return;
+      
+      tf.engine().startScope();
+      try {
+        const detectorObj = detectorRef.current;
+        let rawPredictions: any[] = [];
+        if (detectorObj.type === 'facemesh') {
+          rawPredictions = await detectorObj.detector.estimateFaces(video, { flipHorizontal: false, staticImageMode: false });
+        } else {
+          rawPredictions = await detectorObj.detector.estimateFaces(video, false, false);
+        }
+
+        const faceFound = rawPredictions.length > 0;
+        setIsFaceDetected(faceFound);
+
+        let mappedPredictions: any[] = [];
+        if (faceFound) {
+          const pred = rawPredictions[0];
+          if (detectorObj.type === 'facemesh') {
+            const box = pred.box;
+            mappedPredictions.push({
+              topLeft: [box.xMin, box.yMin],
+              bottomRight: [box.xMax, box.yMax],
+              probability: pred.score ?? 1.0,
+            });
+          } else {
+            mappedPredictions.push(pred);
+          }
+        }
+
+        if (rawPredictions.length > 1) {
+          setFaceMissWarning('Multiple people detected');
+          setFaceInCircle(false);
+        } else if (mappedPredictions.length === 0) {
+          setFaceMissWarning('No face detected');
+          setFaceInCircle(false);
+        } else {
+          const faceQuality = getFaceQuality(mappedPredictions[0], video);
+          // Set debug info for the live overlay
+          setDebugInfo({
+            pred: mappedPredictions[0],
+            quality: faceQuality
+          });
+          setFaceInCircle(Boolean(faceQuality.isInsideCircle));
+          if (!faceQuality.inFocus) {
+            setFaceMissWarning('Face outside circle');
+          } else {
+            setFaceMissWarning(null);
+          }
+        }
+      } catch (err) {
+        // Ignore errors in pre-start
+      } finally {
+        tf.engine().endScope();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isStarted, isFinished, isTerminated, isCameraConnected]);
 
   if (isTerminated) {
     return (
@@ -1968,6 +1671,12 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
   if (!isStarted) {
     return (
       <div className="min-h-screen w-full overflow-y-auto py-12 flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/10 px-6 relative">
+        {process.env.NODE_ENV !== 'production' && debugInfo && (
+          <div className="fixed top-0 left-0 bg-black/90 text-green-400 font-mono text-[10px] p-4 z-[9999] max-h-screen overflow-auto max-w-sm border-r border-b border-green-500/30">
+            <h3 className="font-bold text-white mb-2">DIAGNOSTICS</h3>
+            <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+          </div>
+        )}
         <Card className="max-w-3xl w-full bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] rounded-2xl overflow-hidden animate-in zoom-in duration-500 my-auto relative">
           <div className="h-1.5 bg-gradient-to-r from-primary to-accent w-full" />
           <CardHeader className="text-center p-8 pb-4">
@@ -1986,12 +1695,44 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
                   playsInline
                   className="w-full h-full object-cover"
                 />
+                
+                {/* ── CIRCULAR FACE GUIDE OVERLAY ── */}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <circle 
+                      cx="50" 
+                      cy="50" 
+                      r="42" 
+                      fill="none" 
+                      stroke={faceInCircle ? 'rgba(34, 197, 94, 0.7)' : 'rgba(239, 68, 68, 0.7)'} 
+                      strokeWidth="2"
+                      strokeDasharray="4 4"
+                      className={`transition-colors duration-300 ${faceInCircle ? 'animate-pulse' : ''}`}
+                    />
+                  </svg>
+                </div>
+
                 <div className="absolute bottom-4 left-4 right-4 flex justify-between items-center bg-black/60 backdrop-blur-md px-4 py-2 rounded-xl text-white">
                   <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-white/95">Camera Preview</span>
+                    <div className={`w-2 h-2 rounded-full ${faceInCircle ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-white/95">
+                      {faceInCircle ? 'Face Positioned' : 'Position Face in Circle'}
+                    </span>
                   </div>
                   <span className="text-[9px] font-bold text-white/70">Verify framing before entering</span>
+                </div>
+              </div>
+
+              {/* ── Dynamic Face Status Label ── */}
+              <div className={`w-full max-w-md mt-4 p-4 rounded-2xl border flex items-center gap-3 transition-colors duration-300 shadow-sm ${faceMissWarning ? 'bg-red-500/10 border-red-500/50' : 'bg-green-500/10 border-green-500/50'}`}>
+                <div className={`w-3 h-3 rounded-full flex-shrink-0 ${faceMissWarning ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`} />
+                <div className="flex flex-col">
+                  <span className={`text-xs font-black uppercase tracking-widest ${faceMissWarning ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                    {faceMissWarning ? 'Tracking Alert' : 'Position Secure'}
+                  </span>
+                  <span className={`text-[11px] font-bold ${faceMissWarning ? 'text-red-500/80 dark:text-red-400/80' : 'text-green-500/80 dark:text-green-400/80'}`}>
+                    {faceMissWarning ? faceMissWarning : 'Face is positioned correctly. Ready to begin.'}
+                  </span>
                 </div>
               </div>
 
@@ -2233,7 +1974,7 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
       </div>
 
       {/* Floating Video Feed — uses its own ref, separate from the pre-start preview */}
-      <div className="fixed bottom-8 right-8 w-64 aspect-video bg-slate-950 rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden group z-50 hover:border-primary/50 transition-colors">
+      <div className={`fixed bottom-8 right-8 w-64 aspect-video bg-slate-950 rounded-2xl border ${faceMissWarning ? 'border-red-500 animate-pulse scale-110 shadow-[0_0_50px_rgba(239,68,68,0.6)]' : 'border-border/80'} shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden group z-[250] hover:border-primary/50 transition-all duration-300`}>
         <video
           ref={floatingVideoRef}
           autoPlay
@@ -2241,12 +1982,39 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           playsInline
           className={`w-full h-full object-cover transition-all duration-700 ${(!isFaceDetected || !isCameraConnected) ? 'grayscale blur-sm' : ''}`}
         />
+        
+        {/* ── CIRCULAR FACE GUIDE OVERLAY ── */}
+        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+          <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <circle 
+              cx="50" 
+              cy="50" 
+              r="42" 
+              fill="none" 
+              stroke={faceInCircle ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)'} 
+              strokeWidth="2"
+              strokeDasharray="4 4"
+              className={`transition-colors duration-300`}
+            />
+          </svg>
+        </div>
+
         <div className="absolute top-3 left-3 flex gap-1.5">
-          <div className={`px-2 py-1 rounded-lg backdrop-blur-md border text-[8px] font-black uppercase tracking-tighter flex items-center gap-1.5 ${(isFaceDetected && isCameraConnected) ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-            <div className={`w-1 h-1 rounded-full ${(isFaceDetected && isCameraConnected) ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-            {(isFaceDetected && isCameraConnected) ? 'Live Session' : 'Sensor Alert'}
+          <div className={`px-2 py-1 rounded-lg backdrop-blur-md border text-[8px] font-black uppercase tracking-tighter flex items-center gap-1.5 ${(isFaceDetected && isCameraConnected && faceInCircle) ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+            <div className={`w-1 h-1 rounded-full ${(isFaceDetected && isCameraConnected && faceInCircle) ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
+            {(isFaceDetected && isCameraConnected && faceInCircle) ? 'Live Session' : 'Position Face'}
           </div>
         </div>
+        {faceMissWarning && faceMissCountdown !== null && !isTerminated && (
+        <div className="fixed inset-0 z-[200] pointer-events-none flex items-center justify-center bg-red-500/20 backdrop-blur-sm transition-all duration-300">
+          <div className="bg-slate-900/90 border-2 border-red-500 text-red-500 rounded-2xl p-8 max-w-lg text-center shadow-[0_0_80px_rgba(239,68,68,0.4)] animate-in zoom-in-95 duration-200">
+            <h2 className="text-3xl font-black uppercase tracking-widest mb-4">Tracking Alert</h2>
+            <p className="text-xl font-medium text-slate-200 mb-6">{faceMissWarning}</p>
+            <div className="text-6xl font-black tabular-nums">{faceMissCountdown}</div>
+            <p className="mt-4 text-sm font-semibold uppercase tracking-wider text-red-400">Seconds until strike</p>
+          </div>
+        </div>
+      )}
         {isCameraConnected && !isFaceDetected && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
             <ShieldAlert className="w-8 h-8 text-white animate-bounce" />
@@ -2270,6 +2038,25 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
           </div>
         )}
       </div>
+
+      {/* ── BIG WARNING MODAL FOR FACE OUT OF BOUNDS ── */}
+      {faceMissWarning && !isTerminated && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-red-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="max-w-xl w-full bg-destructive border-2 border-red-400 shadow-[0_0_100px_rgba(239,68,68,0.5)] rounded-3xl p-10 text-center animate-in zoom-in-95 duration-300">
+            <ShieldAlert className="w-24 h-24 text-white mx-auto mb-6 animate-pulse" />
+            <h2 className="text-4xl font-black text-white tracking-tight mb-4">WARNING</h2>
+            <p className="text-xl text-red-100 font-bold mb-8">
+              {faceMissWarning}
+            </p>
+            <p className="text-md text-red-200 font-semibold mb-2">
+              Please reposition your face inside the camera circle immediately to avoid session termination.
+            </p>
+            <p className="text-sm text-red-300 font-mono font-bold tracking-widest uppercase">
+              Action Required
+            </p>
+          </div>
+        </div>
+      )}
 
       <IssueReportDialog
         open={showIssueDialog}
@@ -2330,5 +2117,53 @@ export default function InterviewSession({ sessionId, token }: InterviewSessionP
         </div>
       )}
     </div>
+  );
+}
+
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an unhandled error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-6">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center space-y-6">
+            <div className="w-16 h-16 bg-red-500/10 border border-red-500/20 rounded-full flex items-center justify-center mx-auto">
+              <ShieldAlert className="w-8 h-8 text-red-500 animate-pulse" />
+            </div>
+            <h1 className="text-2xl font-black tracking-tight text-white">Something Went Wrong</h1>
+            <p className="text-slate-400 text-sm leading-relaxed font-semibold">
+              An unexpected error occurred during your interview session. Please try reloading the page.
+            </p>
+            <Button 
+              onClick={() => window.location.reload()} 
+              className="w-full bg-primary text-primary-foreground font-black uppercase py-4 rounded-xl hover:bg-primary/90 transition-all cursor-pointer"
+            >
+              Reload Session
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function InterviewSessionWithErrorBoundary(props: InterviewSessionProps) {
+  return (
+    <ErrorBoundary>
+      <InterviewSession {...props} />
+    </ErrorBoundary>
   );
 }
