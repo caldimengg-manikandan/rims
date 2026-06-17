@@ -858,24 +858,12 @@ export default function ReportsPage() {
                   {viewingReport.interview_id ? (
                     <MonitoringReviewer
                       interviewId={Number(viewingReport.interview_id)}
-                      videoUrl={viewingReport.video_url}
                     />
-                  ) : viewingReport.video_url ? (
-                    <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-xl aspect-video relative group">
-                      <video
-                        key={viewingReport.id}
-                        src={viewingReport.video_url?.startsWith('http') ? viewingReport.video_url : `${getApiBaseUrl()}${viewingReport.video_url}`}
-                        controls
-                        preload="metadata"
-                        className="w-full h-full"
-                        crossOrigin="use-credentials"
-                      />
-                    </div>
                   ) : (
                     <div className="bg-muted/30 border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center">
                       <CameraOff className="h-10 w-10 text-muted-foreground/40 mb-3" />
-                      <p className="text-sm font-medium text-muted-foreground">No monitoring frames or video recording available for this session.</p>
-                      <p className="text-xs text-muted-foreground/60 mt-1">The candidate may have blocked camera access, or recording failed during the interview.</p>
+                      <p className="text-sm font-medium text-muted-foreground">No monitoring frames available for this session.</p>
+                      <p className="text-xs text-muted-foreground/60 mt-1">The candidate may have blocked camera access.</p>
                     </div>
                   )}
                 </div>

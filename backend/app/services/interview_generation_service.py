@@ -1,4 +1,5 @@
 
+from app.services.ai_service import analyze_introduction
 from fastapi import APIRouter, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -778,9 +779,7 @@ async def _generate_first_level_questions(interview: Interview, job: Job, applic
         raise HTTPException(status_code=500, detail="Failed to save generated interview questions safely.")
 
 
-@router.post("/access")
-@limiter.limit("10/minute")
-async def _generate_fallback_questions_direct(request: Request, interview_id: int):
+async def _generate_fallback_questions_direct(interview_id: int):
     """Helper to generate fallback questions outside of the request flow if app data is missing."""
     from app.infrastructure.database import SessionLocal
     db = SessionLocal()
