@@ -141,7 +141,7 @@ async function clearChunksFromIndexedDB(interviewId: string) {
     const store = tx.objectStore('video-chunks');
     store.delete(interviewId);
     await new Promise((resolve) => { tx.oncomplete = resolve; });
-  } catch (err) {}
+  } catch (err) { }
 }
 
 // ─── Brightness Calculation helper ───────────────────────────────────────────
@@ -158,8 +158,8 @@ function getAverageBrightness(video: HTMLVideoElement): number {
     let colorSum = 0;
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
-      const g = data[i+1];
-      const b = data[i+2];
+      const g = data[i + 1];
+      const b = data[i + 2];
       const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
       colorSum += brightness;
     }
@@ -356,7 +356,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const [incorrectQuestions, setIncorrectQuestions] = useState<number[]>([]);
   const [visitedQuestions, setVisitedQuestions] = useState<number[]>([]);
   const skippedQuestions = React.useMemo(() => {
-    return visitedQuestions.filter(qNum => 
+    return visitedQuestions.filter(qNum =>
       !completedQuestions.includes(qNum) && qNum !== currentQuestionNumber
     );
   }, [visitedQuestions, completedQuestions, currentQuestionNumber]);
@@ -422,7 +422,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const [showAllDoneModal, setShowAllDoneModal] = useState(false);
   const [showFeedbackPanel, setShowFeedbackPanel] = useState(false);
   const [showIssueDialog, setShowIssueDialog] = useState(false);
-  const [finalScores, setFinalScores] = useState<Array<{question_number: number; question_type: string; score: number | null}>>([]);
+  const [finalScores, setFinalScores] = useState<Array<{ question_number: number; question_type: string; score: number | null }>>([]);
 
   // ─── SECURITY VIOLATION ────────────────────────────────────────────────────
   const terminationSentRef = useRef(false);
@@ -642,13 +642,13 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         }
       } catch (e: any) {
         const errorMsg = e.message || '';
-        const isPermanentError = 
-          errorMsg.includes('credentials') || 
-          errorMsg.includes('required') || 
-          errorMsg.includes('not found') || 
-          errorMsg.includes('completed') || 
-          errorMsg.includes('terminated') || 
-          errorMsg.includes('no longer active') || 
+        const isPermanentError =
+          errorMsg.includes('credentials') ||
+          errorMsg.includes('required') ||
+          errorMsg.includes('not found') ||
+          errorMsg.includes('completed') ||
+          errorMsg.includes('terminated') ||
+          errorMsg.includes('no longer active') ||
           errorMsg.includes('expired') ||
           errorMsg.includes('mismatch');
 
@@ -718,20 +718,20 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
       if (allAptitudeCompleted && currentQuestion.question_type === 'aptitude') {
         // Complete the aptitude round
         await apiFetch(`/api/interviews/${interviewId}/complete-aptitude`, token, { method: 'POST' }).catch(() => null);
-        
+
         // Refresh question list to get the new technical questions
         const updatedQuestions: any[] = await apiFetch(`/api/interviews/${interviewId}/questions`, token);
         setAllQuestions(updatedQuestions);
         setTotalQuestions(updatedQuestions.length);
-        
+
         const firstTech = updatedQuestions.find(q => q.question_type !== 'aptitude');
         if (firstTech) {
-           await loadCurrentQuestion(firstTech.question_number);
+          await loadCurrentQuestion(firstTech.question_number);
         } else {
-           // All done — show completion modal instead of instantly navigating away
-           const scores = updatedQuestions.map(q => ({ question_number: q.question_number, question_type: q.question_type || 'general', score: q.answer_score ?? null }));
-           setFinalScores(scores);
-           setShowAllDoneModal(true);
+          // All done — show completion modal instead of instantly navigating away
+          const scores = updatedQuestions.map(q => ({ question_number: q.question_number, question_type: q.question_type || 'general', score: q.answer_score ?? null }));
+          setFinalScores(scores);
+          setShowAllDoneModal(true);
         }
       } else {
         // Check if ALL questions across all types are now completed
@@ -820,7 +820,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const isQuestionLocked = useCallback((qNum: number) => {
     const targetQ = allQuestions.find(q => q.question_number === qNum);
     if (!targetQ) return true;
-    
+
     // Group all questions by type
     const groups: Record<string, any[]> = {};
     allQuestions.forEach((q) => {
@@ -828,14 +828,14 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
       if (!groups[type]) groups[type] = [];
       groups[type].push(q);
     });
-    
+
     const orderedTypes = ['aptitude', 'technical', 'behavioral'];
     const otherTypes = Object.keys(groups).filter(t => !orderedTypes.includes(t));
     const displayOrder = [...orderedTypes, ...otherTypes];
-    
+
     const targetType = (targetQ.question_type || 'General').toLowerCase();
     const targetTypeIdx = displayOrder.indexOf(targetType);
-    
+
     // Check if any previous type has incomplete questions
     for (let i = 0; i < targetTypeIdx; i++) {
       const prevType = displayOrder[i];
@@ -864,7 +864,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   }, [totalQuestions, isEvaluating, loadCurrentQuestion, allQuestions, isQuestionLocked]);
 
   const handleNext = () => {
-    const nextQ = [...allQuestions].sort((a,b) => a.question_number - b.question_number).find(q => q.question_number > currentQuestionNumber);
+    const nextQ = [...allQuestions].sort((a, b) => a.question_number - b.question_number).find(q => q.question_number > currentQuestionNumber);
     if (nextQ) {
       if (isQuestionLocked(nextQ.question_number)) {
         toast.warning('Please complete all questions in the current section first.');
@@ -874,7 +874,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     }
   };
   const handlePrev = () => {
-    const prevQ = [...allQuestions].sort((a,b) => b.question_number - a.question_number).find(q => q.question_number < currentQuestionNumber);
+    const prevQ = [...allQuestions].sort((a, b) => b.question_number - a.question_number).find(q => q.question_number < currentQuestionNumber);
     if (prevQ) {
       if (isQuestionLocked(prevQ.question_number)) {
         toast.warning('Please complete all questions in the current section first.');
@@ -900,7 +900,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         const blob = new Blob(audioChunksRef.current, { type: selectedType || 'audio/webm' });
         // Stop the stream tracks instantly so the browser mic indicator turns off immediately, preventing device locking
         stream.getTracks().forEach(t => t.stop());
-        
+
         if (blob.size > 500) {
           setIsTranscribing(true);
           try {
@@ -913,17 +913,17 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
               toast.error("Transcription returned empty. Please speak clearly or check your mic.");
             }
           } catch (e: any) {
-             console.error('Transcription failed', e);
-             const errorMsg = e.message || String(e);
-             const isTerminatedError = errorMsg.toLowerCase().includes('terminated') || 
-                                     errorMsg.toLowerCase().includes('proctoring violation');
-             
-             if (isTerminatedError) {
-               toast.error('Voice service is unavailable as the session has been terminated.');
-               setIsTerminated(true);
-             } else {
-               toast.error('Voice transcription failed. You can type your response.');
-             }
+            console.error('Transcription failed', e);
+            const errorMsg = e.message || String(e);
+            const isTerminatedError = errorMsg.toLowerCase().includes('terminated') ||
+              errorMsg.toLowerCase().includes('proctoring violation');
+
+            if (isTerminatedError) {
+              toast.error('Voice service is unavailable as the session has been terminated.');
+              setIsTerminated(true);
+            } else {
+              toast.error('Voice transcription failed. You can type your response.');
+            }
           } finally { setIsTranscribing(false); }
         } else if (blob.size > 0) {
           toast.error("Audio recording was too short or silent. Please try again.");
@@ -986,18 +986,18 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
             // Enumerate devices to confirm video input is available
             const devices = await navigator.mediaDevices.enumerateDevices();
             const hasVideoInput = devices.some(device => device.kind === 'videoinput');
-            
+
             if (hasVideoInput) {
               console.log(`[Camera] Video device detected (attempt ${attempts}/${maxAttempts}), attempting reinitialization...`);
               // Call initCamera to reinitialize the stream
               if (initCameraRef.current) {
                 await initCameraRef.current();
               }
-              
+
               const postVideoTrack = activeStreamRef.current?.getVideoTracks()[0];
               const postVideoEnded = !postVideoTrack || postVideoTrack.readyState === 'ended';
               const postOffline = !cameraInitializedRef.current || postVideoEnded;
-              
+
               if (!postOffline) {
                 console.log('[Camera] Reconnection successful!');
                 break;
@@ -1025,9 +1025,9 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
       // Check if we can reuse the existing audio track to prevent audio interruption
       const existingAudioTrack = activeStreamRef.current?.getAudioTracks()[0];
       const isAudioLive = existingAudioTrack && existingAudioTrack.readyState === 'live';
-      
+
       let stream: MediaStream;
-      
+
       try {
         try {
           if (!detectorRef.current) {
@@ -1047,11 +1047,11 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           if (oldVideoTrack) {
             try { oldVideoTrack.stop(); } catch (e) { console.warn(e); }
           }
-          
+
           // Request ONLY video
           const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
           const newVideoTrack = videoStream.getVideoTracks()[0];
-          
+
           if (oldVideoTrack) {
             try { activeStreamRef.current.removeTrack(oldVideoTrack); } catch (e) { console.warn(e); }
           }
@@ -1062,7 +1062,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           // Clean up everything first
           activeStreamRef.current?.getTracks().forEach(track => track.stop());
           activeStreamRef.current = null;
-          
+
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
           activeStreamRef.current = stream;
         }
@@ -1102,7 +1102,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
             audioTrack.onended = () => {
               handleStrike('Microphone hardware disconnected');
             };
-            
+
             try {
               const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
               if (AudioContext) {
@@ -1112,12 +1112,12 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                 source.connect(analyser);
                 analyser.fftSize = 256;
                 const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                
+
                 const updateVolume = () => {
                   if (cameraInitializedRef.current === false) return; // stopped
                   analyser.getByteFrequencyData(dataArray);
                   let sum = 0;
-                  for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+                  for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
                   const avg = sum / dataArray.length;
                   const volBar = document.getElementById('mic-volume-bar');
                   if (volBar) {
@@ -1130,7 +1130,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                 };
                 updateVolume();
               }
-            } catch(e) {
+            } catch (e) {
               console.error('AudioContext setup failed', e);
             }
           }
@@ -1149,12 +1149,12 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         setDeviceTestError(e.message || String(e));
       }
     }
-    
+
     // Store initCamera in ref so handleDeviceChange can call it
     initCameraRef.current = initCamera;
-    
+
     initCamera();
-    
+
     // Register devicechange event listener to detect camera reconnection
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
 
@@ -1163,7 +1163,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     return () => {
       // Remove devicechange event listener
       navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
-      
+
       // Only stop tracks when the whole component unmounts (user leaves interview)
       if (mountedStream.ref.current) {
         mountedStream.ref.current.getTracks().forEach(t => t.stop());
@@ -1228,7 +1228,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         const reason = "Bypassed device hardware verification test directly into live session.";
         setTerminationReason(reason);
         setIsTerminated(true);
-        
+
         fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/fail-device-test`, {
           method: 'POST',
           headers: {
@@ -1354,7 +1354,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           video.srcObject = activeStreamRef.current;
           console.log('[FaceCheck] Reattached stream to floating widget.');
         }
-        video.play().catch(() => {});
+        video.play().catch(() => { });
         return;
       }
       
@@ -1386,7 +1386,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           if (detectorObj.type === 'facemesh') {
             const box = pred.box;
             const keypoints = pred.keypoints;
-            
+
             const rightEye = keypoints[33] || keypoints[0];
             const leftEye = keypoints[263] || keypoints[0];
             const nose = keypoints[4] || keypoints[0];
@@ -1655,7 +1655,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-primary/10 via-background to-accent/10 space-y-6">
         <Loader2 className="w-12 h-12 animate-spin text-primary" />
-        <h2 className="text-2xl font-black text-foreground tracking-tight">Initializing AI Board...</h2>
+        <h2 className="text-2xl font-black text-foreground tracking-tight">Initializing AI Interview...</h2>
         <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Preparing Your Questions</p>
       </div>
     );
@@ -1732,11 +1732,11 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
               {/* Microphone Volume Indicator */}
               <div className="w-full max-w-md mt-4 p-4 bg-muted/40 rounded-2xl border border-border/60 flex flex-col gap-2 shadow-sm">
                 <div className="flex justify-between items-center w-full">
-                   <span className="text-xs font-black text-foreground uppercase tracking-widest">Microphone Test</span>
-                   <span className="text-[10px] font-bold text-muted-foreground">Speak to check levels</span>
+                  <span className="text-xs font-black text-foreground uppercase tracking-widest">Microphone Test</span>
+                  <span className="text-[10px] font-bold text-muted-foreground">Speak to check levels</span>
                 </div>
                 <div className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                   <div id="mic-volume-bar" className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-100 ease-out" style={{ width: '0%' }} />
+                  <div id="mic-volume-bar" className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-100 ease-out" style={{ width: '0%' }} />
                 </div>
               </div>
             </div>
@@ -1759,7 +1759,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                   <div>
                     <h4 className="font-black text-red-500 uppercase tracking-wider text-xs mb-1">Hardware Authorization Required</h4>
                     <p className="text-xs text-red-600/90 font-bold leading-relaxed">
-                      Camera and Microphone permissions are strictly mandatory to start the assessment. 
+                      Camera and Microphone permissions are strictly mandatory to start the assessment.
                       {deviceTestError && <span className="block mt-1 font-mono text-[10px] text-red-500/70">Error: {deviceTestError}</span>}
                     </p>
                   </div>
@@ -1768,11 +1768,10 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
 
               <Button
                 disabled={!isDeviceTestSuccess || isStarting}
-                className={`w-full h-16 rounded-2xl font-black text-xl shadow-xl transition-all duration-300 active:scale-[0.99] ${
-                  !isDeviceTestSuccess 
-                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none hover:bg-slate-300' 
+                className={`w-full h-16 rounded-2xl font-black text-xl shadow-xl transition-all duration-300 active:scale-[0.99] ${!isDeviceTestSuccess
+                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none hover:bg-slate-300'
                     : 'shadow-primary/20 cursor-pointer'
-                }`}
+                  }`}
                 onClick={async () => {
                   if (isStarting) return;
                   setIsStarting(true);
@@ -1803,7 +1802,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                   }
                 }}
               >
-                {isStarting ? 'Starting...' : 'Enter Interview Board'}
+                {isStarting ? 'Starting...' : 'Enter Interview'}
               </Button>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">By clicking, you agree to the assessment monitoring protocol</p>
             </div>
@@ -1874,8 +1873,8 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                   <BrainCircuit className="w-6 h-6 text-primary" />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-black text-foreground tracking-tight">Assessment Board</h1>
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Secure Experience Protocol</p>
+
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Secure Protocol</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -1901,28 +1900,28 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                 </Button>
               </div>
             </div>
-            
+
             {(() => {
-               let relNum = currentQuestionNumber;
-               if (allQuestions && currentQuestion) {
-                 const sameType = allQuestions.filter(q => q.question_type === currentQuestion.question_type)
-                                              .sort((a, b) => a.question_number - b.question_number);
-                 const idx = sameType.findIndex(q => q.question_number === currentQuestionNumber);
-                 if (idx >= 0) relNum = idx + 1;
-               }
-               return (
-                 <QuestionPanel
-                   question={currentQuestion}
-                   isLoading={!currentQuestion || isEvaluating || isQuestionSwapping}
-                   currentQuestionNumber={relNum}
-                 />
-               );
+              let relNum = currentQuestionNumber;
+              if (allQuestions && currentQuestion) {
+                const sameType = allQuestions.filter(q => q.question_type === currentQuestion.question_type)
+                  .sort((a, b) => a.question_number - b.question_number);
+                const idx = sameType.findIndex(q => q.question_number === currentQuestionNumber);
+                if (idx >= 0) relNum = idx + 1;
+              }
+              return (
+                <QuestionPanel
+                  question={currentQuestion}
+                  isLoading={!currentQuestion || isEvaluating || isQuestionSwapping}
+                  currentQuestionNumber={relNum}
+                />
+              );
             })()}
 
             <AnswerInput
               onSubmit={handleSubmitAnswer}
-              onPrev={([...allQuestions].sort((a,b) => a.question_number - b.question_number)[0]?.question_number < currentQuestionNumber) ? handlePrev : undefined}
-              onNext={([...allQuestions].sort((a,b) => b.question_number - a.question_number)[0]?.question_number > currentQuestionNumber) ? handleNext : undefined}
+              onPrev={([...allQuestions].sort((a, b) => a.question_number - b.question_number)[0]?.question_number < currentQuestionNumber) ? handlePrev : undefined}
+              onNext={([...allQuestions].sort((a, b) => b.question_number - a.question_number)[0]?.question_number > currentQuestionNumber) ? handleNext : undefined}
               disabled={!currentQuestion || isEvaluating || isQuestionSwapping}
               isEvaluating={isEvaluating}
               interviewId={interviewId}
@@ -1931,7 +1930,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
               onStartRecording={startRecording}
               onStopRecording={stopRecording}
               isStuck={false}
-              onRetry={() => {}}
+              onRetry={() => { }}
               options={currentQuestion?.options}
               initialValue={currentQuestion?.answer_text}
               isSubmitted={completedQuestions.includes(currentQuestionNumber)}
@@ -2018,8 +2017,8 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-[2px] p-2 text-center">
             <CameraOff className="w-8 h-8 text-red-500 mb-2 animate-pulse" />
             <p className="text-[10px] font-bold text-white mb-2">Camera Disconnected</p>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               className="h-7 px-3 text-[9px] font-black uppercase tracking-widest bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg"
               onClick={async () => {
                 if (initCameraRef.current) {
