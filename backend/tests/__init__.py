@@ -1,1 +1,0 @@
-# RIMS Backend Test Suite

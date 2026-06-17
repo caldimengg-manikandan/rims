@@ -1374,30 +1374,31 @@ async def ingest_email_resumes(
             detail="IMAP credentials not configured. Please save mailbox settings first."
         )
 
-    # Phase 1: Rapid Fetch (Synchronous but optimized)
-    result = fetch_resume_attachments(db, imap_email, imap_password, hr_id=current_user.id)
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
-    
-    # Phase 2: Background Processing (Asynchronous)
-    # We return the count of new resumes found immediately, and process AI mapping in background.
-    async def run_batch_in_background():
+    # Both fetch and AI processing are moved to background to prevent Gunicorn worker timeouts
+    # when processing large batches of emails with heavy attachments.
+    async def run_sync_in_background():
         bg_db = SessionLocal()
         try:
-            await run_batch_resume_processing(bg_db, hr_id=current_user.id)
+            logger.info("Starting background IMAP fetch...")
+            fetch_result = fetch_resume_attachments(bg_db, imap_email, imap_password, hr_id=current_user.id)
+            if fetch_result and fetch_result.get("success"):
+                logger.info("Background IMAP fetch complete. Starting AI mapping...")
+                await run_batch_resume_processing(bg_db, hr_id=current_user.id)
+            else:
+                logger.error(f"Background IMAP fetch failed: {fetch_result.get('error') if fetch_result else 'Unknown error'}")
+        except Exception as e:
+            logger.error(f"Background email sync failed unexpectedly: {e}")
         finally:
             bg_db.close()
             
-    background_tasks.add_task(run_batch_in_background)
+    background_tasks.add_task(run_sync_in_background)
     
-    # BUG-004 Fix: Frontend expects "saved_count" key, backend was returning "count"
-    saved_count = result.get("count", 0)
-    logger.info(f"✅ Email sync complete: {saved_count} new resumes saved, background AI processing triggered")
+    logger.info("✅ Email sync task queued in background")
     
     return {
         "success": True,
-        "saved_count": saved_count,
-        "message": f"Found {saved_count} new resume(s). AI mapping and analysis started in background.",
+        "saved_count": 0,
+        "message": "Mailbox sync started in the background. Resumes will appear here shortly.",
         "processing_triggered": True
     }
 

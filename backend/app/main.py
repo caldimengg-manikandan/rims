@@ -49,8 +49,14 @@ from app.core.logging_config import setup_logging
 settings = get_settings()
 
 if os.environ.get("RIMS_LOGGING_DONE", "0") != "1":
-    # Enable file logging in the 'logs' directory
-    logs_dir = Path(__file__).parent.parent / "logs"
+    # Enable file logging in the 'logs' directory or a temp dir if not writable
+    import os
+    import tempfile
+    base_dir = Path(__file__).parent.parent
+    if os.access(base_dir, os.W_OK):
+        logs_dir = base_dir / "logs"
+    else:
+        logs_dir = Path(tempfile.gettempdir()) / "rims_logs"
     setup_logging(logs_dir, settings.debug)
     os.environ["RIMS_LOGGING_DONE"] = "1"
 logger = logging.getLogger(__name__)
