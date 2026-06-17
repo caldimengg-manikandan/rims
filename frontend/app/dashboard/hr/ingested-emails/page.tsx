@@ -280,13 +280,13 @@ export default function IngestedEmailsPage() {
                 trigger: true
             })) as any
 
-            if (res.saved_count > 0) {
+            if (res.saved_count > 0 || res.processing_triggered) {
                 toast.success(
-                    `Found ${res.saved_count} new resumes! AI mapping and analysis has started in the background.`,
+                    res.message || `Found ${res.saved_count} new resumes! AI mapping and analysis has started in the background.`,
                     { id: toastId, duration: 6000 }
                 )
             } else {
-                toast.success('Mailbox is up to date. No new resumes found.', { id: toastId })
+                toast.success(res.message || 'Mailbox is up to date. No new resumes found.', { id: toastId })
             }
             
             // Immediately mutate to show the new ingested records (fetch is fast)

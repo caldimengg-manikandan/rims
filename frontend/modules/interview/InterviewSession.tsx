@@ -601,11 +601,6 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     }
   }, [interviewId, token]);
 
-  // Handle video recording stop and upload when finished
-  useEffect(() => {
-
-    }
-  }, [isFinished]);
 
   // Initial poll: wait for questions to be ready
   useEffect(() => {
@@ -665,8 +660,6 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
             setIsTerminated(true);
             setTerminationReason("Security violation: Session token has been revoked due to proctoring strikes.");
             terminationSentRef.current = true;
-
-            }
           }
           return;
         }
