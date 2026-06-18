@@ -247,6 +247,8 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
                 "status": "Completed"
             }
 
+        is_terminated_by_violations = getattr(interview, "is_terminated_by_violations", False)
+
         for attempt in range(1, 4):
             try:
                 report_data = await generate_interview_report(
@@ -256,6 +258,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
                     primary_evaluated_skills=primary_skills,
                     termination_reason=term_reason,
                     aptitude_context=aptitude_context, # Pass aptitude performance
+                    is_terminated_by_violations=is_terminated_by_violations,
                 )
                 break
             except Exception as rep_e:

@@ -82,6 +82,7 @@ _REQUIRED_COLUMNS = [
     ("interview_monitoring_events", "is_false_positive", "BOOLEAN DEFAULT FALSE"),
     ("interview_monitoring_events", "details", "TEXT"),
     ("interviews", "risk_score", "FLOAT DEFAULT 0.0"),
+    ("interviews", "is_terminated_by_violations", "BOOLEAN DEFAULT FALSE"),
 ]
 
 
@@ -246,7 +247,7 @@ def run_startup_migrations(engine: Engine):
                 conn.execute(text("ALTER TABLE applications DROP CONSTRAINT IF EXISTS check_applications_status"))
                 conn.execute(text("""
                     ALTER TABLE applications ADD CONSTRAINT check_applications_status 
-                    CHECK (status IN ('applied', 'screened', 'aptitude_round', 'ai_interview', 'interview_scheduled', 'interview_completed', 'hired', 'pending_approval', 'offer_sent', 'accepted', 'rejected', 'onboarded', 'physical_interview', 'review_later', 'permanent_failure'))
+                    CHECK (status IN ('applied', 'screened', 'aptitude_round', 'ai_interview', 'interview_scheduled', 'in_progress', 'interview_completed', 'hired', 'pending_approval', 'offer_sent', 'accepted', 'rejected', 'onboarded', 'physical_interview', 'review_later', 'permanent_failure'))
                 """))
                 conn.commit()
                 logger.info("Updated check_applications_status constraint")

@@ -543,11 +543,15 @@ class ResponseAnalyzer:
                     Evaluate this behavioral interview answer using behavioral competency metrics.
                     Question: {question}
                     <candidate_response>{sanitized_answer}</candidate_response>
-                    
-                    Strict Constraints:
-                    1. If the candidate's answer is extremely short (e.g. a single sentence definition) and lacks depth or context, cap Relevance and Action & Impact at 4.0/10.
-                    2. If the candidate merely repeats the question or pastes UI metadata, assign all scores as 0.0.
-                    
+
+                    Scoring guidelines (scale 0-10):
+                    - Base your scores on the quality and relevance of what is actually said, not on word count.
+                    - A concise, clear, on-point answer describing a real situation and outcome deserves 6-7.
+                    - A detailed answer with specific actions, measurable impact, and strong reflection deserves 8-10.
+                    - An answer that is vague, off-topic, or misses the behavioral context deserves 3-5.
+                    - Only assign scores below 3 if the answer is completely irrelevant, repeated from the question, or nonsensical.
+                    - If the candidate merely repeats the question or pastes UI metadata, assign all scores as 0.0.
+
                     Return JSON ONLY:
                     {{
                         "Relevance": [0-10],
@@ -558,7 +562,10 @@ class ResponseAnalyzer:
                         "Reasoning": "1-sentence justification"
                     }}
                     """
-                    system_msg = "You are an HR recruiter. Return valid JSON only."
+                    system_msg = """You are a fair, experienced HR recruiter evaluating a medium-difficulty interview.
+                    The expected candidate level is junior-to-mid. Score generously for correctness and clarity.
+                    Penalise only genuine gaps — vagueness, off-topic answers, missing context — not brevity alone.
+                    Return valid JSON only."""
                     
                     eval_text = await asyncio.wait_for(
                         self.ai_client.generate(prompt=prompt, system_instr=system_msg, model=MODEL_NAME),
@@ -593,14 +600,20 @@ class ResponseAnalyzer:
 
                 else:
                     prompt = f"""
-                    Evaluate technical answer:
+                    Evaluate this technical interview answer.
                     Question: {question}
                     <candidate_response>{sanitized_answer}</candidate_response>
-                    
-                    Strict Constraints:
-                    1. If the candidate's answer is extremely short (e.g. a single sentence definition) and lacks depth or architectural examples, cap Technical Accuracy at 4.0/10 and Depth at 2.0/10.
-                    2. If the candidate merely repeats the question or pastes UI metadata, assign all scores as 0.0.
-                    
+
+                    Scoring guidelines (scale 0-10):
+                    - Score based on conceptual correctness and relevance FIRST, then penalise proportionally for missing depth.
+                    - A short but technically correct and clearly explained answer deserves 6-7 on Technical Accuracy.
+                    - A correct answer that also covers edge cases, trade-offs, or real-world examples deserves 8-10.
+                    - An answer that is partially correct or lacks key concepts deserves 4-6.
+                    - An answer that is vague, wrong, or completely off-topic deserves 0-3.
+                    - Depth specifically measures whether the candidate went beyond the surface definition (examples, trade-offs, ACID, architecture, etc). A concise but correct answer with no extra depth scores 4-6 on Depth — not 0-2.
+                    - Completeness measures whether the key parts of the answer are covered relative to the question scope.
+                    - If the candidate merely repeats the question or pastes UI metadata, assign all scores as 0.0.
+
                     Return JSON ONLY:
                     {{
                         "Technical Accuracy": [0-10],
@@ -612,7 +625,10 @@ class ResponseAnalyzer:
                         "Reasoning": "1-sentence justification"
                     }}
                     """
-                    system_msg = "Technical recruiter. JSON only."
+                    system_msg = """You are a fair, experienced technical recruiter evaluating a medium-difficulty interview.
+                    The expected candidate level is junior-to-mid. A correct, clearly explained answer — even if concise —
+                    should score at least 6/10 on Technical Accuracy. Only penalise for genuine inaccuracies, missing key concepts,
+                    or relevance failures. Do not penalise brevity alone. Return valid JSON only."""
                     eval_text = await asyncio.wait_for(
                         self.ai_client.generate(prompt=prompt, system_instr=system_msg, model=MODEL_NAME),
                         timeout=timeout_seconds,

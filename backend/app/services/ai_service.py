@@ -813,6 +813,7 @@ async def generate_interview_report(
     primary_evaluated_skills: list = None,
     termination_reason: str | None = None,
     aptitude_context: dict | None = None,
+    is_terminated_by_violations: bool = False,
 ) -> dict:
     """Generate final interview evaluation report with AI analysis and retries."""
     
@@ -832,6 +833,14 @@ async def generate_interview_report(
 
     termination_clause = f"\nTermination reason (if applicable): {termination_reason}\n" if termination_reason else ""
 
+    violation_instructions = ""
+    if is_terminated_by_violations:
+        violation_instructions = (
+            "\nCRITICAL INSTRUCTION: Since the candidate session was automatically concluded early due to repeated proctoring violations, "
+            "you MUST append a dedicated 'Proctoring Termination Notice' or system comment inside the final candidate report summary ('summary' field). "
+            "The summary text MUST explicitly state: 'The candidate session was automatically concluded early due to repeated proctoring violations.'\n"
+        )
+
     prompt = f"""
     Generate a final recruitment evaluation report based on the candidate's responses and the overall interview context.
     
@@ -840,6 +849,7 @@ async def generate_interview_report(
     {aptitude_info}
     First Level AI Score: {overall_score}/10
     {termination_clause}
+    {violation_instructions}
 
     Interview Q&A History:
     {qa_summary}
@@ -892,6 +902,19 @@ async def generate_interview_report(
                         if "detailed_feedback" not in parsed:
                             parsed["detailed_feedback"] = str(parsed.get("summary", ""))
                         
+                        # Guarantee Proctoring Termination Notice is appended if flag is set
+                        if is_terminated_by_violations:
+                            notice_text = "The candidate session was automatically concluded early due to repeated proctoring violations."
+                            summary_val = parsed.get("summary") or ""
+                            if notice_text not in summary_val:
+                                if summary_val:
+                                    parsed["summary"] = summary_val + f"\n\nProctoring Termination Notice: {notice_text}"
+                                else:
+                                    parsed["summary"] = f"Proctoring Termination Notice: {notice_text}"
+                                # Keep detailed_feedback in sync if it was copied from summary
+                                if parsed["detailed_feedback"] == summary_val:
+                                    parsed["detailed_feedback"] = parsed["summary"]
+                        
                         # Transparency & Observation
                         if "reasoning" in parsed:
                             parsed["reasoning"] = filter_pii(str(parsed["reasoning"]))
@@ -909,16 +932,21 @@ async def generate_interview_report(
 
     # 4. Final Fallback (If AI fails)
     logger.error("AI Report generation completely failed. Using fallback report.")
+    
+    fallback_summary = f"The candidate completed the interview for {job_title}. Final aggregate score: {overall_score}/10."
+    if is_terminated_by_violations:
+        fallback_summary += "\n\nProctoring Termination Notice: The candidate session was automatically concluded early due to repeated proctoring violations."
+
     return {
         "overall_score": round(overall_score, 1),
         "technical_skills_score": round(overall_score, 1),
         "communication_score": 7.0,
         "problem_solving_score": 7.0,
-        "strengths": ["Completed the full interview process"],
+        "strengths": ["Completed the process"] if not is_terminated_by_violations else ["Session concluded early due to proctoring violations"],
         "weaknesses": ["AI evaluation unavailable for summary"],
-        "summary": f"The candidate completed the interview for {job_title}. Final aggregate score: {overall_score}/10.",
-        "detailed_feedback": f"The candidate completed the interview for {job_title}. Final aggregate score: {overall_score}/10.",
-        "recommendation": "Hire" if overall_score >= 7 else "Borderline" if overall_score >= 5 else "Reject"
+        "summary": fallback_summary,
+        "detailed_feedback": fallback_summary,
+        "recommendation": "Reject" if is_terminated_by_violations else ("Hire" if overall_score >= 7 else "Borderline" if overall_score >= 5 else "Reject")
     }
 
 

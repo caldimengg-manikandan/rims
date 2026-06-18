@@ -7,6 +7,7 @@ class CandidateState(str, Enum):
     APTITUDE_ROUND = "aptitude_round"
     AI_INTERVIEW = "ai_interview"
     INTERVIEW_SCHEDULED = "interview_scheduled"
+    IN_PROGRESS = "in_progress"
     INTERVIEW_COMPLETED = "interview_completed"
     HIRED = "hired"
     PENDING_APPROVAL = "pending_approval"

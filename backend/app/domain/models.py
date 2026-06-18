@@ -458,6 +458,7 @@ class Interview(Base):
     first_level_score = Column(Float, nullable=True)
     video_recording_path = Column(String(500), nullable=True)
     risk_score = Column(Float, default=0.0, nullable=False, server_default='0.0')
+    is_terminated_by_violations = Column(Boolean, default=False, nullable=False, server_default='0')
     created_at = Column(DateTime, default=get_ist_now, server_default=func.now())
     updated_at = Column(DateTime, default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
 

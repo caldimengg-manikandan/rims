@@ -677,9 +677,11 @@ async def get_interview_stage(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview session not found.")
 
         # ── READINESS CHECK ──
-        # Check if questions exist for the current stage (unless stage is COMPLETED)
+        # Check if questions exist for the current stage (unless stage is COMPLETED).
+        # Also covers 'not_started' so demo interviews (which arrive with a JWT token
+        # before the candidate presses Begin) wait until background generation finishes.
         questions_ready = True
-        if interview.status == "in_progress" and interview.interview_stage != STAGE_COMPLETED:
+        if interview.status in ("in_progress", "not_started") and interview.interview_stage != STAGE_COMPLETED:
             questions_count = _question_count_for_stage(db, interview_id, interview.interview_stage)
             questions_ready = questions_count > 0
 
@@ -736,8 +738,10 @@ async def get_all_questions(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     # ── READINESS CHECK ──
-    # If session is in-progress and questions aren't ready for the current stage, return 202
-    if interview_session.status == "in_progress" and interview_session.interview_stage != STAGE_COMPLETED:
+    # If session is in-progress OR not_started (demo mode) and questions aren't ready, return 202.
+    # The 'not_started' check is critical for demo interviews that supply a JWT token directly
+    # and land on this endpoint before background question generation has completed.
+    if interview_session.status in ("in_progress", "not_started") and interview_session.interview_stage != STAGE_COMPLETED:
         stage = interview_session.interview_stage or STAGE_FIRST_LEVEL
         if _question_count_for_stage(db, interview_id, stage) == 0:
             return JSONResponse(
@@ -2298,8 +2302,9 @@ async def create_monitoring_event(
             # ── MAX_STRIKES THRESHOLD: TERMINATE & REVOKE ─────────────────────────────
             if actual_strike_count >= 4:
                 # 1. Terminate the interview
-                _set_interview_status(interview_session, "terminated")
+                _set_interview_status(interview_session, "completed")
                 interview_session.interview_stage = STAGE_COMPLETED
+                interview_session.is_terminated_by_violations = True
                 if not interview_session.ended_at:
                     interview_session.ended_at = get_ist_now()
 
@@ -2349,22 +2354,25 @@ async def create_monitoring_event(
                     except Exception as revoke_err:
                         logger.error(f"[Proctoring] Token revocation failed for interview {interview_id}: {revoke_err}")
 
-                # 3. Transition FSM to REJECTED
+                # 3. Transition FSM to INTERVIEW_COMPLETED
                 try:
                     from app.services.state_machine import CandidateStateMachine, TransitionAction
                     fsm = CandidateStateMachine(db)
                     if interview_session.application:
                         fsm.transition(
                             interview_session.application,
-                            TransitionAction.REJECT,
-                            notes=f"Auto-terminated: {actual_strike_count} proctoring strikes.",
+                            TransitionAction.SYSTEM_INTERVIEW_COMPLETE,
+                            notes=f"Auto-completed early: {actual_strike_count} proctoring strikes.",
                         )
                 except Exception as fsm_err:
                     logger.warning(f"[Proctoring] FSM transition failed (non-fatal): {fsm_err}")
                     if interview_session.application:
-                        interview_session.application.status = "rejected"
+                        interview_session.application.status = "interview_completed"
 
-                # 4. Write critical audit entry
+                # 4. Trigger report generation in background task
+                background_tasks.add_task(_finalize_interview_and_report, interview_id)
+
+                # 5. Write critical audit entry
                 from app.domain.models import AuditLog
                 db.add(AuditLog(
                     user_id=None,
