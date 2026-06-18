@@ -3,10 +3,8 @@ import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 
 /**
- * Middleware for server-side route protection
- * 
- * Protects dashboard routes by checking and verifying the authentication token
- * Redirects unauthenticated or invalidly authenticated users to login page
+ * Middleware for server-side route protection and security headers (CSP Nonce generation).
+ * Next.js in this setup executes proxy.ts as the entry point middleware.
  */
 export async function proxy(request: NextRequest) {
   const token = request.cookies.get('access_token')?.value || request.cookies.get('token')?.value;
@@ -85,13 +83,54 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  return NextResponse.next();
+  // 4. Generate secure dynamic nonce for the browser CSP and Next.js internal hydration scripts
+  const nonce = btoa(crypto.randomUUID());
+  const isProd = process.env.NODE_ENV === 'production';
+
+  const devConnectSrc = isProd
+    ? ''
+    : ' http://localhost:10000 http://127.0.0.1:10000 http://192.168.1.173:10000 ws://localhost:3000 ws://127.0.0.1:3000';
+
+  const scriptSrc = isProd
+    ? `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net`
+    : `script-src 'self' 'nonce-${nonce}' 'unsafe-eval' https://cdn.jsdelivr.net`;
+
+  const cspHeader = [
+    "default-src 'self'",
+    scriptSrc,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: blob: https://*.supabase.co https://*.googleusercontent.com",
+    `connect-src 'self' https://*.supabase.co https://api.openai.com https://api.anthropic.com https://api.groq.com https://tfhub.dev https://storage.googleapis.com${devConnectSrc}`,
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+  ].join('; ');
+
+  // Set the headers in the request so Next.js reads the nonce
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
+  requestHeaders.set('Content-Security-Policy', cspHeader);
+
+  // Create the final response using the modified request headers
+  const finalResponse = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
+
+  // Apply the CSP header on the response so the browser enforces it
+  finalResponse.headers.set('Content-Security-Policy', cspHeader);
+
+  return finalResponse;
 }
 
+// Intercept all document requests to apply CSP, while capturing auth check routes
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/interview/:path*',
-    '/offer/:path*',
+    /*
+     * Match all request paths except static files, images, etc.
+     * Also match routes required by auth checks (/dashboard, /interview, /offer)
+     */
+    '/((?!api|_next/static|_next/image|favicon.ico|.*\\..*).*)',
   ],
 };
