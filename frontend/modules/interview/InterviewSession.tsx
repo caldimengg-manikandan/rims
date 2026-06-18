@@ -434,6 +434,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     details?: string,
     sequenceNumber?: number,
   ): Promise<any> => {
+    const sanitizedEventType = eventType.replace(/[^a-z0-9_]/gi, '_').toLowerCase();
     const elapsedSeconds = Math.max(0, Math.floor((Date.now() - sessionStartRef.current) / 1000));
     const videoRefStr = `offset_${elapsedSeconds}s`;
 
@@ -441,7 +442,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
     const secret = (typeof window !== 'undefined' ? sessionStorage.getItem('proctoring_secret') : null) || "rims_proctoring_secret_2026";
     const tokenStr = token || "";
-    const raw_str = `${eventType}:${clientTimestamp}:${nonce}:${tokenStr}:${secret}`;
+    const raw_str = `${sanitizedEventType}:${clientTimestamp}:${nonce}:${tokenStr}:${secret}`;
 
     return computeHMAC(raw_str, secret).then((signature) => {
       return fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/monitoring-events`, {
@@ -451,7 +452,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          event_type: eventType,
+          event_type: sanitizedEventType,
           confidence_score: confidenceScore,
           frame_snapshot: captureFrame(video),
           details: details,
@@ -1173,6 +1174,9 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     return () => {
       // Remove devicechange event listener
       navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+
+      // Stop the volume visualization loop
+      cameraInitializedRef.current = false;
 
       // Only stop tracks when the whole component unmounts (user leaves interview)
       if (mountedStream.ref.current) {
@@ -2020,16 +2024,6 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
             {(isFaceDetected && isCameraConnected && faceInCircle) ? 'Live Session' : 'Position Face'}
           </div>
         </div>
-        {faceMissWarning && faceMissCountdown !== null && !isTerminated && (
-        <div className="fixed inset-0 z-[200] pointer-events-none flex items-center justify-center bg-red-500/20 backdrop-blur-sm transition-all duration-300">
-          <div className="bg-slate-900/90 border-2 border-red-500 text-red-500 rounded-2xl p-8 max-w-lg text-center shadow-[0_0_80px_rgba(239,68,68,0.4)] animate-in zoom-in-95 duration-200">
-            <h2 className="text-3xl font-black uppercase tracking-widest mb-4">Tracking Alert</h2>
-            <p className="text-xl font-medium text-slate-200 mb-6">{faceMissWarning}</p>
-            <div className="text-6xl font-black tabular-nums">{faceMissCountdown}</div>
-            <p className="mt-4 text-sm font-semibold uppercase tracking-wider text-red-400">Seconds until strike</p>
-          </div>
-        </div>
-      )}
         {isCameraConnected && !isFaceDetected && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
             <ShieldAlert className="w-8 h-8 text-white animate-bounce" />
@@ -2053,6 +2047,18 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           </div>
         )}
       </div>
+
+      {/* ── TRACKING ALERT OVERLAY ── */}
+      {faceMissWarning && faceMissCountdown !== null && !isTerminated && (
+        <div className="fixed inset-0 z-[200] pointer-events-none flex items-center justify-center bg-red-500/20 backdrop-blur-sm transition-all duration-300">
+          <div className="bg-slate-900/90 border-2 border-red-500 text-red-500 rounded-2xl p-8 max-w-lg text-center shadow-[0_0_80px_rgba(239,68,68,0.4)] animate-in zoom-in-95 duration-200">
+            <h2 className="text-3xl font-black uppercase tracking-widest mb-4">Tracking Alert</h2>
+            <p className="text-xl font-medium text-slate-200 mb-6">{faceMissWarning}</p>
+            <div className="text-6xl font-black tabular-nums">{faceMissCountdown}</div>
+            <p className="mt-4 text-sm font-semibold uppercase tracking-wider text-red-400">Seconds until strike</p>
+          </div>
+        </div>
+      )}
 
       {/* ── BIG WARNING MODAL FOR FACE OUT OF BOUNDS ── */}
       {faceMissWarning && !isTerminated && (
