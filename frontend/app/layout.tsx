@@ -1,5 +1,6 @@
 import React, { Suspense } from "react"
 import type { Metadata } from 'next'
+import { headers } from 'next/headers'
 import { AuthProvider } from '@/app/dashboard/lib/auth-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
@@ -11,6 +12,8 @@ import { NavigationProgress } from '@/components/navigation-progress'
 import { ScrollContainer } from '@/components/scroll-container'
 
 import { getBrandingServer } from '@/lib/branding-server';
+
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   const branding = await getBrandingServer();
@@ -56,13 +59,16 @@ export default async function RootLayout({
     ? branding.themeColor 
     : "#2563eb";
 
+  const headerList = await headers();
+  const nonce = headerList.get('x-nonce') || undefined;
+
   return (
     <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth" style={{ overflow: 'hidden', height: '100%' }}>
       <head>
-        <script src="/calrims/js/chunk-error-handler.js" defer />
+        <script src="/calrims/js/chunk-error-handler.js" defer nonce={nonce} />
       </head>
       <body className="app-shell font-sans" suppressHydrationWarning style={{ overflow: 'hidden', height: '100%', margin: 0, padding: 0 }}>
-        <style dangerouslySetInnerHTML={{ __html: `
+        <style nonce={nonce} dangerouslySetInnerHTML={{ __html: `
           :root {
             --primary: ${safeThemeColor} !important;
             --ring: ${safeThemeColor} !important;
