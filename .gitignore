@@ -70,6 +70,7 @@ backend/sample_aptitude.xlsx
 backend/bandit_report.txt
 backend/locust_report.txt
 backend/pip_audit_report.txt
+sample_resumes/
 frontend/knip_report.txt
 
 # Development utility scripts (not part of production codebase)

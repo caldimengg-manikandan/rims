@@ -91,6 +91,7 @@ export default async function RootLayout({
                 defaultTheme="system"
                 enableSystem
                 disableTransitionOnChange
+                nonce={nonce}
               >
                 <div className="app-shell-content flex flex-col h-full flex-1 overflow-hidden" suppressHydrationWarning>
                   <TooltipProvider delayDuration={300}>

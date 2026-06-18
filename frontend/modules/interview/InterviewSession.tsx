@@ -1063,7 +1063,12 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           activeStreamRef.current?.getTracks().forEach(track => track.stop());
           activeStreamRef.current = null;
 
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          } catch (audioErr: any) {
+            console.warn('[Camera] Failed to acquire video+audio. Attempting video-only fallback...', audioErr);
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          }
           activeStreamRef.current = stream;
         }
         
@@ -1080,7 +1085,12 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         cameraInitializedRef.current = true;
         setIsCameraConnected(true);
         setIsDeviceTestSuccess(true);
-        setDeviceTestError(null);
+        
+        if (stream.getAudioTracks().length === 0) {
+          setDeviceTestError("Microphone not detected or in use. Voice input will be disabled, but you can type your answers.");
+        } else {
+          setDeviceTestError(null);
+        }
 
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
@@ -1761,6 +1771,18 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                     <p className="text-xs text-red-600/90 font-bold leading-relaxed">
                       Camera and Microphone permissions are strictly mandatory to start the assessment.
                       {deviceTestError && <span className="block mt-1 font-mono text-[10px] text-red-500/70">Error: {deviceTestError}</span>}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {isDeviceTestSuccess && deviceTestError && (
+                <div className="w-full p-6 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex gap-4 items-start text-left animate-in fade-in slide-in-from-bottom-4 duration-300">
+                  <ShieldAlert className="w-6 h-6 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-black text-amber-500 uppercase tracking-wider text-xs mb-1">Microphone Not Active</h4>
+                    <p className="text-xs text-amber-600/90 font-bold leading-relaxed">
+                      {deviceTestError}
                     </p>
                   </div>
                 </div>
