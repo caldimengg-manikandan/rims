@@ -209,9 +209,9 @@ class JobCreate(BaseModel):
         if not any(c.isalpha() for c in title_trimmed):
             raise ValueError("Job Title must contain letters and no special characters")
             
-        # Rule: Allow letters, numbers, spaces, and common technical symbols (+, #, ., -)
-        if not re.match(r'^[a-zA-Z0-9\s+#.\-]+$', title_trimmed):
-            raise ValueError("Job Title must contain letters, numbers, spaces, and common symbols like +, #, ., -")
+        # Rule: Allow letters, numbers, spaces, and common technical symbols (+, #, ., -, /)
+        if not re.match(r'^[a-zA-Z0-9\s+#.\-\/]+$', title_trimmed):
+            raise ValueError("Job Title must contain letters, numbers, spaces, and common symbols like +, #, ., -, /")
             
         # Edge case: prevent titles that are ONLY symbols
         if len(re.sub(r'[^a-zA-Z0-9]', '', title_trimmed)) < 1:
@@ -286,8 +286,8 @@ class JobUpdate(BaseModel):
                 raise ValueError("Job Title must be at least 3 characters long")
             if not any(c.isalpha() for c in title_trimmed):
                 raise ValueError("Job Title must contain letters and no special characters")
-            if not re.match(r'^[a-zA-Z0-9\s+#.\-]+$', title_trimmed):
-                raise ValueError("Job Title must contain letters, numbers, spaces, and common symbols like +, #, ., -")
+            if not re.match(r'^[a-zA-Z0-9\s+#.\-\/]+$', title_trimmed):
+                raise ValueError("Job Title must contain letters, numbers, spaces, and common symbols like +, #, ., -, /")
             if len(re.sub(r'[^a-zA-Z0-9]', '', title_trimmed)) < 1:
                 raise ValueError("Job Title must contain meaningful content")
             return title_trimmed
