@@ -130,8 +130,10 @@ def _build_reports_query(
         query = query.filter(
             or_(
                 Application.candidate_name.ilike(term),
+                Application.candidate_email.ilike(term),
                 Job.title.ilike(term),
                 Job.job_id.ilike(term),
+                Interview.test_id.ilike(term),
             )
         )
 
@@ -901,6 +903,7 @@ def get_filtered_interviews(
     if search:
         query = query.filter(or_(
             Application.candidate_name.ilike(f"%{search}%"),
+            Application.candidate_email.ilike(f"%{search}%"),
             Interview.test_id.ilike(f"%{search}%"),
             Job.title.ilike(f"%{search}%"),
             Job.job_id.ilike(f"%{search}%")

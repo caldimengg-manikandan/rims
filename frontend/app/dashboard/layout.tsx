@@ -5,7 +5,7 @@ import React from "react"
 import { useAuth } from '@/app/dashboard/lib/auth-context'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { SidebarProvider } from '@/components/animate-ui/components/radix/sidebar'
+import { SidebarProvider, SidebarTrigger } from '@/components/animate-ui/components/radix/sidebar'
 import { AppSidebar } from '@/components/app-sidebar'
 import { UserNav } from '@/components/user-nav'
 import { ToggleTheme } from '@/components/lightswind/toggle-theme'
@@ -138,6 +138,20 @@ export default function DashboardLayout({
 
           {/* Right panel: flex-1 min-h-0 so it shrinks properly; overflow-hidden clips children */}
           <div className="flex-1 min-h-0 flex flex-col relative z-10 transition-all duration-400 ease-[cubic-bezier(0.75,0,0.25,1)] overflow-hidden">
+            {/* Mobile Navigation Header Bar */}
+            <div className="flex lg:hidden items-center justify-between px-4 h-14 border-b border-border/60 bg-sidebar/50 backdrop-blur-md shrink-0">
+              <div className="flex items-center gap-2">
+                <SidebarTrigger className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 rounded-xl" />
+                <span className="font-extrabold text-xs tracking-tight text-foreground uppercase">
+                  Menu
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <NotificationBell />
+                <UserNav />
+              </div>
+            </div>
+
             {/* Decorative glow blobs — purely cosmetic */}
             {/* Single scroll zone - this is the ONLY element that scrolls */}
             <div className="flex-1 min-h-0 px-4 py-5 sm:px-5 md:px-7 md:py-7 overflow-y-auto overflow-x-hidden scrollbar-premium">

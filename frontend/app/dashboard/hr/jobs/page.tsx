@@ -284,7 +284,7 @@ export default function HRJobsPage() {
             ) : (
                 <div className="bg-card/45 backdrop-blur-xl rounded-2xl border border-border/80 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.02)] animate-in fade-in slide-in-from-bottom-4 duration-700">
                     {/* List Header */}
-                    <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-muted/30 border-b border-border/40 text-xs uppercase tracking-widest font-black text-muted-foreground">
+                    <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-3 bg-muted/30 border-b border-border/40 text-xs uppercase tracking-widest font-black text-muted-foreground">
                         <div className="col-span-4">Job Title & Identification</div>
                         <div className="col-span-1 text-center">Status</div>
                         <div className="col-span-2 text-center">Experience</div>
@@ -297,7 +297,7 @@ export default function HRJobsPage() {
                         {paginatedJobs.map((job, index) => (
                             <div
                                 key={job.id}
-                                className="grid grid-cols-12 gap-4 px-6 py-4 items-center border-b border-border/10 last:border-b-0 cursor-pointer group premium-table-row"
+                                className="flex flex-col lg:grid lg:grid-cols-12 gap-4 px-6 py-4 lg:items-center border-b border-border/10 last:border-b-0 cursor-pointer group premium-table-row"
                                 onClick={() => router.push(`/dashboard/hr/jobs/${job.id}/edit`)}
                             >
                                 {/* Job Title & ID */}
@@ -319,59 +319,66 @@ export default function HRJobsPage() {
                                 </div>
 
                                 {/* Status */}
-                                <div className="col-span-1 text-center">
+                                <div className="col-span-1 text-left lg:text-center mt-3 lg:mt-0">
+                                    <div className="lg:hidden text-xs font-semibold text-muted-foreground uppercase tracking-normal mb-1">Status</div>
                                     <span className={`capsule-badge text-[12px] px-2 py-0.5 font-bold ${getStatusStyle(job.status)}`}>
                                         {job.status.toUpperCase()}
                                     </span>
                                 </div>
                                 {/* Experience  */}
-                                <div className="col-span-2 flex justify-center">
-                                    <div className="text-md font-bold text-foreground flex items-center gap-1.5">
+                                <div className="col-span-2 text-left lg:text-center mt-3 lg:mt-0">
+                                    <div className="lg:hidden text-xs font-semibold text-muted-foreground uppercase tracking-normal mb-1">Experience</div>
+                                    <div className="text-md font-bold text-foreground flex items-center lg:justify-center gap-1.5">
                                         <Activity className="w-3.5 h-3.5 text-primary/70" />
                                         <span className="truncate">{job.experience_level.replace('_', ' ')}</span>
                                     </div>
                                 </div>
                                 {/* Date Posted */}
-                                <div className="col-span-2 flex justify-center">
-                                    <div className="text-[13px] text-muted-foreground font-medium flex items-center gap-1.5">
+                                <div className="col-span-2 text-left lg:text-center mt-3 lg:mt-0">
+                                    <div className="lg:hidden text-xs font-semibold text-muted-foreground uppercase tracking-normal mb-1">Date Posted</div>
+                                    <div className="text-[13px] text-muted-foreground font-medium flex items-center lg:justify-center gap-1.5">
                                         <Calendar className="w-3.5 h-3.5 text-muted-foreground/60" />
                                         {new Date(job.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                                     </div>
                                 </div>
 
                                 {/* Analytics Quick View */}
-                                <div className="col-span-1 text-center flex justify-center gap-1">
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button 
-                                                variant="ghost" 
-                                                size="sm" 
-                                                className="h-9 w-9 p-0 rounded-lg hover:bg-primary/10 text-primary"
-                                                onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/hr/pipelines/${job.id}`); }}
-                                            >
-                                                <Activity className="w-4 h-4" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>View Pipeline</TooltipContent>
-                                    </Tooltip>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button 
-                                                variant="ghost" 
-                                                size="sm" 
-                                                className="h-9 w-9 p-0 rounded-lg hover:bg-amber-100 text-amber-600 dark:hover:bg-amber-900/30 dark:text-amber-400"
-                                                onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/hr/ranking/${job.id}`); }}
-                                            >
-                                                <FileText className="w-4 h-4" />
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>Leaderboard</TooltipContent>
-                                    </Tooltip>
+                                <div className="col-span-1 text-left lg:text-center mt-3 lg:mt-0">
+                                    <div className="lg:hidden text-xs font-semibold text-muted-foreground uppercase tracking-normal mb-1">Analytics</div>
+                                    <div className="flex lg:justify-center gap-1">
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button 
+                                                    variant="ghost" 
+                                                    size="sm" 
+                                                    className="h-9 w-9 p-0 rounded-lg hover:bg-primary/10 text-primary"
+                                                    onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/hr/pipelines/${job.id}`); }}
+                                                >
+                                                    <Activity className="w-4 h-4" />
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>View Pipeline</TooltipContent>
+                                        </Tooltip>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <Button 
+                                                    variant="ghost" 
+                                                    size="sm" 
+                                                    className="h-9 w-9 p-0 rounded-lg hover:bg-amber-100 text-amber-600 dark:hover:bg-amber-900/30 dark:text-amber-400"
+                                                    onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/hr/ranking/${job.id}`); }}
+                                                >
+                                                    <FileText className="w-4 h-4" />
+                                                </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent>Leaderboard</TooltipContent>
+                                        </Tooltip>
+                                    </div>
                                 </div>
 
                                 {/* Actions */}
-                                <div className="col-span-2 text-center" onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex justify-center gap-2">
+                                <div className="col-span-2 text-left lg:text-center mt-4 lg:mt-0 pt-4 lg:pt-0 border-t lg:border-t-0 border-border" onClick={(e) => e.stopPropagation()}>
+                                    <div className="lg:hidden text-xs font-semibold text-muted-foreground uppercase tracking-normal mb-2">Actions</div>
+                                    <div className="flex lg:justify-center gap-2">
                                         <TooltipProvider>
                                             <Tooltip>
                                                 <TooltipTrigger asChild>

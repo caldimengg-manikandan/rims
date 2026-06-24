@@ -1169,10 +1169,13 @@ def get_hr_applications(
 
         if search and str(search).strip():
             term = f"%{search}%"
+            base_query = base_query.outerjoin(Interview, Application.id == Interview.application_id)
             base_query = base_query.filter(or_(
                 Application.candidate_name.ilike(term),
+                Application.candidate_email.ilike(term),
                 Job.title.ilike(term),
-                Job.job_id.ilike(term)
+                Job.job_id.ilike(term),
+                Interview.test_id.ilike(term)
             ))
 
         def parse_date(date_str):

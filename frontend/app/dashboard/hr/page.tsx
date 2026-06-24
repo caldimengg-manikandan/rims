@@ -310,10 +310,10 @@ export default function HRDashboard() {
       </div>
 
       {/* Charts & Tables Section */}
-      <div className="flex flex-row gap-4 ">
+      <div className="flex flex-col lg:flex-row gap-4 w-full">
 
         {/* Chart Section */} 
-        <div className="w-[73%] animate-in fade-in duration-500 delay-300">
+        <div className="w-full lg:w-[73%] animate-in fade-in duration-500 delay-300">
           <Card className="h-full pt-0 overflow-hidden pb-5">
             <CardHeader className="bg-muted/35 border-b border-border/60 pb-4 pt-5">
               <div className="flex items-center justify-between">
@@ -346,7 +346,7 @@ export default function HRDashboard() {
         </div>
 
         {/* Recent Activity / Quick Actions */}
-        <div className="w-[27%] animate-in fade-in duration-500 delay-500">
+        <div className="w-full lg:w-[27%] animate-in fade-in duration-500 delay-500">
           <Card className="overflow-hidden">
             <CardHeader className="bg-muted/35 border-b border-border/60 pt-5 pb-5">
               <CardTitle >Quick Actions</CardTitle>
