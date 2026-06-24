@@ -3,7 +3,7 @@ Set-Location $PSScriptRoot
 $PORT = 10000
 $PID_FILE = ".\.backend.pid"
 
-# trigger redeploy 17 06 26: 18 49
+# trigger redeploy 2026-06-24: 16:21
 
 # ---------------------------------------------------------------------------
 # Aggressively free port 10000 regardless of whether the process is alive.
