@@ -1170,15 +1170,18 @@ def get_hr_applications(
                 base_query = base_query.filter(Application.status == status)
 
         if search and str(search).strip():
-            term = f"%{search}%"
-            base_query = base_query.outerjoin(Interview, Application.id == Interview.application_id)
-            base_query = base_query.filter(or_(
-                Application.candidate_name.ilike(term),
-                Application.candidate_email.ilike(term),
-                Job.title.ilike(term),
-                Job.job_id.ilike(term),
-                Interview.test_id.ilike(term)
-            ))
+            search_terms = str(search).strip().split()
+            if search_terms:
+                base_query = base_query.outerjoin(Interview, Application.id == Interview.application_id)
+                for term in search_terms:
+                    t = f"%{term}%"
+                    base_query = base_query.filter(or_(
+                        Application.candidate_name.ilike(t),
+                        Application.candidate_email.ilike(t),
+                        Job.title.ilike(t),
+                        Job.job_id.ilike(t),
+                        Interview.test_id.ilike(t)
+                    ))
 
         def parse_date(date_str):
             if not date_str: return None

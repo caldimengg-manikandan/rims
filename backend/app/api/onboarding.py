@@ -274,12 +274,15 @@ def get_onboarding_candidates(
         query = query.filter(Application.status == status)
         
     if search:
-        query = query.filter(
-            or_(
-                Application.candidate_name.ilike(f"%{search}%"),
-                Application.candidate_email.ilike(f"%{search}%")
+        search_terms = str(search).strip().split()
+        for term in search_terms:
+            t = f"%{term}%"
+            query = query.filter(
+                or_(
+                    Application.candidate_name.ilike(t),
+                    Application.candidate_email.ilike(t)
+                )
             )
-        )
         
     needs_job_join = (job_title and job_title != "all") or (current_user.role.lower() in ["hr", "staff"])
     if needs_job_join:

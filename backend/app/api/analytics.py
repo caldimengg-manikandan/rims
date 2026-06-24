@@ -126,16 +126,18 @@ def _build_reports_query(
         )
 
     if search:
-        term = f"%{search}%"
-        query = query.filter(
-            or_(
-                Application.candidate_name.ilike(term),
-                Application.candidate_email.ilike(term),
-                Job.title.ilike(term),
-                Job.job_id.ilike(term),
-                Interview.test_id.ilike(term),
+        search_terms = str(search).strip().split()
+        for term in search_terms:
+            t = f"%{term}%"
+            query = query.filter(
+                or_(
+                    Application.candidate_name.ilike(t),
+                    Application.candidate_email.ilike(t),
+                    Job.title.ilike(t),
+                    Job.job_id.ilike(t),
+                    Interview.test_id.ilike(t),
+                )
             )
-        )
 
     if from_date:
         try:
@@ -901,13 +903,16 @@ def get_filtered_interviews(
 
     # Apply global search if present
     if search:
-        query = query.filter(or_(
-            Application.candidate_name.ilike(f"%{search}%"),
-            Application.candidate_email.ilike(f"%{search}%"),
-            Interview.test_id.ilike(f"%{search}%"),
-            Job.title.ilike(f"%{search}%"),
-            Job.job_id.ilike(f"%{search}%")
-        ))
+        search_terms = str(search).strip().split()
+        for term in search_terms:
+            t = f"%{term}%"
+            query = query.filter(or_(
+                Application.candidate_name.ilike(t),
+                Application.candidate_email.ilike(t),
+                Interview.test_id.ilike(t),
+                Job.title.ilike(t),
+                Job.job_id.ilike(t)
+            ))
 
     # Apply specific filters
     if candidate_name:
