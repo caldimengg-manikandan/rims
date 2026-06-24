@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks, Form, Request, Query
 from fastapi.responses import ORJSONResponse
 from app.core.timezone import get_ist_now, to_naive_ist
-from sqlalchemy import or_, func, text, extract, inspect as sa_inspect
+from sqlalchemy import or_, and_, func, text, extract, inspect as sa_inspect
 from sqlalchemy.orm import Session, joinedload, selectinload, load_only
 from app.core.storage import upload_file, get_signed_url, get_public_url
 import os
@@ -1147,10 +1147,12 @@ def get_hr_applications(
     try:
         # 1. Build a base query with only the outerjoin and filters — no options/joinedloads.
         # This is used for the COUNT so we don't pay the cost of joinedloads twice.
-        # Ensure we only include applications for jobs that have a valid job_id
+        # Ensure we only include applications for jobs that have a valid job_id, or are the internal demo job
         base_query = db.query(Application).join(Job, Application.job_id == Job.id).filter(
-            Job.job_id.isnot(None), 
-            Job.job_id != ""
+            or_(
+                and_(Job.job_id.isnot(None), Job.job_id != ""),
+                Job.title == "INTERNAL_DEMO_JOB"
+            )
         )
 
         # 2. Filters (applied to base_query so both count and data share the same filters)
