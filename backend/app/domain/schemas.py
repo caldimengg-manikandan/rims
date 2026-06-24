@@ -295,7 +295,7 @@ class JobUpdate(BaseModel):
 
     @field_validator('experience_level')
     def validate_experience_level(cls, v):
-        if v is not None:job from applications and similar
+        if v is not None:
             valid_levels = {'intern', 'junior', 'mid', 'senior', 'lead'}
             if not v or v.strip().lower() not in valid_levels:
                 raise ValueError(f"Invalid experience level. Must be one of {valid_levels}")
