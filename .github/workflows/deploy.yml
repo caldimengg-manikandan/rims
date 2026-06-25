@@ -50,6 +50,6 @@ jobs:
             fi
             
             echo "=== VPS CONTAINER LOGS AFTER SUCCESSFUL DEPLOY ==="
-            docker compose -f docker-compose.prod.yml logs --tail=100 backend_blue backend_green || true
-            docker compose -f docker-compose.prod.yml logs --tail=100 frontend_blue frontend_green || true
+            docker compose -f docker-compose.prod.yml logs --tail=1500 backend_blue backend_green | grep -A 5 -B 5 -i "puppeteer" || true
+            docker compose -f docker-compose.prod.yml logs --tail=500 frontend_blue frontend_green || true
 
