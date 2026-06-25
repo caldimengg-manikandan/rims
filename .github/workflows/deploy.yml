@@ -36,6 +36,10 @@ jobs:
             free -m
             df -h
             
+            echo "=== LOGS OF CURRENT RUNNING CONTAINERS ==="
+            docker compose -f docker-compose.prod.yml logs --tail=200 backend_blue backend_green || true
+            docker compose -f docker-compose.prod.yml logs --tail=200 frontend_blue frontend_green || true
+            
             if ! bash ./deploy-zero-downtime.sh; then
               echo "=== DEPLOYMENT FAILED: DIAGNOSTIC LOGS ==="
               echo "=== FREE MEMORY ==="
