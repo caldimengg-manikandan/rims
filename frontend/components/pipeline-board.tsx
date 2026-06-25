@@ -33,9 +33,6 @@ type Application = {
     technical_skills_score?: number | null
 }
 
-// ─── FSM State Columns ──────────────────────────────────────────────────
-// Columns match the 8 application pipeline stages from the spec.
-// interview_scheduled is a waiting state with no action buttons.
 const STATUS_COLUMNS = [
     { id: "applied", label: "Applied" },
     { id: "screened", label: "Screened" },
@@ -43,7 +40,9 @@ const STATUS_COLUMNS = [
     { id: "interview_completed", label: "Interview Completed" },
     { id: "review_later", label: "Review Later" },
     { id: "physical_interview", label: "Physical Interview" },
-    { id: "hired", label: "Hired" },
+    { id: ["hired", "pending_approval"], label: "Hired" },
+    { id: ["offer_sent", "accepted"], label: "Offer Sent" },
+    { id: "onboarded", label: "Onboarded" },
     { id: "rejected", label: "Rejected" },
 ]
 
@@ -65,6 +64,15 @@ const STATE_ACTIONS: Record<string, { action: string; label: string; variant: 'p
     ],
     physical_interview: [
         { action: "hire", label: "Hire", variant: "success" },
+    ],
+    hired: [
+        { action: "send_offer", label: "Send Offer", variant: "success" },
+    ],
+    pending_approval: [
+        { action: "send_offer", label: "Send Offer", variant: "success" },
+    ],
+    offer_sent: [
+        { action: "accept_offer", label: "Accept Offer", variant: "success" },
     ],
     accepted: [
         { action: "onboard", label: "Onboard", variant: "success" },
@@ -110,7 +118,7 @@ export function PipelineBoard({ jobId }: { jobId?: string }) {
         setSelectedApps(prev => prev.includes(id) ? prev.filter(appId => appId !== id) : [...prev, id])
     }
     
-    const handleClearOrDelete = async (colId: string, colApps: Application[]) => {
+    const handleClearOrDelete = async (colId: string | string[], colApps: Application[]) => {
         const colAppIds = colApps.map(app => app.id)
         const selectedInCol = selectedApps.filter(id => colAppIds.includes(id))
         
@@ -277,7 +285,7 @@ export function PipelineBoard({ jobId }: { jobId?: string }) {
                                 variant="ghost" 
                                 size="icon" 
                                 className="h-6 w-6 text-muted-foreground focus:ring-0 hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
-                                onClick={() => handleClearOrDelete(column.id as string, colApps)}
+                                onClick={() => handleClearOrDelete(column.id, colApps)}
                                 disabled={!hasApps}
                                 title={selectedInCol.length > 0 ? "Delete Selected" : "Clear Column"}
                             >
@@ -318,7 +326,7 @@ export function PipelineBoard({ jobId }: { jobId?: string }) {
                                                     onCheckedChange={() => toggleAppSelection(app.id)}
                                                 />
                                             </div>
-                                            {isRejectAllowed(column.id as string) && (
+                                            {isRejectAllowed(app.status) && (
                                                 <div onClick={(e) => e.stopPropagation()}>
                                                     <RejectDialog
                                                         candidateName={app.candidate.full_name}
