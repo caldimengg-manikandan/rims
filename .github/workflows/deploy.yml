@@ -53,7 +53,7 @@ jobs:
             docker compose -f docker-compose.prod.yml logs --tail=1500 backend_blue backend_green | grep -A 5 -B 5 -i "puppeteer" || true
             docker compose -f docker-compose.prod.yml logs --tail=500 frontend_blue frontend_green || true
             
-            echo "=== VPS CONTAINER INTERNAL ROUTING TEST ==="
+            echo "=== VPS CONTAINER INTERNAL ROUTING & CHROMIUM TEST ==="
             docker compose -f docker-compose.prod.yml exec -T backend_blue curl -i -s http://nginx/calrims/api/health || true
-            docker compose -f docker-compose.prod.yml exec -T backend_blue curl -i -s http://frontend_blue:3000/calrims/api/health || true
+            docker compose -f docker-compose.prod.yml exec -T frontend_blue /usr/bin/chromium --version --no-sandbox || true
 

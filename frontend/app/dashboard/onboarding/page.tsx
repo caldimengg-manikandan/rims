@@ -687,22 +687,33 @@ export default function OnboardingPage() {
                                                                 Generate ID
                                                             </Button>
                                                         ) : (
-                                                            <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 rounded-lg font-bold" onClick={async () => {
-                                                                try {
-                                                                    const res = await APIClient.get(`/api/onboarding/applications/${candidate.id}/download-id-card`) as any;
-                                                                    const link = document.createElement('a');
-                                                                    link.href = res.url;
-                                                                    link.download = `ID_Card_${candidate.candidate_name.replace(/\s+/g, '_')}.pdf`;
-                                                                    document.body.appendChild(link);
-                                                                    link.click();
-                                                                    document.body.removeChild(link);
-                                                                } catch(e) {
-                                                                    toast.error('Failed to get download link');
-                                                                }
-                                                            }}>
-                                                                <Download className="h-3.5 w-3.5" />
-                                                                Download ID
-                                                            </Button>
+                                                            <div className="flex items-center gap-2">
+                                                                <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 rounded-lg font-bold" onClick={async () => {
+                                                                    try {
+                                                                        const res = await APIClient.get(`/api/onboarding/applications/${candidate.id}/download-id-card`) as any;
+                                                                        const link = document.createElement('a');
+                                                                        link.href = res.url;
+                                                                        link.download = `ID_Card_${candidate.candidate_name.replace(/\s+/g, '_')}.pdf`;
+                                                                        document.body.appendChild(link);
+                                                                        link.click();
+                                                                        document.body.removeChild(link);
+                                                                    } catch(e) {
+                                                                        toast.error('Failed to get download link');
+                                                                    }
+                                                                }}>
+                                                                    <Download className="h-3.5 w-3.5" />
+                                                                    Download ID
+                                                                </Button>
+                                                                <Button 
+                                                                    size="sm" 
+                                                                    variant="outline" 
+                                                                    className="h-8 gap-1.5 text-xs text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 rounded-lg font-bold" 
+                                                                    onClick={() => handleGenerateID(candidate.id)}
+                                                                >
+                                                                    <RefreshCcw className="h-3.5 w-3.5" />
+                                                                    Regenerate ID
+                                                                </Button>
+                                                            </div>
                                                         )}
                                                         <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 dark:border-emerald-500/30 font-bold text-[10px] tracking-wider uppercase hidden sm:inline-flex rounded-full">
                                                             Onboarded
