@@ -303,7 +303,11 @@ export function PipelineBoard({ jobId }: { jobId?: string }) {
                                         key={app.id} 
                                         style={{ animationDelay: `${index * 50}ms` }} 
                                         className={`relative cursor-pointer bg-card/45 backdrop-blur-xl border rounded-xl group animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both hover-premium-lift active:scale-[0.98] ${selectedApps.includes(app.id) ? 'border-primary bg-primary/5 shadow-sm' : 'border-border/80'}`}
-                                        onClick={() => router.push(`/dashboard/hr/applications/${app.id}`)}
+                                        onClick={() => {
+                                            const selection = window.getSelection();
+                                            if (selection && selection.toString().length > 0) return;
+                                            router.push(`/dashboard/hr/applications/${app.id}`);
+                                        }}
                                     >
                                         {/* Right side controls */}
                                         <div className="absolute inset-y-0 right-1.5 flex flex-col items-center justify-evenly py-2 z-10">

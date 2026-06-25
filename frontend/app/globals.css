@@ -13,18 +13,21 @@
 */
 
 @layer base {
-  html {
-    overflow: hidden !important;
-    height: 100% !important;
+  html.layout-constrained {
+    overflow: hidden;
+    height: 100%;
   }
   
+  body.layout-constrained {
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    position: fixed; /* Extra guard against body scrolling */
+  }
+
   body {
-    overflow: hidden !important;
-    height: 100% !important;
-    width: 100% !important;
     margin: 0;
     padding: 0;
-    position: fixed; /* Extra guard against body scrolling */
   }
 }
 

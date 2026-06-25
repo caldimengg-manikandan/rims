@@ -26,6 +26,7 @@ import Link from 'next/link'
 import { Sparkles, UploadCloud, Loader2, FileText, X, PlusCircle, ArrowLeft, CheckCircle2, BookOpen } from 'lucide-react'
 import { getApiBaseUrl } from '@/lib/config'
 import { toast } from 'sonner'
+import { Slider } from '@/components/ui/slider'
 
 // ── Repository types ──────────────────────────────────────────────────────────
 interface RepoSet {
@@ -264,7 +265,7 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                 return
             }
             try {
-                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(formData.location)}&limit=5`)
+                const res = await fetch(`/api/geocode?q=${encodeURIComponent(formData.location)}`)
                 if (!res.ok) return
                 const data = await res.json()
                 if (Array.isArray(data)) {
@@ -478,8 +479,8 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
     }
 
     const validateDuration = (value: number) => {
-        if (!value) { setDurationError(null); return }
-        if (value < 1 || value > 300) { setDurationError('Duration must be 60-300 mins'); return }
+        if (!value) { setDurationError('Duration is required'); return }
+        if (value < 60 || value > 300) { setDurationError('Duration must be between 60 and 300 minutes'); return }
         setDurationError(null)
     }
 
@@ -792,24 +793,63 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                             </div>
 
                             {/* Interview Duration */}
-                            <div className="space-y-2">
+                            <div className="space-y-3">
                                 <label htmlFor="duration_minutes" className="block text-sm font-medium text-foreground">
                                     Total Interview Duration (minutes)
                                 </label>
-                                <div className="flex items-center gap-3">
-                                    <input
-                                        id="duration_minutes"
-                                        type="number"
-                                        min="60"
-                                        max="300"
-                                        required
-                                        className="w-32 h-10 px-3 border border-border rounded-xl focus:outline-none focus:ring-4 focus:ring-primary/10 hover:border-primary/40 focus:border-primary bg-background/50 text-foreground transition-all"
-                                        value={formData.duration_minutes}
-                                        aria-invalid={Boolean(durationError)}
-                                        onChange={(e) => { const n = parseInt(e.target.value) || 60; setFormData({ ...formData, duration_minutes: n }); validateDuration(n) }}
-                                    />
-                                    <span className="text-sm text-muted-foreground">Sets the timer for all rounds combined.</span>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-4 bg-muted/20 p-4 rounded-xl border border-border/60">
+                                    <div className="flex-1 py-2">
+                                        <Slider
+                                            id="duration_slider"
+                                            min={60}
+                                            max={300}
+                                            step={5}
+                                            value={[
+                                                typeof formData.duration_minutes === 'number' && !isNaN(formData.duration_minutes)
+                                                    ? formData.duration_minutes
+                                                    : 60
+                                            ]}
+                                            onValueChange={(val) => {
+                                                const n = val[0];
+                                                setFormData({ ...formData, duration_minutes: n });
+                                                validateDuration(n);
+                                            }}
+                                            className="w-full cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-[10px] text-muted-foreground mt-2 font-medium px-1 select-none">
+                                            <span>60 mins</span>
+                                            <span>120 mins</span>
+                                            <span>180 mins</span>
+                                            <span>240 mins</span>
+                                            <span>300 mins</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <input
+                                            id="duration_minutes"
+                                            type="number"
+                                            min="60"
+                                            max="300"
+                                            required
+                                            className="w-20 h-10 px-2 text-center border border-border rounded-xl focus:outline-none focus:ring-4 focus:ring-primary/10 hover:border-primary/40 focus:border-primary bg-background text-foreground font-semibold transition-all"
+                                            value={formData.duration_minutes === undefined || formData.duration_minutes === null ? '' : formData.duration_minutes}
+                                            aria-invalid={Boolean(durationError)}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                if (val === '') {
+                                                    setFormData({ ...formData, duration_minutes: '' as any });
+                                                    setDurationError('Duration is required');
+                                                } else {
+                                                    const n = parseInt(val);
+                                                    setFormData({ ...formData, duration_minutes: isNaN(n) ? '' as any : n });
+                                                    validateDuration(n);
+                                                }
+                                            }}
+                                        />
+                                        <span className="text-sm font-medium text-muted-foreground select-none">mins</span>
+                                    </div>
                                 </div>
+                                <p className="text-xs text-muted-foreground">Sets the timer for all rounds combined. Default is 60 minutes.</p>
                                 {durationError && <p className="text-xs text-destructive" role="alert">{durationError}</p>}
                             </div>
 

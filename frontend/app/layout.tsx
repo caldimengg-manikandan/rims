@@ -63,11 +63,11 @@ export default async function RootLayout({
   const nonce = headerList.get('x-nonce') || undefined;
 
   return (
-    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth" style={{ overflow: 'hidden', height: '100%' }}>
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <head>
         <script src="/calrims/js/chunk-error-handler.js" defer nonce={nonce} />
       </head>
-      <body className="app-shell font-sans" suppressHydrationWarning style={{ overflow: 'hidden', height: '100%', margin: 0, padding: 0 }}>
+      <body className="app-shell font-sans" suppressHydrationWarning style={{ margin: 0, padding: 0 }}>
         <style nonce={nonce} dangerouslySetInnerHTML={{ __html: `
           :root {
             --primary: ${safeThemeColor} !important;

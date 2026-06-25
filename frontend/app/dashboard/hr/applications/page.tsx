@@ -486,7 +486,11 @@ export default function HRApplicationsPage() {
               <div
                 key={app.id}
                 className="flex flex-col lg:grid lg:grid-cols-12 gap-4 lg:gap-6 px-4 sm:px-6 lg:px-6 py-4 lg:py-5 lg:items-center border-b border-border/10 last:border-b-0 cursor-pointer group premium-table-row"
-                onClick={() => router.push(`/dashboard/hr/applications/${app.id}`)}
+                onClick={() => {
+                  const selection = window.getSelection();
+                  if (selection && selection.toString().length > 0) return;
+                  router.push(`/dashboard/hr/applications/${app.id}`);
+                }}
               >
                 {/* Candidate Info */}
                 <div className="col-span-3 xl:col-span-2 flex items-center gap-4 min-w-0">

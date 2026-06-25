@@ -298,7 +298,11 @@ export default function HRJobsPage() {
                             <div
                                 key={job.id}
                                 className="flex flex-col lg:grid lg:grid-cols-12 gap-4 px-6 py-4 lg:items-center border-b border-border/10 last:border-b-0 cursor-pointer group premium-table-row"
-                                onClick={() => router.push(`/dashboard/hr/jobs/${job.id}/edit`)}
+                                onClick={() => {
+                                    const selection = window.getSelection();
+                                    if (selection && selection.toString().length > 0) return;
+                                    router.push(`/dashboard/hr/jobs/${job.id}/edit`);
+                                }}
                             >
                                 {/* Job Title & ID */}
                                 <div className="col-span-4 flex items-center gap-4 min-w-0">

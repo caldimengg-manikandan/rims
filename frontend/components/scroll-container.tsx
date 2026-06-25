@@ -25,6 +25,20 @@ export function ScrollContainer({ children }: ScrollContainerProps) {
   const isAuth = pathname?.startsWith('/auth')
   const isConstrained = isDashboard || isAuth
 
+  React.useEffect(() => {
+    if (isConstrained) {
+      document.documentElement.classList.add('layout-constrained')
+      document.body.classList.add('layout-constrained')
+    } else {
+      document.documentElement.classList.remove('layout-constrained')
+      document.body.classList.remove('layout-constrained')
+    }
+    return () => {
+      document.documentElement.classList.remove('layout-constrained')
+      document.body.classList.remove('layout-constrained')
+    }
+  }, [isConstrained])
+
   return (
     <main className={`flex-1 min-h-0 w-full flex flex-col ${isConstrained ? 'overflow-hidden' : 'overflow-y-auto'}`}>
       <ErrorBoundary>

@@ -120,7 +120,11 @@ export default function PipelineIndexPage() {
                             <TableRow 
                                 key={job.id} 
                                 className="premium-table-row border-b border-border/20 last:border-b-0 cursor-pointer group"
-                                onClick={() => router.push(`/dashboard/hr/pipelines/${job.id}`)}
+                                onClick={() => {
+                                    const selection = window.getSelection();
+                                    if (selection && selection.toString().length > 0) return;
+                                    router.push(`/dashboard/hr/pipelines/${job.id}`);
+                                }}
                             >
                                 <TableCell className="py-4">
                                     <div className="flex items-center gap-3">

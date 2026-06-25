@@ -286,7 +286,11 @@ export default function HRTicketsPage() {
                             <Tooltip key={fb.id}>
                                 <TooltipTrigger asChild>
                                     <div 
-                                        onClick={() => setSelectedFeedback(fb)}
+                                        onClick={() => {
+                                            const selection = window.getSelection();
+                                            if (selection && selection.toString().length > 0) return;
+                                            setSelectedFeedback(fb);
+                                        }}
                                         className="grid grid-cols-12 gap-4 px-6 py-4 items-center border-b border-border/10 last:border-b-0 cursor-pointer group relative premium-table-row"
                                     >
                                         <div className="col-span-2 flex gap-0.5">
@@ -333,7 +337,12 @@ export default function HRTicketsPage() {
                         {tickets.map((ticket) => (
                             <div
                                 key={ticket.id}
-                                onClick={() => { setSelectedTicket(ticket); setHrResponse(ticket.hr_response || '') }}
+                                onClick={() => {
+                                    const selection = window.getSelection();
+                                    if (selection && selection.toString().length > 0) return;
+                                    setSelectedTicket(ticket);
+                                    setHrResponse(ticket.hr_response || '');
+                                }}
                                 className="flex flex-col md:grid md:grid-cols-12 gap-4 px-4 py-4 items-start md:items-center border-b border-border/10 last:border-b-0 cursor-pointer group w-full premium-table-row"
                             >
                                 <div className="hidden md:flex col-span-1 justify-center text-sm font-bold text-muted-foreground">

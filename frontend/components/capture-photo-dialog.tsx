@@ -47,11 +47,23 @@ export function CapturePhotoDialog({ isOpen, onOpenChange, applicationId, onSucc
     const [isUploading, setIsUploading] = useState(false)
     const [activeTab, setActiveTab] = useState("capture")
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const [cameraError, setCameraError] = useState<string | null>(null)
 
     const capture = useCallback(() => {
         const imageSrc = webcamRef.current?.getScreenshot()
         setImgSrc(imageSrc || null)
     }, [webcamRef])
+
+    const handleCameraError = useCallback((err: string | DOMException) => {
+        const msg = typeof err === 'string' ? err : err.message
+        if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied') || msg.toLowerCase().includes('notallowed')) {
+            setCameraError('Camera access was denied. Please allow camera access in your browser settings, or use the Upload tab instead.')
+        } else if (msg.toLowerCase().includes('notfound') || msg.toLowerCase().includes('devicenotfound')) {
+            setCameraError('No camera was found on this device. Please use the Upload tab to add a photo.')
+        } else {
+            setCameraError('Camera is unavailable. Please use the Upload tab to upload a photo instead.')
+        }
+    }, [])
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -103,7 +115,7 @@ export function CapturePhotoDialog({ isOpen, onOpenChange, applicationId, onSucc
                     </DialogDescription>
                 </DialogHeader>
                 
-                <Tabs defaultValue="capture" className="w-full" onValueChange={(v) => { setActiveTab(v); setImgSrc(null); }}>
+                <Tabs defaultValue="capture" className="w-full" onValueChange={(v) => { setActiveTab(v); setImgSrc(null); setCameraError(null); }}>
                     <TabsList className="grid w-full grid-cols-2 mb-4 bg-muted/40 backdrop-blur-md border border-border/40 p-1 rounded-2xl">
                         <TabsTrigger value="capture" className="gap-2 rounded-xl data-[state=active]:shadow-sm">
                             <Camera className="h-4 w-4" />
@@ -117,7 +129,12 @@ export function CapturePhotoDialog({ isOpen, onOpenChange, applicationId, onSucc
  
                     <TabsContent value="capture" className="mt-0">
                         <div className="flex flex-col items-center justify-center bg-zinc-950 rounded-2xl overflow-hidden aspect-video relative shadow-2xl border border-border/80 ring-1 ring-primary/10">
-                            {!imgSrc ? (
+                            {cameraError ? (
+                                <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
+                                    <svg className="h-10 w-10 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                                    <p className="text-sm font-semibold text-amber-300">{cameraError}</p>
+                                </div>
+                            ) : !imgSrc ? (
                                 <>
                                     <Webcam
                                         audio={false}
@@ -125,6 +142,7 @@ export function CapturePhotoDialog({ isOpen, onOpenChange, applicationId, onSucc
                                         screenshotFormat="image/jpeg"
                                         className="w-full h-full object-cover"
                                         videoConstraints={{ facingMode: "user" }}
+                                        onUserMediaError={handleCameraError}
                                     />
                                     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 animate-in fade-in duration-300">
                                         <Button 
