@@ -76,8 +76,15 @@ export async function POST(req: NextRequest) {
       // Launch puppeteer with system chromium
       const b = await puppeteer.launch({
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        args: ["--no-sandbox", "--disable-setuid-sandbox", "--font-render-hinting=none"],
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--font-render-hinting=none",
+          "--disable-crash-reporter",
+          "--no-crashpad"
+        ],
         headless: true,
+        userDataDir: "/tmp/chrome-user-data",
       })
       browser = b
 
