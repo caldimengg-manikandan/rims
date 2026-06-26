@@ -57,27 +57,61 @@ def generate_offer_letter_pdf_bytes(template_html: str, data: dict) -> bytes:
 
     return buffer.getvalue()
 
+def _fetch_logo_as_base64(url: str) -> str:
+    """
+    Fetch a logo URL and return a data URI (base64).
+    Falls back to the original URL on any failure.
+    """
+    import base64
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            logo_bytes = resp.read()
+            content_type = resp.headers.get_content_type() or "image/png"
+            logo_b64 = base64.b64encode(logo_bytes).decode("utf-8")
+            return f"data:{content_type};base64,{logo_b64}"
+    except Exception as fetch_err:
+        logger.warning(f"Failed to fetch logo from {url} for base64 embed: {fetch_err}")
+        return url
+
+
 def get_offer_letter_data(candidate_name, job_role, department, joining_date, company_name, logo_url, hr_email, hr_name="", hr_phone="", company_address=""):
     """ Helper to structure offer letter data """
+    import base64
     resolved_logo_url = logo_url
-    if logo_url and logo_url.startswith("/"):
-        clean_path = logo_url
-        if clean_path.startswith("/calrims"):
-            clean_path = clean_path.replace("/calrims", "", 1)
-        local_logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", clean_path.lstrip("/")))
-        if os.path.exists(local_logo_path):
-            try:
-                import base64
-                with open(local_logo_path, "rb") as logo_file:
-                    logo_bytes = logo_file.read()
-                    logo_base64 = base64.b64encode(logo_bytes).decode('utf-8')
-                    resolved_logo_url = f"data:image/png;base64,{logo_base64}"
-            except Exception as logo_err:
-                logger.warning(f"Failed to read local logo file in service: {logo_err}")
-        
-        if resolved_logo_url and resolved_logo_url.startswith("/"):
-            frontend_url = os.environ.get("FRONTEND_BASE_URL") or settings.frontend_base_url
-            resolved_logo_url = f"{frontend_url.rstrip('/')}{logo_url}"
+
+    if logo_url:
+        if logo_url.startswith("data:"):
+            # Already a data URI — use as-is
+            resolved_logo_url = logo_url
+
+        elif logo_url.startswith("/"):
+            # Relative path — try local filesystem first (dev), then HTTP fetch (live)
+            clean_path = logo_url
+            if clean_path.startswith("/calrims"):
+                clean_path = clean_path.replace("/calrims", "", 1)
+            local_logo_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", clean_path.lstrip("/"))
+            )
+            if os.path.exists(local_logo_path):
+                try:
+                    with open(local_logo_path, "rb") as logo_file:
+                        logo_bytes = logo_file.read()
+                        logo_base64 = base64.b64encode(logo_bytes).decode("utf-8")
+                        resolved_logo_url = f"data:image/png;base64,{logo_base64}"
+                except Exception as logo_err:
+                    logger.warning(f"Failed to read local logo file in service: {logo_err}")
+
+            # Local file not found (live server) — build absolute URL and fetch as base64
+            if resolved_logo_url and resolved_logo_url.startswith("/"):
+                frontend_url = (os.environ.get("FRONTEND_BASE_URL") or settings.frontend_base_url or "").rstrip("/")
+                absolute_url = f"{frontend_url}{logo_url}"
+                resolved_logo_url = _fetch_logo_as_base64(absolute_url)
+
+        elif logo_url.startswith("http://") or logo_url.startswith("https://"):
+            # Already an absolute URL — fetch as base64 so about:blank preview works
+            resolved_logo_url = _fetch_logo_as_base64(logo_url)
+
     return {
         "candidate_name": candidate_name,
         "job_role": job_role,
