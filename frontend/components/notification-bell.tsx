@@ -14,7 +14,7 @@ import {
     PopoverTrigger,
 } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
-import { Bell, ChevronRight } from 'lucide-react'
+import { Bell, ChevronRight, X } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 interface Notification {
@@ -74,6 +74,18 @@ export function NotificationBell() {
 
         try {
             await APIClient.put(`/api/notifications/${id}/read`, {})
+            mutate() // Background revalidation to sync with the server
+        } catch {
+            mutate() // Revert local cache on failure
+        }
+    }, [mutate])
+
+    const deleteNotification = useCallback(async (id: number) => {
+        // Instantly update the local SWR cache (optimistic update)
+        mutate(prev => prev?.filter(n => n.id !== id), false)
+
+        try {
+            await APIClient.delete(`/api/notifications/${id}`)
             mutate() // Background revalidation to sync with the server
         } catch {
             mutate() // Revert local cache on failure
@@ -164,24 +176,26 @@ export function NotificationBell() {
                     ) : (
                         <div className="flex flex-col w-[358px] sm:w-[408px]">
                             {sortedNotifications.map((n, idx) => (
-                                <button
+                                <div
                                     key={n.id}
-                                    onClick={() => {
-                                        if (!n.is_read) markAsRead(n.id)
-                                        if (n.related_application_id) {
-                                            router.push(`/dashboard/hr/applications/${n.related_application_id}`)
-                                            setIsOpen(false)
-                                        }
-                                    }}
                                     style={{ animationDelay: `${idx * 40}ms` }}
                                     className={cn(
-                                        "w-full text-left pl-4 py-4 pr-8 hover:bg-muted/40 transition-all border-l-4 group border-b border-border/50 last:border-b-0 relative animate-in fade-in slide-in-from-top-2 duration-300",
+                                        "w-full text-left pl-4 py-4 pr-12 hover:bg-muted/40 transition-all border-l-4 group border-b border-border/50 last:border-b-0 relative animate-in fade-in slide-in-from-top-2 duration-300 flex items-start justify-between gap-2",
                                         !n.is_read 
                                             ? 'bg-primary/5 border-l-primary' 
                                             : 'bg-transparent border-l-transparent'
                                     )}
                                 >
-                                    <div className="flex-1 min-w-0 pr-2 relative">
+                                    <div 
+                                        className="flex-1 min-w-0 pr-2 cursor-pointer"
+                                        onClick={() => {
+                                            if (!n.is_read) markAsRead(n.id)
+                                            if (n.related_application_id) {
+                                                router.push(`/dashboard/hr/applications/${n.related_application_id}`)
+                                                setIsOpen(false)
+                                            }
+                                        }}
+                                    >
                                         <div className="flex items-center justify-between gap-3 mb-1">
                                             <p className={cn(
                                                 "text-sm truncate flex-1 min-w-0 pr-1",
@@ -203,19 +217,27 @@ export function NotificationBell() {
                                         )}>
                                             {n.message}
                                         </p>
-
-                                        {n.related_application_id && (
-                                            <div className={cn(
-                                                "absolute top-1/2 -translate-y-1/2 -right-4 transition-all duration-200 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 text-muted-foreground"
-                                            )}>
-                                                <ChevronRight className="h-4 w-4" />
-                                            </div>
-                                        )}
                                     </div>
+                                    
+                                    <div className="absolute right-2 top-1/2 -translate-y-1/2 z-20">
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={async (e) => {
+                                                e.stopPropagation()
+                                                await deleteNotification(n.id)
+                                            }}
+                                            title="Clear notification"
+                                            className="h-7 w-7 rounded-full text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors shadow-sm bg-background border border-border"
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+
                                     {!n.is_read && (
-                                        <span className="absolute right-3.5 top-[22px] h-2 w-2 rounded-full bg-primary shadow-sm shadow-primary/40 block animate-pulse shrink-0" />
+                                        <span className="absolute right-3.5 top-[22px] h-2 w-2 rounded-full bg-primary shadow-sm shadow-primary/40 block animate-pulse shrink-0 pointer-events-none group-hover:hidden" />
                                     )}
-                                </button>
+                                </div>
                             ))}
                         </div>
                     )}

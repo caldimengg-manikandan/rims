@@ -1,10 +1,11 @@
 import smtplib
 import html
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from email.utils import formataddr
+from email.utils import formataddr, make_msgid
 import os
 import asyncio
 import base64
@@ -14,7 +15,7 @@ from urllib.parse import urlparse, urlencode
 import httpx
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 settings = get_settings()
@@ -62,6 +63,68 @@ def _is_gmail_quota_error(error: BaseException | str) -> bool:
     msg = str(error or "")
     return ("Daily user sending limit exceeded" in msg) or ("5.4.5" in msg and "sending limit" in msg)
 
+def _html_to_text(html_body: str) -> str:
+    """
+    Extract readable plain text from HTML content for email multipart fallback.
+    """
+    if not html_body:
+        return ""
+    
+    # Strip style/head/script content completely
+    text = re.sub(r'<style[^>]*>.*?</style>', '', html_body, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<head[^>]*>.*?</head>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Convert common tags to layout elements
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</td>', ' ', text, flags=re.IGNORECASE)
+    text = re.sub(r'</tr>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</div>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</h1>|</h2>|</h3>|</h4>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<hr[^>]*>', '\n---\n', text, flags=re.IGNORECASE)
+
+    # Convert links to "Text (URL)" format
+    def _replace_link(match):
+        url = match.group(1) or ""
+        link_text = match.group(2) or ""
+        # Strip nested tags in the text
+        link_text = re.sub(r'<[^>]+>', '', link_text)
+        if url and link_text:
+            if url.startswith("http"):
+                return f"{link_text.strip()} ({url.strip()})"
+            return link_text.strip()
+        return link_text.strip() or url.strip()
+
+    text = re.sub(
+        r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        _replace_link,
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    
+    # Strip remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # Unescape HTML entities
+    import html as html_lib
+    text = html_lib.unescape(text)
+    
+    # Clean up excess spaces and line breaks
+    lines = [line.strip() for line in text.splitlines()]
+    cleaned_lines = []
+    prev_blank = False
+    for line in lines:
+        if line:
+            cleaned_lines.append(line)
+            prev_blank = False
+        else:
+            if not prev_blank:
+                cleaned_lines.append("")
+                prev_blank = True
+                
+    return "\n".join(cleaned_lines).strip()
+
 def _send_via_smtp(to_email: str, subject: str, html_body: str, attachments: list = None) -> dict:
     """Core SMTP sending logic using Gmail with a single attempt."""
     # Local development helper: log HTML preview and reroute mock emails to developer's inbox
@@ -104,12 +167,9 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, attachments: lis
             to_email = dev_recipient
 
     try:
-        msg = MIMEMultipart()
+        # Create a mixed root message to support attachments alongside the alternative body
+        msg = MIMEMultipart("mixed")
         msg["Subject"] = subject
-        
-        # Add automated email headers to suppress autoreplies and clarify message nature
-        msg["Auto-Submitted"] = "auto-generated"
-        msg["X-Auto-Response-Suppress"] = "All"
         
         # Set professional Display Name based on branding settings
         branding = get_branding_dict()
@@ -118,7 +178,24 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, attachments: lis
         msg["From"] = formataddr((display_name, from_addr))
         msg["To"] = to_email
 
-        msg.attach(MIMEText(html_body, "html"))
+        # Add a unique Message-ID header for domain alignment and spam filter compliance
+        from_domain = "rims.local"
+        if "@" in from_addr:
+            from_domain = from_addr.split("@")[-1]
+        msg["Message-ID"] = make_msgid(domain=from_domain)
+
+        # Create the alternative container for text/plain and text/html
+        alt_part = MIMEMultipart("alternative")
+        
+        # Add plain text alternative (must be attached first)
+        text_body = _html_to_text(html_body)
+        alt_part.attach(MIMEText(text_body, "plain", "utf-8"))
+        
+        # Add HTML body (attached second)
+        alt_part.attach(MIMEText(html_body, "html", "utf-8"))
+        
+        # Attach the alternative content to the mixed message
+        msg.attach(alt_part)
 
         if attachments:
             for attr in attachments:
@@ -169,7 +246,7 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, attachments: lis
         )
         return {"success": False, "error": error_msg, "deferred": deferred}
 
-async def _send_via_resend(to_email: str, subject: str, html_body: str) -> dict:
+async def _send_via_resend(to_email: str, subject: str, html_body: str, idempotency_key: Optional[str] = None) -> dict:
     """
     Send an HTML email via Resend's HTTP API.
     Note: for now we don't implement attachments here.
@@ -186,15 +263,23 @@ async def _send_via_resend(to_email: str, subject: str, html_body: str) -> dict:
 
         branding = get_branding_dict()
         display_name = branding.get("product_name") or branding.get("company_name") or "Recruitment System"
-        from_formatted = f"{display_name} <{from_email}>"
+        from_formatted = formataddr((display_name, from_email))
+
+        # Generate readable plain text representation as a fallback
+        text_body = _html_to_text(html_body)
 
         payload = {
             "from": from_formatted,
             "to": to_email,
             "subject": subject,
             "html": html_body,
+            "text": text_body,
         }
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        
+        # Prevent duplicates during retries by sending the unique Idempotency-Key header to Resend API
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
 
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post("https://api.resend.com/emails", json=payload, headers=headers)
@@ -253,8 +338,8 @@ async def _send_via_smtp_helper(to_email: str, subject: str, html_body: str, att
     return {**result, "provider": "smtp"}
 
 
-async def _send_via_resend_helper(to_email: str, subject: str, html_body: str) -> dict:
-    result = await _send_via_resend(to_email, subject, html_body)
+async def _send_via_resend_helper(to_email: str, subject: str, html_body: str, idempotency_key: Optional[str] = None) -> dict:
+    result = await _send_via_resend(to_email, subject, html_body, idempotency_key)
     if result["success"]:
         return {**result, "provider": "resend"}
 
@@ -269,10 +354,20 @@ async def _send_via_resend_helper(to_email: str, subject: str, html_body: str) -
     return {**result, "provider": "resend"}
 
 
-async def send_email_async(to_email: str, subject: str, html_body: str, attachments: list = None, provider: Optional[str] = None) -> dict:
+async def send_email_async(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    attachments: list = None,
+    provider: Optional[str] = None,
+    idempotency_key: Optional[str] = None
+) -> dict:
     """Async wrapper for SMTP / Resend selection with fallback and standardized retries:
     Attempt 1 -> 1s delay -> Attempt 2 -> 5s delay -> Attempt 3.
     """
+    if not idempotency_key:
+        idempotency_key = str(uuid.uuid4())
+
     retry_delays = [1.0, 5.0]
     last_result = {"success": False, "error": "Not attempted"}
 
@@ -280,7 +375,7 @@ async def send_email_async(to_email: str, subject: str, html_body: str, attachme
         if provider == "smtp":
             result = await _send_via_smtp_helper(to_email, subject, html_body, attachments)
         elif provider == "resend":
-            result = await _send_via_resend_helper(to_email, subject, html_body)
+            result = await _send_via_resend_helper(to_email, subject, html_body, idempotency_key)
         else:
             if attachments:
                 result = await _send_via_smtp_helper(to_email, subject, html_body, attachments)
@@ -288,7 +383,7 @@ async def send_email_async(to_email: str, subject: str, html_body: str, attachme
                 resend_api_key = (getattr(settings, "resend_api_key", "") or "").strip()
                 resend_from = (getattr(settings, "resend_from", "") or "").strip()
                 if resend_api_key and resend_from:
-                    result = await _send_via_resend_helper(to_email, subject, html_body)
+                    result = await _send_via_resend_helper(to_email, subject, html_body, idempotency_key)
                 else:
                     result = await _send_via_smtp_helper(to_email, subject, html_body, attachments)
         
@@ -328,17 +423,28 @@ async def execute_email_with_retries(
         try:
             from app.infrastructure.database import SessionLocal
             from app.domain.models import Application
-            from sqlalchemy import update, and_
+            from sqlalchemy import update, and_, or_
+            
+            # Crash/restart tolerance window: 15 minutes.
+            # If email_status is 'processing' but updated_at is older than 15 minutes,
+            # we assume the process died/hung and allow retrying it.
+            expiry_threshold = datetime.utcnow() - timedelta(minutes=15)
+            
             with SessionLocal() as db:
-                # Atomically set to 'processing' ONLY if not already processing/sent
+                # Atomically set to 'processing' ONLY if:
+                # - Not already 'sent' AND
+                # - (Status is not 'processing' OR status is 'processing' but it has timed out/expired)
                 stmt = (
                     update(Application)
                     .where(and_(
                         Application.id == application.id,
-                        Application.email_status != 'processing',
-                        Application.email_status != 'sent'
+                        Application.email_status != 'sent',
+                        or_(
+                            Application.email_status != 'processing',
+                            Application.updated_at < expiry_threshold
+                        )
                     ))
-                    .values(email_status='processing')
+                    .values(email_status='processing', updated_at=datetime.utcnow())
                 )
                 res = db.execute(stmt)
                 db.commit()
@@ -350,9 +456,9 @@ async def execute_email_with_retries(
             if hasattr(application, 'email_sent_at') and application.email_sent_at:
                 return True
 
-    # 2. Call standard sender (which handles internal retries)
+    # 2. Call standard sender (which handles internal retries, using event_id as the stable idempotency key)
     try:
-        result = await send_email_async(to_email, subject, body, attachments)
+        result = await send_email_async(to_email, subject, body, attachments, idempotency_key=event_id)
         if result["success"]:
             logger.info(f"[EMAIL][EXECUTED] (Event: {event_id}) successfully sent to {_safe_email_target(to_email)}")
             
@@ -366,7 +472,7 @@ async def execute_email_with_retries(
                         db.execute(
                             update(Application)
                             .where(Application.id == application.id)
-                            .values(email_sent_at=datetime.utcnow(), email_status='sent')
+                            .values(email_sent_at=datetime.utcnow(), email_status='sent', updated_at=datetime.utcnow())
                         )
                         db.commit()
                 except Exception as db_err:
@@ -389,7 +495,7 @@ async def execute_email_with_retries(
                 db.execute(
                     update(Application)
                     .where(Application.id == application.id)
-                    .values(email_status='failed')
+                    .values(email_status='failed', updated_at=datetime.utcnow())
                 )
                 db.commit()
         except Exception as e:
