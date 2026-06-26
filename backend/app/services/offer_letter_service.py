@@ -65,7 +65,11 @@ def _fetch_logo_as_base64(url: str) -> str:
     import base64
     import urllib.request
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        if "nginx" in url:
+            headers['Host'] = 'caldimproducts.com'
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
             logo_bytes = resp.read()
             content_type = resp.headers.get_content_type() or "image/png"
             logo_b64 = base64.b64encode(logo_bytes).decode("utf-8")
@@ -84,33 +88,52 @@ def get_offer_letter_data(candidate_name, job_role, department, joining_date, co
         if logo_url.startswith("data:"):
             # Already a data URI — use as-is
             resolved_logo_url = logo_url
+        else:
+            frontend_url = (os.environ.get("FRONTEND_BASE_URL") or settings.frontend_base_url or "").rstrip("/")
+            
+            # Determine if URL is local/relative or pointing to our site
+            is_local = False
+            path = logo_url
+            if logo_url.startswith("http://") or logo_url.startswith("https://"):
+                if logo_url.startswith(frontend_url):
+                    is_local = True
+                    path = logo_url[len(frontend_url):]
+            else:
+                is_local = True
+                path = logo_url
 
-        elif logo_url.startswith("/"):
-            # Relative path — try local filesystem first (dev), then HTTP fetch (live)
-            clean_path = logo_url
-            if clean_path.startswith("/calrims"):
-                clean_path = clean_path.replace("/calrims", "", 1)
-            local_logo_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", clean_path.lstrip("/"))
-            )
-            if os.path.exists(local_logo_path):
-                try:
-                    with open(local_logo_path, "rb") as logo_file:
-                        logo_bytes = logo_file.read()
-                        logo_base64 = base64.b64encode(logo_bytes).decode("utf-8")
-                        resolved_logo_url = f"data:image/png;base64,{logo_base64}"
-                except Exception as logo_err:
-                    logger.warning(f"Failed to read local logo file in service: {logo_err}")
+            if is_local:
+                # Normalize relative path: remove duplicate namespace prefix if present
+                clean_path = path
+                if clean_path.startswith("/calrims"):
+                    clean_path = clean_path.replace("/calrims", "", 1)
+                clean_path = "/" + clean_path.lstrip("/")
 
-            # Local file not found (live server) — build absolute URL and fetch as base64
-            if resolved_logo_url and resolved_logo_url.startswith("/"):
-                frontend_url = (os.environ.get("FRONTEND_BASE_URL") or settings.frontend_base_url or "").rstrip("/")
-                absolute_url = f"{frontend_url}{logo_url}"
-                resolved_logo_url = _fetch_logo_as_base64(absolute_url)
+                # Try local filesystem first (useful for dev/script run)
+                local_logo_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", clean_path.lstrip("/"))
+                )
+                if os.path.exists(local_logo_path):
+                    try:
+                        with open(local_logo_path, "rb") as logo_file:
+                            logo_bytes = logo_file.read()
+                            logo_base64 = base64.b64encode(logo_bytes).decode("utf-8")
+                            resolved_logo_url = f"data:image/png;base64,{logo_base64}"
+                    except Exception as logo_err:
+                        logger.warning(f"Failed to read local logo file in service: {logo_err}")
 
-        elif logo_url.startswith("http://") or logo_url.startswith("https://"):
-            # Already an absolute URL — fetch as base64 so about:blank preview works
-            resolved_logo_url = _fetch_logo_as_base64(logo_url)
+                # If local file not found or read failed (e.g. inside docker backend container), fetch via HTTP
+                if resolved_logo_url and resolved_logo_url.startswith("/"):
+                    if os.environ.get("BACKEND_START_MODE") == "docker":
+                        # Use internal docker dns to bypass external routing/SSL issues
+                        internal_url = f"http://nginx/calrims{clean_path}"
+                        resolved_logo_url = _fetch_logo_as_base64(internal_url)
+                    else:
+                        absolute_url = f"{frontend_url}{clean_path}"
+                        resolved_logo_url = _fetch_logo_as_base64(absolute_url)
+            else:
+                # Fully external URL - fetch directly
+                resolved_logo_url = _fetch_logo_as_base64(logo_url)
 
     return {
         "candidate_name": candidate_name,

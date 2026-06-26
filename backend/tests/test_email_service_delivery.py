@@ -228,3 +228,53 @@ async def test_execute_email_with_retries_idempotency_success(mock_send_email, m
     
     assert res is True
     assert mock_send_email.call_count == 1
+
+
+def test_get_offer_letter_data_logo_resolution():
+    from app.services.offer_letter_service import get_offer_letter_data
+    from datetime import datetime
+    from unittest.mock import patch, mock_open
+    
+    # 1. Test data URI passes as-is
+    res = get_offer_letter_data(
+        candidate_name="Alice",
+        job_role="Engineer",
+        department="IT",
+        joining_date=datetime(2026, 6, 26),
+        company_name="TestCorp",
+        logo_url="data:image/png;base64,abcdef",
+        hr_email="hr@test.com"
+    )
+    assert res["logo_url"] == "data:image/png;base64,abcdef"
+    
+    # 2. Test relative path matching local file
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=b"mockbytes")):
+        res = get_offer_letter_data(
+            candidate_name="Alice",
+            job_role="Engineer",
+            department="IT",
+            joining_date=datetime(2026, 6, 26),
+            company_name="TestCorp",
+            logo_url="/logo.png",
+            hr_email="hr@test.com"
+        )
+        assert res["logo_url"].startswith("data:image/png;base64,")
+
+    # 3. Test HTTP fallback fetch
+    with patch("os.path.exists", return_value=False), \
+         patch("app.services.offer_letter_service._fetch_logo_as_base64", return_value="http://mocked-url") as mock_fetch:
+        res = get_offer_letter_data(
+            candidate_name="Alice",
+            job_role="Engineer",
+            department="IT",
+            joining_date=datetime(2026, 6, 26),
+            company_name="TestCorp",
+            logo_url="/calrims/logo.png",
+            hr_email="hr@test.com"
+        )
+        assert res["logo_url"] == "http://mocked-url"
+        mock_fetch.assert_called_once()
+        called_url = mock_fetch.call_args[0][0]
+        assert called_url.endswith("/logo.png")
+
