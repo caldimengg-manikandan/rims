@@ -165,7 +165,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
     interview.first_level_score = interview_score
     
     # 2.5 Update Application Status via State Machine
-    if interview.application and interview.status == "completed":
+    if interview.application and interview.status in ("completed", "terminated"):
         from app.services.state_machine import CandidateStateMachine, TransitionAction
         from app.domain.constants import CandidateState
         

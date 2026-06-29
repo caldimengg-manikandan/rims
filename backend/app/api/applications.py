@@ -1388,7 +1388,7 @@ async def ingest_email_resumes(
         bg_db = SessionLocal()
         try:
             logger.info("Starting background IMAP fetch...")
-            fetch_result = fetch_resume_attachments(bg_db, imap_email, imap_password, hr_id=current_user.id)
+            fetch_result = await asyncio.to_thread(fetch_resume_attachments, bg_db, imap_email, imap_password, hr_id=current_user.id)
             if fetch_result and fetch_result.get("success"):
                 logger.info("Background IMAP fetch complete. Starting AI mapping...")
                 await run_batch_resume_processing(bg_db, hr_id=current_user.id)

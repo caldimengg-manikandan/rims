@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timezone
-from app.domain.models import AttachmentResume, Application, Job
+from app.domain.models import AttachmentResume, Application, Job, User
 from app.core.config import get_settings
 import logging
 import requests
@@ -242,11 +242,16 @@ _KEYWORDS_PATTERN = _KEYWORDS_PATTERN.replace("cover\\ letter", "cover\\s+letter
 _JOB_KEYWORDS_RE = re.compile(rf'\b({_KEYWORDS_PATTERN})s?\b', re.IGNORECASE)
 
 
+def _normalize_job_code(code: str) -> str:
+    """Normalize Job ID code to avoid character confusion (O vs 0, I vs 1 vs L)."""
+    if not code:
+        return ""
+    return code.upper().strip().replace("0", "O").replace("1", "I").replace("L", "I")
+
 def _is_job_related_email(sender: str, subject: str, allowed_jobs: list = None) -> bool:
     """
     Return True ONLY for emails that look like genuine job applications matching an open job.
-    An email is accepted ONLY when BOTH the Job ID and Job Title of the target job
-    are present in the subject.
+    An email is accepted when the Job ID is present in the subject line (normalized).
     """
     subject_lower = (subject or "").lower().strip()
     sender_lower  = (sender  or "").lower().strip()
@@ -274,40 +279,17 @@ def _is_job_related_email(sender: str, subject: str, allowed_jobs: list = None) 
             logger.debug(f"🚫 Skipping non-job email — automated subject prefix '{prefix}': {subject!r}")
             return False
 
-    # 3. Match against allowed jobs (must have both Job ID and Job Title matching)
+    # 3. Match against allowed jobs (must have Job ID matching)
     if allowed_jobs:
-        subject_words = set(subject_lower.split())
-        filler_words = {"for", "the", "a", "an", "to", "in", "at", "of", "and", "or",
-                        "my", "i", "am", "is", "re", "fwd", "fw", "regarding", "apply",
-                        "applying", "application", "interested", "-", "–", ":"}
-        subject_content_words = subject_words - filler_words
-
+        subject_norm = _normalize_job_code(subject_upper)
         for job_id, title in allowed_jobs:
             code = (job_id or "").upper().strip()
-            if not code or code not in subject_upper:
-                continue
-
-            # Check title (substring or 60% overlap)
-            title_lower = (title or "").lower().strip()
-            if not title_lower:
-                continue
-
-            title_match = False
-            if title_lower in subject_lower:
-                title_match = True
-            else:
-                title_words = set(title_lower.split())
-                if title_words:
-                    match_count = len(title_words & subject_content_words)
-                    match_pct = match_count / len(title_words)
-                    if match_pct >= 0.6:
-                        title_match = True
-
-            if title_match:
-                logger.info(f"✅ Email subject matched job '{code}' ('{title}') — both Job ID and Title are present.")
+            norm_code = _normalize_job_code(code)
+            if norm_code and norm_code in subject_norm:
+                logger.info(f"✅ Email subject matched job '{code}' ('{title}') via Job ID.")
                 return True
 
-    logger.debug(f"🚫 Skipping email — does not contain both Job ID and Job Title of an open job: {subject!r}")
+    logger.debug(f"🚫 Skipping email — does not contain Job ID of any open job in subject line: {subject!r}")
     return False
 
 def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id: int = None):
@@ -400,10 +382,13 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
         error_count = 0
         processed_count = 0
 
-        # Pre-fetch open jobs for this HR user (or all if hr_id is None) to isolate sync scoping
+        # Pre-fetch open jobs for this HR user (or all if hr_id is None or user is super_admin) to isolate sync scoping
         with SessionLocal() as local_db:
+            user_record = local_db.query(User).filter(User.id == hr_id).first() if hr_id else None
+            is_super_admin = (user_record.role == 'super_admin') if user_record else False
+
             query = local_db.query(Job).filter(Job.status == 'open')
-            if hr_id is not None:
+            if hr_id is not None and not is_super_admin:
                 query = query.filter(Job.hr_id == hr_id)
             hr_jobs = query.all()
             allowed_jobs = [(j.job_id, j.title) for j in hr_jobs if j.job_id and j.title]
@@ -734,8 +719,11 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
         
     # 2. Fetch open jobs data using a short-lived session
     with SessionLocal() as jobs_db:
+        user_record = jobs_db.query(User).filter(User.id == hr_id).first() if hr_id else None
+        is_super_admin = (user_record.role == 'super_admin') if user_record else False
+
         query = jobs_db.query(Job).filter(Job.status == 'open')
-        if hr_id is not None:
+        if hr_id is not None and not is_super_admin:
             query = query.filter(Job.hr_id == hr_id)
         open_jobs = query.all()
         if not open_jobs:
@@ -780,18 +768,18 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
                 body_str = resume.email_body or ""
                 
                 # Pattern A: Match Job Code ONLY in subject line (not body).
-                job_codes = re.findall(r'JOB-[A-Z0-9]{6}', subject_str, re.IGNORECASE)
+                job_codes = re.findall(r'JOB-[A-Z0-9]{4,10}', subject_str, re.IGNORECASE)
                 if job_codes:
                     for code in job_codes:
-                        extracted_code = code.upper().strip()
+                        norm_extracted_code = _normalize_job_code(code)
                         for job in open_jobs_data:
-                            if job["job_id"] and job["job_id"].upper() == extracted_code:
+                            if job["job_id"] and _normalize_job_code(job["job_id"]) == norm_extracted_code:
                                 target_job_data = job
                                 break
                         if target_job_data:
-                            logger.info(f"Successfully mapped emailed resume {resume.id} to Job Code {extracted_code}")
+                            logger.info(f"Successfully mapped emailed resume {resume.id} to Job Code {job['job_id']}")
                             if len(job_codes) > 1:
-                                logger.info(f"Alternative job codes found in subject: {[c for c in job_codes if c.upper() != extracted_code]}")
+                                logger.info(f"Alternative job codes found in subject: {[c for c in job_codes if _normalize_job_code(c) != norm_extracted_code]}")
                             break
                 
                 # Pattern B: Match numeric Job ID with word boundaries in subject line only

@@ -242,13 +242,14 @@ def update_settings(
 
     if data.get("auto_sync_enabled") is True:
         async def run_sync_in_background():
+            import asyncio
             bg_db = SessionLocal()
             try:
                 user_record = bg_db.query(User).filter(User.id == current_user.id).first()
                 if user_record and user_record.imap_email and user_record.imap_password:
                     email = user_record.imap_email.strip()
                     password = decrypt_field(user_record.imap_password).strip()
-                    fetch_resume_attachments(bg_db, email, password, hr_id=user_record.id)
+                    await asyncio.to_thread(fetch_resume_attachments, bg_db, email, password, hr_id=user_record.id)
                     await run_batch_resume_processing(bg_db, hr_id=user_record.id)
             except Exception as e:
                 logger.error(f"Immediate background sync on setting save failed: {e}")

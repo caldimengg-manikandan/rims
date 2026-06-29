@@ -1097,10 +1097,11 @@ async def submit_answer(
                 
                 fsm = CandidateStateMachine(db)
                 try:
-                    fsm.transition(interview.application, TransitionAction.REJECT, notes=f"Interview automatically terminated. Reason: {termination_reason}")
+                    action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
+                    fsm.transition(interview.application, action, notes=f"Interview automatically terminated. Reason: {termination_reason}")
                 except Exception as e:
                     logger.error(f"FSM Transition error during termination: {e}")
-                    interview.application.status = "rejected"
+                    interview.application.status = "interview_completed"
                 
                 # Create a ticket for HR review
                 system_issue = InterviewIssue(
@@ -1485,13 +1486,16 @@ async def fail_device_test(
         from app.services.state_machine import CandidateStateMachine, TransitionAction
         if interview.application:
             fsm = CandidateStateMachine(db)
+            action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
             fsm.transition(
                 interview.application,
-                TransitionAction.REJECT,
+                action,
                 notes=f"Interview auto-terminated by proctoring system. Reason: {reason}",
             )
     except Exception as fsm_err:
         logger.error(f"FSM transition failed on device test violation: {fsm_err}")
+        if interview.application:
+            interview.application.status = "interview_completed"
 
     db.commit()
 
@@ -1571,13 +1575,16 @@ async def report_security_violation(
         from app.services.state_machine import CandidateStateMachine, TransitionAction
         if interview.application:
             fsm = CandidateStateMachine(db)
+            action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
             fsm.transition(
                 interview.application,
-                TransitionAction.REJECT,
+                action,
                 notes=f"Interview auto-terminated by proctoring system. Source: {proctoring_source}. Reason: {reason}",
             )
     except Exception as fsm_err:
         logger.error(f"FSM transition failed on security violation: {fsm_err}")
+        if interview.application:
+            interview.application.status = "interview_completed"
 
     # Add audit log record (CRIT-02)
     try:
@@ -1786,10 +1793,11 @@ async def abandon_interview(
         from app.services.state_machine import CandidateStateMachine, TransitionAction
         fsm = CandidateStateMachine(db)
         try:
-            fsm.transition(interview.application, TransitionAction.REJECT, notes="Candidate abandoned the session.")
+            action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
+            fsm.transition(interview.application, action, notes="Candidate abandoned the session.")
         except Exception:
             if interview.application:
-                interview.application.status = "rejected"
+                interview.application.status = "interview_completed"
         
         db.commit()
         
