@@ -405,6 +405,7 @@ def resolve_ticket(
         ticket.interview.status = 'not_started'
         ticket.interview.started_at = None
         ticket.interview.expires_at = get_ist_now() + timedelta(days=10)
+        ticket.interview.active_session_jti = None
         ticket.is_reissue_granted = True
         
         # Reset interview stage if it was completed/terminated early
@@ -440,6 +441,7 @@ def resolve_ticket(
                 ticket.interview.is_used = False
                 ticket.interview.status = 'not_started'
                 ticket.interview.expires_at = get_ist_now() + timedelta(days=10)
+                ticket.interview.active_session_jti = None
                 
                 # Reset interview stage if it was completed/terminated early
                 if not ticket.interview.interview_stage or ticket.interview.interview_stage in ('completed', 'terminated'):

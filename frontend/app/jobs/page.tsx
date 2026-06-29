@@ -13,6 +13,7 @@ import { fetcher } from '@/app/dashboard/lib/swr-fetcher'
 
 interface Job {
     id: number
+    job_id?: string
     title: string
     description: string
     experience_level: string
@@ -202,7 +203,7 @@ export default function PublicJobsPage() {
                                                 </div>
                                                 <CardTitle className="text-2xl font-bold leading-tight group-hover:text-primary transition-all line-clamp-2">
                                                     {job.title}
-                                                    <span className="block text-xs font-mono font-semibold text-muted-foreground mt-1">Job ID: {job.id}</span>
+                                                    <span className="block text-xs font-mono font-semibold text-muted-foreground mt-1">Job ID: {job.job_id || job.id}</span>
                                                 </CardTitle>
                                             </CardHeader>
 

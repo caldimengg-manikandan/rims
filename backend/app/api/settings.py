@@ -236,6 +236,10 @@ def update_settings(
     db.commit()
     db.refresh(current_user)
 
+    # Reset background IMAP polling loop backoff so it syncs immediately
+    if hasattr(request, "app") and hasattr(request.app, "state"):
+        request.app.state.reset_imap_backoff = True
+
     if data.get("auto_sync_enabled") is True:
         async def run_sync_in_background():
             bg_db = SessionLocal()
@@ -245,7 +249,7 @@ def update_settings(
                     email = user_record.imap_email.strip()
                     password = decrypt_field(user_record.imap_password).strip()
                     fetch_resume_attachments(bg_db, email, password, hr_id=user_record.id)
-                    await run_batch_resume_processing(bg_db)
+                    await run_batch_resume_processing(bg_db, hr_id=user_record.id)
             except Exception as e:
                 logger.error(f"Immediate background sync on setting save failed: {e}")
             finally:

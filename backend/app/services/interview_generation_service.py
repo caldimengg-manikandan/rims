@@ -109,6 +109,8 @@ def _set_interview_status(interview: Interview, value: str) -> None:
     if value not in VALID_INTERVIEW_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid interview status: {value}")
     interview.status = value
+    if value in {"completed", "terminated", "cancelled", "expired"}:
+        interview.active_session_jti = None
 
 
 def _determine_initial_stage(job: Job) -> str:

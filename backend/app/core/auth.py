@@ -422,6 +422,48 @@ def get_current_interview(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # Single Session Enforcement: Validate that JTI matches the active one
+        if jti and interview.active_session_jti != jti:
+            logger.warning(f"Interview auth failed: JTI mismatch for interview {interview.id}. Token JTI={jti}, active_session_jti={interview.active_session_jti}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session has been invalidated because the interview was started or resumed on another device.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Check allowed interview duration limit
+        if interview.status == "in_progress" and interview.started_at:
+            from app.core.timezone import to_naive_ist
+            started_at_naive = to_naive_ist(interview.started_at)
+            elapsed = get_ist_now() - started_at_naive
+            duration_limit = timedelta(minutes=interview.duration_minutes or 60)
+            if elapsed > duration_limit:
+                logger.warning(f"Interview auth failed: Session {interview.id} has exceeded its duration limit. Marking as expired.")
+                try:
+                    interview.status = "expired"
+                    interview.active_session_jti = None
+                    db.commit()
+                    
+                    from app.domain.models import AuditLog
+                    import json
+                    log = AuditLog(
+                        action="INTERVIEW_EXPIRED",
+                        resource_type="Interview",
+                        resource_id=interview.id,
+                        details=json.dumps({"application_id": interview.application_id, "reason": "duration_exceeded"})
+                    )
+                    db.add(log)
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.warning(f"Failed to auto-expire interview {interview.id}: {e}")
+                
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Your interview session has expired. Allowed duration exceeded.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
         if interview.status != "in_progress":
             logger.warning(f"Interview auth failed: interview {interview_id} is {interview.status}")
             detail = "This interview session is no longer active."
@@ -444,6 +486,7 @@ def get_current_interview(
                     logger.warning(f"Interview auth failed: Session {interview_id} expired at {exp_at}. Marking as expired.")
                     try:
                         interview.status = "expired"
+                        interview.active_session_jti = None
                         db.commit()
                         
                         # Lightweight audit log
@@ -597,6 +640,36 @@ def get_current_interview_any_status(
                 detail="Interview session not found.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # Single Session Enforcement: Validate that JTI matches the active one
+        if jti and interview.active_session_jti != jti:
+            logger.warning(f"Interview auth failed (any status): JTI mismatch for interview {interview.id}. Token JTI={jti}, active_session_jti={interview.active_session_jti}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session has been invalidated because the interview was started or resumed on another device.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Check allowed interview duration limit
+        if interview.status == "in_progress" and interview.started_at:
+            from app.core.timezone import to_naive_ist
+            started_at_naive = to_naive_ist(interview.started_at)
+            elapsed = get_ist_now() - started_at_naive
+            duration_limit = timedelta(minutes=interview.duration_minutes or 60)
+            if elapsed > duration_limit:
+                logger.warning(f"Interview auth failed (any status): Session {interview.id} has exceeded its duration limit. Marking as expired.")
+                try:
+                    interview.status = "expired"
+                    interview.active_session_jti = None
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Your interview session has expired. Allowed duration exceeded.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             
         # Check for hard expiration timestamp even for "any status" (read-only)
         if interview.expires_at:

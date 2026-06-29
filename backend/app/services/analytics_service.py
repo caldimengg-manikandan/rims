@@ -51,7 +51,7 @@ class AnalyticsService:
             metrics_query = db.query(
                 func.count(Application.id).label("total_apps"),
                 func.count(case((Application.status.in_(HIRED_STATUSES), Application.id))).label("hired_apps"),
-                func.count(case((or_(Offer.offer_sent == True, Application.status.in_(['offer_sent', 'accepted', 'onboarded'])), Application.id))).label("offered_apps"),
+                func.count(case((or_(Offer.offer_sent == True, Application.status.in_(['hired', 'offer_sent', 'accepted', 'onboarded'])), Application.id))).label("offered_apps"),
                 func.count(case((Application.status.in_(CLOSED_STATUSES), Application.id))).label("closed_apps"),
                 func.avg(case((Application.composite_score > 0, Application.composite_score))).label("avg_score")
             ).outerjoin(Offer, Application.id == Offer.application_id)
@@ -175,7 +175,7 @@ class AnalyticsService:
         
         # Hired Count and Offered Count
         hired_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['hired', 'offer_sent', 'onboarded','offer_accepted', 'offer_rejected'])).outerjoin(Job, Application.job_id == Job.id)
-        offered_metrics = self.db.query(func.count(Application.id)).outerjoin(Offer, Application.id == Offer.application_id).filter(or_(Offer.offer_sent == True, Application.status.in_(['offer_sent', 'accepted', 'onboarded']))).outerjoin(Job, Application.job_id == Job.id)
+        offered_metrics = self.db.query(func.count(Application.id)).outerjoin(Offer, Application.id == Offer.application_id).filter(or_(Offer.offer_sent == True, Application.status.in_(['hired', 'offer_sent', 'accepted', 'onboarded']))).outerjoin(Job, Application.job_id == Job.id)
 
         if hr_id:
             app_metrics = app_metrics.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))

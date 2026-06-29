@@ -375,7 +375,17 @@ async def _imap_polling_loop():
                 except Exception:
                     pass
 
-        await asyncio.sleep(sleep_seconds)
+        # Sleep in 1-second chunks to allow rapid wake-up on settings update
+        slept = 0
+        while slept < sleep_seconds:
+            if hasattr(app, "state") and getattr(app.state, "reset_imap_backoff", False):
+                app.state.reset_imap_backoff = False
+                _consecutive_failures = 0
+                sleep_seconds = _base_sleep_seconds
+                logger.info("[IMAP] Resetting circuit breaker backoff due to settings update.")
+                break
+            await asyncio.sleep(1)
+            slept += 1
 
 
 @asynccontextmanager

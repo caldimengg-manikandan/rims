@@ -83,6 +83,7 @@ _REQUIRED_COLUMNS = [
     ("interview_monitoring_events", "details", "TEXT"),
     ("interviews", "risk_score", "FLOAT DEFAULT 0.0"),
     ("interviews", "is_terminated_by_violations", "BOOLEAN DEFAULT FALSE"),
+    ("interviews", "active_session_jti", "VARCHAR(50)"),
 ]
 
 

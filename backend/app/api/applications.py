@@ -2782,7 +2782,11 @@ async def update_application_status(
                 Application.id != application.id,
                 Application.status.notin_([
                     CandidateState.REJECTED.value,
-                    CandidateState.ONBOARDED.value
+                    CandidateState.ONBOARDED.value,
+                    CandidateState.HIRED.value,
+                    CandidateState.PENDING_APPROVAL.value,
+                    CandidateState.OFFER_SENT.value,
+                    CandidateState.ACCEPTED.value
                 ])
             ).all()
             
