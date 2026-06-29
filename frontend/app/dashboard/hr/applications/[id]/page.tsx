@@ -285,19 +285,8 @@ export default function HRApplicationDetailPage() {
 
     const currentStatus = application.status || 'applied'
     const statusInfo = STATUS_LABELS[currentStatus] || { label: currentStatus, color: "bg-gray-100 text-gray-700 border-gray-200" }
-
-    // When an interview was terminated, the old code auto-rejected the application.
-    // Detect that scenario so HR can still take action (review, hire, reject manually).
-    const isTerminatedAutoReject =
-        currentStatus === 'rejected' &&
-        application.interview?.status === 'terminated'
-
-    // Show action buttons for terminated-auto-rejected as if they are interview_completed
-    const effectiveStatus = isTerminatedAutoReject ? 'interview_completed' : currentStatus
-    const buttons = FSM_BUTTONS[effectiveStatus] || []
-
-    // Only treat 'rejected' as terminal when HR explicitly rejected (not from auto-termination)
-    const isTerminal = (currentStatus === 'rejected' && !isTerminatedAutoReject) || currentStatus === 'onboarded'
+    const buttons = FSM_BUTTONS[currentStatus] || []
+    const isTerminal = ['rejected', 'onboarded'].includes(currentStatus)
     const isHiredPipeline = ['hired', 'pending_approval', 'offer_sent', 'accepted'].includes(currentStatus)
 
     // Extract resume data
@@ -717,15 +706,10 @@ export default function HRApplicationDetailPage() {
 
                 {/* ─── Sidebar (Right) ─── */}
                 <div className="space-y-6">
-                    {(!isTerminal || isTerminatedAutoReject) && buttons.length > 0 && (
+                    {!isTerminal && buttons.length > 0 && (
                         <Card className="bg-card/60 backdrop-blur-md rounded-2xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden pt-0">
                             <CardHeader className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40 pt-6 pb-4">
-                                <CardTitle className="text-lg font-bold">
-                                    {isTerminatedAutoReject ? 'Interview Review Actions' : 'Pipeline Actions'}
-                                </CardTitle>
-                                {isTerminatedAutoReject && (
-                                    <p className="text-xs text-amber-600 font-medium mt-1">Interview was terminated — please review the report and decide the candidate outcome.</p>
-                                )}
+                                <CardTitle className="text-lg font-bold">Pipeline Actions</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
                                 {buttons.map((btn, idx) => (
@@ -788,13 +772,13 @@ export default function HRApplicationDetailPage() {
                     {/* ─── Terminal / Onboarding State Banner ─── */}
                     {(isTerminal || isHiredPipeline) && (
                         <div className="space-y-4">
-                            {currentStatus === 'rejected' && !isTerminatedAutoReject ? (
+                            {currentStatus === 'rejected' ? (
                                 <Card className="border-2 shadow-sm bg-red-50 border-red-200">
                                     <CardContent className="py-8 text-center space-y-2">
                                         <p className="text-2xl font-black text-red-700">❌ APPLICATION REJECTED</p>
                                     </CardContent>
                                 </Card>
-                            ) : currentStatus !== 'rejected' ? (
+                            ) : (
                                 <Card className={`border-2 shadow-sm ${currentStatus === 'onboarded' ? 'bg-slate-800 border-slate-900 text-white' : 'bg-emerald-50 border-emerald-200'}`}>
                                     <CardContent className="py-8 text-center space-y-2">
                                         <p className={`text-2xl font-black ${currentStatus === 'onboarded' ? 'text-white' : 'text-emerald-700'}`}>
@@ -807,7 +791,7 @@ export default function HRApplicationDetailPage() {
                                         )}
                                     </CardContent>
                                 </Card>
-                            ) : null}
+                            )}
 
                             {currentStatus === 'hired' && (
                                 <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-3">
