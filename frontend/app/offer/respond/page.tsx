@@ -14,6 +14,7 @@ interface OfferData {
     job_title?: string
     joining_date?: string
     candidate_email?: string
+    pdf_url?: string
 }
 
 export default function OfferRespondPage() {
@@ -73,7 +74,7 @@ export default function OfferRespondPage() {
                <div className="absolute bottom-[-10%] left-[-10%] w-[350px] h-[350px] bg-accent/8 rounded-full blur-[100px] animate-pulse duration-[8s] delay-1000" />
             </div>
 
-            <Card className="max-w-xl w-full bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] rounded-2xl overflow-hidden relative z-10">
+            <Card className="max-w-3xl w-full bg-card/45 backdrop-blur-xl border border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] rounded-2xl overflow-hidden relative z-10">
                 <div className="h-1.5 bg-gradient-to-r from-primary to-accent w-full" />
                 
                 {view === 'loading' && (
@@ -121,9 +122,32 @@ export default function OfferRespondPage() {
                                     </div>
                                 </div>
 
+                                {offerData.pdf_url && (
+                                    <div className="space-y-2">
+                                        <h4 className="text-xs text-muted-foreground font-bold uppercase tracking-wider">Offer Letter Document</h4>
+                                        <div className="border border-border/80 rounded-xl overflow-hidden bg-background">
+                                            <iframe
+                                                src={`${offerData.pdf_url}#toolbar=0&navpanes=0`}
+                                                className="w-full h-[550px] border-none"
+                                                title="Offer Letter PDF"
+                                            />
+                                        </div>
+                                        <div className="flex justify-end">
+                                            <Button
+                                                variant="link"
+                                                size="sm"
+                                                className="text-xs text-primary font-bold hover:no-underline"
+                                                onClick={() => window.open(offerData.pdf_url, '_blank')}
+                                            >
+                                                Download PDF Document
+                                            </Button>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="text-center space-y-4">
                                     <p className="text-sm text-muted-foreground px-4 leading-relaxed font-semibold">
-                                        Please review the details above. By clicking **Accept Offer**, you agree to the terms mentioned in the offer letter PDF sent to your email.
+                                        Please review the details above. By clicking **Accept Offer**, you agree to the terms mentioned in the offer letter PDF shown above.
                                     </p>
                                     
                                     <div className="flex flex-col md:flex-row gap-4 pt-4">

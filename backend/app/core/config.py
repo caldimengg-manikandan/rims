@@ -148,6 +148,14 @@ class Settings(BaseSettings):
         validation_alias="FRONTEND_BASE_URL"
     )
 
+    # Public URL for candidate-facing links (offer accept/reject, interview access).
+    # Set to the externally accessible production URL (e.g. https://caldimproducts.com/calrims).
+    # Falls back to frontend_base_url if not set.
+    public_base_url: str = Field(
+        default="",
+        validation_alias="PUBLIC_BASE_URL"
+    )
+
     class Config:
         env_file = os.path.join(str(BASE_DIR), ".env")
         case_sensitive = False

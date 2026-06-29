@@ -631,7 +631,8 @@ async def process_offer_email(application_id: int, storage_path: str, company_na
         final_url = get_signed_url(settings.supabase_bucket_offers, final_storage_path)
         
         # Link Safety: Use offer_token (UUID) for better uniqueness
-        base_url = settings.frontend_base_url 
+        # Use PUBLIC_BASE_URL if configured (ensures production links, not localhost)
+        base_url = (getattr(settings, 'public_base_url', None) or settings.frontend_base_url).rstrip('/')
         accept_link = f"{base_url}/offer/respond?token={application.offer_token}&intent=accept"
         reject_link = f"{base_url}/offer/respond?token={application.offer_token}&intent=reject"
 
@@ -689,11 +690,17 @@ async def get_offer_preview(request: Request, token: str, db: Session = Depends(
 
     from app.core.branding import get_branding_value
     resolved_company_name = get_branding_value(db, "company_name")
+    
+    pdf_url = None
+    if application.offer_pdf_path:
+        pdf_url = get_signed_url(settings.supabase_bucket_offers, application.offer_pdf_path)
+
     return {
         "candidate_name": application.candidate_name,
         "job_title": application.job.title if application.job else "Unknown Role",
         "joining_date": application.joining_date.isoformat() if application.joining_date else None,
-        "company_name": resolved_company_name
+        "company_name": resolved_company_name,
+        "pdf_url": pdf_url
     }
 
 def generate_employee_id(db: Session):
