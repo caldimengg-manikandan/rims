@@ -722,6 +722,22 @@ export default function HRApplicationDetailPage() {
                                                 </Button>
                                             }
                                         />
+                                    ) : btn.action === 'hire' ? (
+                                        <SendOfferDialog
+                                            key={idx}
+                                            applicationId={parseInt(applicationId)}
+                                            candidateName={application.candidate_name || 'Candidate'}
+                                            onSuccess={() => mutateApp()}
+                                            trigger={
+                                                <Button
+                                                    className={`w-full h-12 justify-start gap-3 rounded-xl transition-all active:scale-[0.985] ${btn.className}`}
+                                                    disabled={actionLoading !== null}
+                                                >
+                                                    {btn.icon}
+                                                    <span className="font-bold uppercase tracking-wider text-xs">{btn.label}</span>
+                                                </Button>
+                                            }
+                                        />
                                     ) : (
                                         <Button
                                             key={idx}

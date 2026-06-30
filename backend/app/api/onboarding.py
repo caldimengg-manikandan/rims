@@ -421,7 +421,7 @@ async def request_offer_approval(
     # Direct release path
     try:
         if not is_resend:
-            fsm.transition(application, TransitionAction.SEND_OFFER, user_id=current_user.id)
+            fsm.transition(application, TransitionAction.HIRE, user_id=current_user.id)
             
             # Generate PDF via Puppeteer (Phase 7 implementation)
             filename = f"offer_{application.id}_{int(datetime.now().timestamp())}.pdf"
