@@ -27,8 +27,9 @@ const GRADIENTS = [
 const CustomizedAxisTick = React.memo(({ x, y, payload }: any) => {
     if (!payload || !payload.value) return null;
     const words = payload.value.split(' ');
+    const tickY = y !== undefined && y !== null ? y : 0;
     return (
-        <g transform={`translate(${x},${y + 12})`}>
+        <g transform={`translate(${x},${tickY + 20})`}>
             <text
                 x={0}
                 y={0}
@@ -139,7 +140,7 @@ export function DashboardChart({ data, type = 'bar' }: DashboardChartProps) {
 
     return (
         <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 20, right: 24, left: 4, bottom: 55 }}>
+            <BarChart data={data} margin={{ top: 20, right: 24, left: 4, bottom: 60 }}>
                 <defs>
                     <linearGradient id="chartGrad1" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.95}/>
