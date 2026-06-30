@@ -241,7 +241,7 @@ def get_application_failures(
     return db.query(Application).filter(
         or_(
             Application.retry_count > 0,
-            Application.status == CandidateState.PERMANENT_FAILURE.value
+            Application.status == CandidateState.REJECTED.value
         )
     ).order_by(Application.last_attempt_at.desc()).limit(100).all()
 
@@ -1021,7 +1021,7 @@ async def process_application_background(application_id: int, job_id: int, abs_f
                 # Escalation (Phase 5 fix)
                 if application.retry_count >= 3:
                      from app.services.state_machine import CandidateState
-                     application.status = CandidateState.PERMANENT_FAILURE.value
+                     application.status = CandidateState.REJECTED.value
                      application.failure_reason = "[PERMANENT_FAILURE]: " + application.failure_reason
 
                 # Error details are now handled by the frontend via failure_reason
@@ -2783,10 +2783,9 @@ async def update_application_status(
                 Application.status.notin_([
                     CandidateState.REJECTED.value,
                     CandidateState.ONBOARDED.value,
-                    CandidateState.HIRED.value,
-                    CandidateState.PENDING_APPROVAL.value,
                     CandidateState.OFFER_SENT.value,
-                    CandidateState.ACCEPTED.value
+                    CandidateState.OFFER_ACCEPTED.value,
+                    CandidateState.OFFER_REJECTED.value
                 ])
             ).all()
             

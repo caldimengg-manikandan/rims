@@ -208,7 +208,7 @@ async def _sweep_stuck_applications(db):
             else:
                 logger.error(f"[SWEEPER] Application #{app.id} has exceeded maximum retries. Marking as permanent failure.")
                 app.resume_status = "failed"
-                app.status = CandidateState.PERMANENT_FAILURE.value
+                app.status = CandidateState.REJECTED.value
                 app.failure_reason = "[PERMANENT_FAILURE]: Ingestion/Parsing timed out repeatedly."
                 db.commit()
     except Exception as e:
