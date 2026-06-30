@@ -413,7 +413,6 @@ export default function OnboardingPage() {
                                         <SelectItem value="offer_accepted" className="font-bold">Offer Accepted</SelectItem>
                                         <SelectItem value="offer_rejected" className="font-bold">Offer Declined</SelectItem>
                                         <SelectItem value="onboarded" className="font-bold">Onboarded</SelectItem>
-                                        <SelectItem value="rejected" className="font-bold">Rejected</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
