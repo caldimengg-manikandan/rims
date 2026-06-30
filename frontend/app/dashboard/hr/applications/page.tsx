@@ -680,7 +680,7 @@ export default function HRApplicationsPage() {
                             <CheckCircle2 className="h-5 w-5" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Hire Candidate</TooltipContent>
+                        <TooltipContent>Issue Offer</TooltipContent>
                       </Tooltip>
                     )}
 
@@ -751,7 +751,7 @@ export default function HRApplicationsPage() {
                             <CheckCircle2 className="h-5 w-5" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Hire Candidate</TooltipContent>
+                        <TooltipContent>Issue Offer</TooltipContent>
                       </Tooltip>
                     )}
 

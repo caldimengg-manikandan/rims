@@ -591,25 +591,44 @@ export default function OnboardingPage() {
                                                     </Tooltip>
                                                 </TooltipProvider>
                                                 {candidate.status === 'offer_sent' &&
-                                                    candidate.offer_token_expiry &&
-                                                    new Date(candidate.offer_token_expiry) < new Date() &&
                                                     (candidate.offer_response_status === 'pending' || !candidate.offer_response_status) && (
-                                                    <SendOfferDialog 
-                                                         applicationId={candidate.id}
-                                                         candidateName={candidate.candidate_name}
-                                                         initialDate={candidate.joining_date}
-                                                         onSuccess={() => mutate(undefined, { revalidate: true })}
-                                                         trigger={
-                                                             <Button
-                                                                 size="sm"
-                                                                 variant="outline"
-                                                                 className="h-8 gap-1.5 text-xs text-destructive border-destructive/50 hover:bg-destructive/10"
-                                                             >
-                                                                 <RefreshCcw className="h-3.5 w-3.5" />
-                                                                 Resend Offer
-                                                             </Button>
-                                                         }
-                                                     />
+                                                    <>
+                                                        {candidate.offer_token_expiry && new Date(candidate.offer_token_expiry) < new Date() ? (
+                                                            <SendOfferDialog 
+                                                                 applicationId={candidate.id}
+                                                                 candidateName={candidate.candidate_name}
+                                                                 initialDate={candidate.joining_date}
+                                                                 onSuccess={() => mutate(undefined, { revalidate: true })}
+                                                                 trigger={
+                                                                     <Button
+                                                                         size="sm"
+                                                                         variant="outline"
+                                                                         className="h-8 gap-1.5 text-xs text-destructive border-destructive/50 hover:bg-destructive/10"
+                                                                     >
+                                                                         <RefreshCcw className="h-3.5 w-3.5" />
+                                                                         Resend Offer
+                                                                     </Button>
+                                                                 }
+                                                             />
+                                                        ) : (
+                                                            <SendOfferDialog 
+                                                                 applicationId={candidate.id}
+                                                                 candidateName={candidate.candidate_name}
+                                                                 initialDate={candidate.joining_date}
+                                                                 onSuccess={() => mutate(undefined, { revalidate: true })}
+                                                                 trigger={
+                                                                     <Button
+                                                                         size="sm"
+                                                                         variant="outline"
+                                                                         className="h-8 gap-1.5 text-xs text-blue-600 dark:text-blue-400 border-blue-500/30 hover:bg-blue-500/10"
+                                                                     >
+                                                                         <Calendar className="h-3.5 w-3.5" />
+                                                                         Change Joining Date
+                                                                     </Button>
+                                                                 }
+                                                             />
+                                                        )}
+                                                    </>
                                                 )}
                                                 {candidate.status === 'offer_accepted' && (
                                                     <Button 

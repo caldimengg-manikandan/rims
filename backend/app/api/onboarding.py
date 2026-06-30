@@ -472,10 +472,10 @@ async def request_offer_approval(
             db.add(audit)
         
         db.add(application)
-        db.commit() # Commit status change before background task
+        db.commit() # Commit status change before email task
         logger.info(f"Offer released/resent and status committed for App {application_id}")
         
-        background_tasks.add_task(process_offer_email, application.id, application.offer_pdf_path, gs.get("company_name", "Our Company"))
+        await process_offer_email(application.id, application.offer_pdf_path, gs.get("company_name", "Our Company"))
         return {"status": "success", "message": "Offer letter sent successfully."}
             
     except HTTPException as e:
