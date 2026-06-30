@@ -28,8 +28,9 @@ jobs:
             chmod 600 ~/.ssh/id_* 2>/dev/null || true
             chmod 644 ~/.ssh/*.pub 2>/dev/null || true
             cd /var/www/rims
-            git fetch origin main
-            git reset --hard origin/main
+            # Fetch from old-origin (caldimengg-manikandan/rims) and fallback to direct SSH URL if remote name differs on VPS
+            git fetch old-origin main || git fetch git@github.com:caldimengg-manikandan/rims.git main
+            git reset --hard FETCH_HEAD
             chmod +x deploy-zero-downtime.sh
             
             echo "=== VPS SYSTEM STATUS BEFORE DEPLOY ==="
