@@ -112,7 +112,7 @@ export function DashboardChart({ data, type = 'bar' }: DashboardChartProps) {
 
     return (
         <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 20, right: 24, left: 4, bottom: 45 }}>
+            <BarChart data={data} margin={{ top: 20, right: 24, left: 4, bottom: 55 }}>
                 <defs>
                     <linearGradient id="chartGrad1" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.95}/>
@@ -143,9 +143,10 @@ export function DashboardChart({ data, type = 'bar' }: DashboardChartProps) {
                     tickLine={false}
                     axisLine={false}
                     interval={0}
-                    angle={-30}
+                    angle={-45}
                     textAnchor="end"
-                    dy={4}
+                    dx={-8}
+                    dy={6}
                 />
                 <YAxis
                     stroke="var(--muted-foreground)"
