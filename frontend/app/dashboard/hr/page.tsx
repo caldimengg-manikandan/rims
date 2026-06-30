@@ -72,6 +72,7 @@ interface DashboardData {
     shortlisted_candidates: number
     interviewed_candidates: number
     offers_released: number
+    total_onboarded: number
     hiring_success_rate: number
   }
   candidate_metrics: {
@@ -172,6 +173,7 @@ export default function HRDashboard() {
         shortlisted_candidates: (d as any).total_interviews || 0,
         interviewed_candidates: (d as any).completed_interviews || 0,
         offers_released: (d as any).offers_released || 0,
+        total_onboarded: (d as any).total_onboarded || 0,
         hiring_success_rate: (d as any).success_rate || 0
       }
     }
@@ -182,6 +184,7 @@ export default function HRDashboard() {
       shortlisted_candidates: nested.shortlisted_candidates || 0,
       interviewed_candidates: nested.interviewed_candidates || 0,
       offers_released: nested.offers_released || 0,
+      total_onboarded: nested.total_onboarded || 0,
       hiring_success_rate: nested.hiring_success_rate || 0
     }
   }, [dashboardData])
@@ -287,7 +290,7 @@ export default function HRDashboard() {
           />
         </Link>
         <StatsCard
-          title="Hiring Success"
+          title="Onboarding Success"
           value={`${r_metrics.hiring_success_rate}%`}
           icon={TrendingUp}
           color="text-emerald-600"
@@ -301,8 +304,8 @@ export default function HRDashboard() {
           bg="bg-amber-500/10"
         />
         <StatsCard
-          title="Total Offers Sent"
-          value={r_metrics.offers_released}
+          title="Total Onboarded"
+          value={r_metrics.total_onboarded}
           icon={CheckCircle}
           color="text-blue-600"
           bg="bg-blue-500/10"

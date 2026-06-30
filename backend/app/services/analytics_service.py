@@ -46,15 +46,17 @@ class AnalyticsService:
 
             # Combine all core metrics into a single row fetch to minimize network round-trips
             # Hired stages: hired, offer_sent, onboarded, offer_accepted, offer_rejected
-            HIRED_STATUSES = ['hired', 'offer_sent', 'onboarded', 'offer_accepted', 'offer_rejected']
-            CLOSED_STATUSES = ['hired', 'offer_sent', 'onboarded', 'offer_accepted', 'offer_rejected', 'rejected']
+            HIRED_STATUSES = ['hired', 'offer_sent', 'onboarded', 'accepted', 'offer_accepted', 'offer_rejected']
+            CLOSED_STATUSES = ['hired', 'offer_sent', 'onboarded', 'accepted', 'offer_accepted', 'offer_rejected', 'rejected']
             metrics_query = db.query(
                 func.count(Application.id).label("total_apps"),
                 func.count(case((Application.status.in_(HIRED_STATUSES), Application.id))).label("hired_apps"),
-                func.count(case((or_(Offer.offer_sent == True, Application.status.in_(['hired', 'offer_sent', 'accepted', 'onboarded'])), Application.id))).label("offered_apps"),
+                func.count(case((Application.status.in_(HIRED_STATUSES), Application.id))).label("offered_apps"),
+                func.count(case((Application.status == 'onboarded', Application.id))).label("onboarded_apps"),
                 func.count(case((Application.status.in_(CLOSED_STATUSES), Application.id))).label("closed_apps"),
-                func.avg(case((Application.composite_score > 0, Application.composite_score))).label("avg_score")
-            ).outerjoin(Offer, Application.id == Offer.application_id)
+                func.avg(case((and_(Interview.status == 'completed', Application.composite_score > 0), Application.composite_score))).label("avg_score")
+            ).outerjoin(Offer, Application.id == Offer.application_id)\
+             .outerjoin(Interview, Application.id == Interview.application_id)
             
             metrics_query = apply_filters(metrics_query)
             
@@ -62,6 +64,7 @@ class AnalyticsService:
             total_applications = m_res.total_apps or 0
             hired_count = m_res.hired_apps or 0
             offered_count = m_res.offered_apps or 0
+            onboarded_count = m_res.onboarded_apps or 0
             closed_apps_count = m_res.closed_apps or 0
             average_score = m_res.avg_score or 0
 
@@ -77,9 +80,8 @@ class AnalyticsService:
             total_interviews = i_res.total_ints or 0
             completed_interviews = i_res.completed_ints or 0
             
-            # Success Rate = Hired (offer_sent/hired/onboarded/offer_accepted/offer_rejected) / Closed
-            # Closed = all hired stages + rejected (excludes pending/in-progress candidates)
-            success_rate = (hired_count / closed_apps_count * 100) if closed_apps_count > 0 else 0
+            # Success Rate = Onboarded / Total Applications
+            success_rate = (onboarded_count / total_applications * 100) if total_applications > 0 else 0
 
             result = {
                 "total_applications": total_applications,
@@ -87,7 +89,8 @@ class AnalyticsService:
                 "completed_interviews": completed_interviews,
                 "success_rate": round(success_rate, 2),
                 "average_score": round(float(average_score), 2),
-                "offers_released": offered_count
+                "offers_released": offered_count,
+                "total_onboarded": onboarded_count
             }
 
             # ── Application Pipeline (Chart Data) ──
@@ -174,14 +177,16 @@ class AnalyticsService:
         ).join(Application, Interview.application_id == Application.id).outerjoin(Job, Application.job_id == Job.id)
         
         # Hired Count and Offered Count
-        hired_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['hired', 'offer_sent', 'onboarded','offer_accepted', 'offer_rejected'])).outerjoin(Job, Application.job_id == Job.id)
-        offered_metrics = self.db.query(func.count(Application.id)).outerjoin(Offer, Application.id == Offer.application_id).filter(or_(Offer.offer_sent == True, Application.status.in_(['hired', 'offer_sent', 'accepted', 'onboarded']))).outerjoin(Job, Application.job_id == Job.id)
+        hired_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['hired', 'offer_sent', 'onboarded','offer_accepted', 'offer_rejected', 'accepted'])).outerjoin(Job, Application.job_id == Job.id)
+        offered_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['hired', 'offer_sent', 'onboarded','offer_accepted', 'offer_rejected', 'accepted'])).outerjoin(Job, Application.job_id == Job.id)
+        onboarded_metrics = self.db.query(func.count(Application.id)).filter(Application.status == 'onboarded').outerjoin(Job, Application.job_id == Job.id)
 
         if hr_id:
             app_metrics = app_metrics.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))
             int_metrics = int_metrics.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))
             hired_metrics = hired_metrics.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))
             offered_metrics = offered_metrics.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))
+            onboarded_metrics = onboarded_metrics.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))
             
         total_applications = app_metrics.scalar() or 0
         valid_int_result = int_metrics.filter(Interview.status.in_(['interview_completed'])).first()
@@ -189,6 +194,7 @@ class AnalyticsService:
         completed_interviews = valid_int_result[1] if valid_int_result else 0
         hired_count = hired_metrics.scalar() or 0   
         offered_count = offered_metrics.scalar() or 0
+        onboarded_count = onboarded_metrics.scalar() or 0
 
         # Debug Logging for Correctness Verification
         import logging
@@ -203,14 +209,17 @@ class AnalyticsService:
 
         # Calculations
         completion_rate = (completed_interviews / valid_interviews * 100) if valid_interviews > 0 else 0
-        hiring_success_rate = (hired_count / total_applications * 100) if total_applications > 0 else 0
+        hiring_success_rate = (onboarded_count / total_applications * 100) if total_applications > 0 else 0
 
         # Candidate aggregate metrics
         # Candidate aggregate metrics with COALESCE for null safety
         avg_resume_score_query = self.db.query(func.coalesce(func.avg(Application.resume_score), 0)).filter(Application.resume_score > 0).outerjoin(Job, Application.job_id == Job.id)
         avg_aptitude_score_query = self.db.query(func.coalesce(func.avg(Application.aptitude_score), 0)).filter(Application.aptitude_score > 0).outerjoin(Job, Application.job_id == Job.id)
         avg_interview_score_query = self.db.query(func.coalesce(func.avg(Application.interview_score), 0)).filter(Application.interview_score > 0).outerjoin(Job, Application.job_id == Job.id)
-        avg_composite_score_query = self.db.query(func.coalesce(func.avg(Application.composite_score), 0)).filter(Application.composite_score > 0).outerjoin(Job, Application.job_id == Job.id)
+        avg_composite_score_query = self.db.query(func.coalesce(func.avg(Application.composite_score), 0))\
+            .join(Interview, Application.id == Interview.application_id)\
+            .outerjoin(Job, Application.job_id == Job.id)\
+            .filter(and_(Application.composite_score > 0, Interview.status == 'completed'))
 
         if hr_id:
             avg_resume_score_query = avg_resume_score_query.filter(or_(Job.hr_id == hr_id, Application.hr_id == hr_id))
@@ -229,6 +238,7 @@ class AnalyticsService:
                 "shortlisted_candidates": valid_interviews, # Shortlisted currently mapped to having an interview
                 "interviewed_candidates": completed_interviews,
                 "offers_released": offered_count,
+                "total_onboarded": onboarded_count,
                 "hiring_success_rate": round(hiring_success_rate, 2),
                 "completion_rate": round(completion_rate, 2)
             },

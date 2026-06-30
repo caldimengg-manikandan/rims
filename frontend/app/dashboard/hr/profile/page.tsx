@@ -50,7 +50,7 @@ export default function ProfilePage() {
     const metrics = dashboardData?.recruitment_metrics || {
         total_candidates: dashboardData?.total_applications || 0,
         hiring_success_rate: dashboardData?.success_rate || 0,
-        offers_released: dashboardData?.offers_released || 0
+        total_onboarded: dashboardData?.total_onboarded || 0
     }
 
     const avgScore = dashboardData?.candidate_metrics?.avg_composite_score || dashboardData?.average_score || 0
@@ -190,8 +190,8 @@ export default function ProfilePage() {
                         </CardHeader>
                         <CardContent className="pt-4 space-y-6 stagger-children">
                             <ImpactMetric icon={Users} label="Candidates Managed" value={metrics.total_candidates} color="text-blue-500" />
-                            <ImpactMetric icon={TrendingUp} label="Hiring Success Rate" value={`${metrics.hiring_success_rate}%`} color="text-emerald-500" />
-                            <ImpactMetric icon={CheckCircle} label="Offers Released" value={metrics.offers_released} color="text-primary" />
+                            <ImpactMetric icon={TrendingUp} label="Onboarding Success Rate" value={`${metrics.hiring_success_rate}%`} color="text-emerald-500" />
+                            <ImpactMetric icon={CheckCircle} label="Total Onboarded" value={metrics.total_onboarded} color="text-primary" />
                             <ImpactMetric icon={Award} label="Avg. Candidate Score" value={avgScore} color="text-amber-500" />
                         </CardContent>
                     </Card>
