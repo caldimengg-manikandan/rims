@@ -302,11 +302,12 @@ export default function ReportsPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'hired': return 'bg-primary/10 text-primary border-primary/20'
+      case 'offer_sent':
+      case 'offer_accepted':
+      case 'onboarded': return 'bg-primary/10 text-primary border-primary/20'
       case 'rejected': return 'bg-destructive/10 text-destructive border-destructive/20'
       case 'review_later': return 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-      case 'interview_scheduled':
-      case 'approved_for_interview': return 'bg-accent/10 text-accent border-accent/20'
+      case 'interview_scheduled': return 'bg-accent/10 text-accent border-accent/20'
       case 'interview_completed': return 'bg-secondary/10 text-secondary border-secondary/20'
       default: return 'bg-muted text-muted-foreground border-border'
     }

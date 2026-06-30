@@ -97,7 +97,7 @@ export default function HRApplicationDetailPage() {
     const { data: interviewReport, error: reportError, isLoading: reportLoading, mutate: mutateReport } = useSWR(
         (application?.interview?.status === 'completed' || 
          application?.interview?.status === 'terminated' || 
-         application?.status === 'ai_interview_completed') 
+         application?.status === 'interview_completed')
         ? `/api/interviews/${application?.interview?.id}/report` : null,
         (url: string) => fetcher<any>(url),
         {
@@ -167,7 +167,7 @@ export default function HRApplicationDetailPage() {
         else if (action === "reject") nextStatus = "rejected";
         else if (action === "call_for_interview") nextStatus = "physical_interview";
         else if (action === "review_later") nextStatus = "review_later";
-        else if (action === "hire") nextStatus = "hired";
+        else if (action === "hire") nextStatus = "offer_sent";
 
         try {
             await performMutation<any>(
