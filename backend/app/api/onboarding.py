@@ -568,7 +568,8 @@ async def get_offer_preview(request: Request, token: str, db: Session = Depends(
     
     pdf_url = None
     if application.offer_pdf_path:
-        pdf_url = get_signed_url(settings.supabase_bucket_offers, application.offer_pdf_path)
+        # Proxy via Next.js same-origin route to prevent iframe CORS / site isolation crashes
+        pdf_url = f"/calrims/api/onboarding/offer/pdf?token={token}"
 
     return {
         "candidate_name": application.candidate_name,
@@ -577,6 +578,31 @@ async def get_offer_preview(request: Request, token: str, db: Session = Depends(
         "company_name": resolved_company_name,
         "pdf_url": pdf_url
     }
+
+@router.get("/offer/pdf")
+async def get_offer_pdf(token: str, db: Session = Depends(get_db)):
+    """Fetch the offer letter PDF binary from Supabase storage and stream it inline."""
+    from app.domain.models import Offer
+    application = db.query(Application).join(Offer).filter(Offer.offer_token == token).first()
+    if not application:
+        raise HTTPException(status_code=404, detail="Offer not found")
+        
+    if not application.offer_pdf_path:
+        raise HTTPException(status_code=404, detail="Offer PDF not found")
+        
+    from app.core.storage import download_file
+    pdf_bytes = download_file(settings.supabase_bucket_offers, application.offer_pdf_path)
+    if not pdf_bytes:
+        raise HTTPException(status_code=404, detail="Could not download PDF from storage")
+        
+    from fastapi.responses import Response
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline; filename=offer-letter.pdf"
+        }
+    )
 
 def generate_employee_id(db: Session):
     """Utility to generate a unique employee ID (Task 8)."""
