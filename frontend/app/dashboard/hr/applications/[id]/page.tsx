@@ -54,8 +54,7 @@ const FSM_BUTTONS: Record<string, { action: string; label: string; icon: React.R
         { action: "hire", label: "HIRE CANDIDATE", icon: <Star className="h-4 w-4" />, className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg hover:scale-102 hover:shadow-emerald-600/15 active:scale-[0.98] transition-all duration-300" },
         { action: "reject", label: "REJECT CANDIDATE", icon: <XCircle className="h-4 w-4" />, className: "bg-destructive hover:bg-destructive/90 text-white shadow-lg hover:scale-102 hover:shadow-destructive/15 active:scale-[0.98] transition-all duration-300" },
     ],
-    hired: [],
-    accepted: [
+    offer_accepted: [
         { action: "onboard", label: "FINALIZE JOINING", icon: <UserPlus className="h-4 w-4" />, className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg hover:scale-102 hover:shadow-emerald-600/15 active:scale-[0.98] transition-all duration-300" },
     ],
 }
@@ -74,10 +73,9 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
     interview_completed: { label: "Interview Completed", color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20" },
     review_later: { label: "Review Later", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
     physical_interview: { label: "Physical Interview", color: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20" },
-    hired: { label: "Hired", color: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
-    pending_approval: { label: "Pending Offer Approval", color: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
     offer_sent: { label: "Offer Sent", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20" },
-    accepted: { label: "Offer Accepted", color: "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
+    offer_accepted: { label: "Offer Accepted", color: "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
+    offer_rejected: { label: "Offer Rejected", color: "bg-rose-500/15 text-rose-600 border-rose-500/20" },
     onboarded: { label: "Onboarded", color: "bg-primary/20 text-primary border-primary/30" },
     rejected: { label: "Rejected", color: "bg-destructive/15 text-destructive border-destructive/20" },
 }
@@ -287,7 +285,7 @@ export default function HRApplicationDetailPage() {
     const statusInfo = STATUS_LABELS[currentStatus] || { label: currentStatus, color: "bg-gray-100 text-gray-700 border-gray-200" }
     const buttons = FSM_BUTTONS[currentStatus] || []
     const isTerminal = ['rejected', 'onboarded'].includes(currentStatus)
-    const isHiredPipeline = ['hired', 'pending_approval', 'offer_sent', 'accepted'].includes(currentStatus)
+    const isHiredPipeline = ['offer_sent', 'offer_accepted', 'offer_rejected', 'onboarded'].includes(currentStatus)
 
     // Extract resume data
     const resumeExtraction = application.resume_extraction || {}
@@ -793,28 +791,18 @@ export default function HRApplicationDetailPage() {
                                 </Card>
                             )}
 
-                            {currentStatus === 'hired' && (
-                                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-3">
-                                    <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mx-auto">
-                                        <ShieldAlert className="h-5 w-5" />
+                            {currentStatus === 'offer_accepted' && (
+                                <div className="space-y-3">
+                                    <div className="p-4 bg-emerald-500 text-white rounded-2xl text-center flex items-center justify-center gap-3 shadow-lg">
+                                        <CheckCircle2 className="h-6 w-6" />
+                                        <span className="font-black text-sm uppercase tracking-widest">Offer Accepted!</span>
                                     </div>
-                                    <p className="text-sm font-bold text-emerald-800 uppercase tracking-tight">Hired & Ready for Onboarding</p>
-                                    <p className="text-xs text-emerald-600">The next step is to issue the offer letter. Please visit the Onboarding page to complete this process.</p>
                                     <Button 
-                                        variant="outline" 
-                                        className="w-full text-emerald-700 border-emerald-300 hover:bg-emerald-100 font-bold"
-                                        onClick={() => router.push('/dashboard/onboarding')}
+                                        className="w-full h-12 bg-slate-900 hover:bg-black text-white rounded-xl font-bold"
+                                        onClick={() => handleTransition('onboard')}
                                     >
-                                        Go to Onboarding Pipeline
+                                        Complete Onboarding
                                     </Button>
-                                </div>
-                            )}
-
-                            {application.status === 'pending_approval' && (
-                                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-center space-y-3">
-                                    <ShieldAlert className="h-8 w-8 text-amber-500 mx-auto" />
-                                    <p className="text-sm font-bold text-amber-800">Pending Admin Approval</p>
-                                    <p className="text-xs text-amber-600">The offer letter is staged. Waiting for a Super Admin to approve and dispatch the email.</p>
                                 </div>
                             )}
 
@@ -830,21 +818,6 @@ export default function HRApplicationDetailPage() {
                                         </div>
                                     </CardContent>
                                 </Card>
-                            )}
-
-                            {application.status === 'accepted' && (
-                                <div className="space-y-3">
-                                    <div className="p-4 bg-emerald-500 text-white rounded-2xl text-center flex items-center justify-center gap-3 shadow-lg">
-                                        <CheckCircle2 className="h-6 w-6" />
-                                        <span className="font-black text-sm uppercase tracking-widest">Offer Accepted!</span>
-                                    </div>
-                                    <Button 
-                                        className="w-full h-12 bg-slate-900 hover:bg-black text-white rounded-xl font-bold"
-                                        onClick={() => handleTransition('onboard')}
-                                    >
-                                        Complete Onboarding
-                                    </Button>
-                                </div>
                             )}
                         </div>
                     )}

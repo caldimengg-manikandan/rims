@@ -45,9 +45,9 @@ class AnalyticsService:
                 return q
 
             # Combine all core metrics into a single row fetch to minimize network round-trips
-            # Hired stages: hired, offer_sent, onboarded, offer_accepted, offer_rejected
-            HIRED_STATUSES = ['hired', 'offer_sent', 'onboarded', 'accepted', 'offer_accepted', 'offer_rejected']
-            CLOSED_STATUSES = ['hired', 'offer_sent', 'onboarded', 'accepted', 'offer_accepted', 'offer_rejected', 'rejected']
+            # Hired stages: offer_sent, offer_accepted, onboarded
+            HIRED_STATUSES = ['offer_sent', 'offer_accepted', 'onboarded']
+            CLOSED_STATUSES = ['offer_sent', 'offer_accepted', 'offer_rejected', 'onboarded', 'rejected']
             metrics_query = db.query(
                 func.count(Application.id).label("total_apps"),
                 func.count(case((Application.status.in_(HIRED_STATUSES), Application.id))).label("hired_apps"),
@@ -112,22 +112,22 @@ class AnalyticsService:
             status_map = {
                 'applied': 'Applied',
                 'screened': 'Screened',
-                'interview_scheduled': 'Interview scheduled',
-                'interview_completed': 'Interview completed',
-                'review_later': 'Review Later',  
+                'interview_scheduled': 'Interview Scheduled',
+                'interview_completed': 'Interview Completed',
+                'review_later': 'Review Later',
                 'physical_interview': 'Physical Interview',
                 'offer_sent': 'Offer Sent',
-                'accepted': 'Offer Sent',
-                'hired': 'Hired',
-                'pending_approval': 'Hired',
+                'offer_accepted': 'Offer Accepted',
+                'offer_rejected': 'Offer Rejected',
                 'onboarded': 'Onboarded',
                 'rejected': 'Rejected'
             }
             
-            # The 10 stages for the pipeline chart
-            CHART_ORDER = [ 
-                'Applied', 'Screened', 'Interview scheduled', 'Interview completed', 
-                'Review Later', 'Physical Interview', 'Hired', 'Offer Sent', 'Onboarded', 'Rejected'
+            # Pipeline stages for the chart
+            CHART_ORDER = [
+                'Applied', 'Screened', 'Interview Scheduled', 'Interview Completed',
+                'Review Later', 'Physical Interview', 'Offer Sent',
+                'Offer Accepted', 'Offer Rejected', 'Onboarded', 'Rejected'
             ]
 
             # Initialize with 0s so all bars always appear
@@ -137,12 +137,7 @@ class AnalyticsService:
                 if display_name and display_name in counts:
                     counts[display_name] += count
                 # Statuses not in status_map are silently ignored
-                
-            # 'Hired' should also include the counts from 'Offer Sent' and 'Onboarded'
-            counts['Hired'] += counts['Offer Sent'] + counts['Onboarded']
-            
-            # Build the chart_data list – all 6 stages always included
-            core_stages = list(CHART_ORDER)   # every stage is core
+
             result["chart_data"] = [
                 {"name": name, "value": counts[name]}
                 for name in CHART_ORDER
@@ -177,8 +172,8 @@ class AnalyticsService:
         ).join(Application, Interview.application_id == Application.id).outerjoin(Job, Application.job_id == Job.id)
         
         # Hired Count and Offered Count
-        hired_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['hired', 'offer_sent', 'onboarded','offer_accepted', 'offer_rejected', 'accepted'])).outerjoin(Job, Application.job_id == Job.id)
-        offered_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['hired', 'offer_sent', 'onboarded','offer_accepted', 'offer_rejected', 'accepted'])).outerjoin(Job, Application.job_id == Job.id)
+        hired_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['offer_sent', 'offer_accepted', 'onboarded'])).outerjoin(Job, Application.job_id == Job.id)
+        offered_metrics = self.db.query(func.count(Application.id)).filter(Application.status.in_(['offer_sent', 'offer_accepted', 'onboarded'])).outerjoin(Job, Application.job_id == Job.id)
         onboarded_metrics = self.db.query(func.count(Application.id)).filter(Application.status == 'onboarded').outerjoin(Job, Application.job_id == Job.id)
 
         if hr_id:
@@ -255,9 +250,9 @@ class AnalyticsService:
         Get count of candidates in each stage for a specific job (Point 12).
         """
         stages = [
-            'applied', 'screened', 'interview_completed',
-            'review_later', 'physical_interview', 'offer_sent', 
-            'hired', 'onboarded', 'rejected'
+            'applied', 'screened', 'interview_scheduled', 'interview_completed',
+            'review_later', 'physical_interview',
+            'offer_sent', 'offer_accepted', 'offer_rejected', 'onboarded', 'rejected'
         ]
         # Calculate all stage counts in a single GROUP BY query
         results = self.db.query(

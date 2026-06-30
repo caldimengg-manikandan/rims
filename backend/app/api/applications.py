@@ -1111,7 +1111,7 @@ def get_pending_applications_count(
     """Sidebar / badges: count applications not in a terminal state, scoped to HR's jobs."""
     # Use func.count() directly — avoids loading full ORM objects just to count them.
     q = db.query(func.count(Application.id)).filter(
-        ~Application.status.in_(("onboarded", "rejected", "permanent_failure")),
+        ~Application.status.in_(("onboarded", "rejected", "offer_rejected", "offer_accepted")),
         or_(func.trim(Application.file_status).in_(('active', 'missing')), Application.file_status == None)
     )
 
@@ -2818,15 +2818,6 @@ async def update_application_status(
             )
             db.add(decision)
         
-        # Notify HR if offer was rejected during approval phase
-        if old_state == "pending_approval" and application.hr_id:
-            db.add(Notification(
-                user_id=application.hr_id,
-                notification_type="OFFER_REJECTED",
-                title="Offer Request Rejected",
-                message=f"The offer request for {application.candidate_name} was rejected by Super Admin.",
-                related_application_id=application.id
-            ))
     # ────────────────────────────────────────────────────────────────────
 
     # Atomic commit

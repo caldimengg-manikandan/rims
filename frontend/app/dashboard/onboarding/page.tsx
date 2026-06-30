@@ -143,12 +143,11 @@ export default function OnboardingPage() {
         return [...candidates].sort((a, b) => {
             // Sort by status priority first
             const statusOrder: Record<string, number> = {
-                'accepted': 0,
-                'hired': 1,
-                'offer_sent': 2,
-                'pending_approval': 3,
-                'onboarded': 4,
-                'rejected': 5
+                'offer_accepted': 0,
+                'offer_sent': 1,
+                'onboarded': 2,
+                'offer_rejected': 3,
+                'rejected': 4
             }
             const orderA = statusOrder[a.status] ?? 99
             const orderB = statusOrder[b.status] ?? 99
@@ -323,23 +322,7 @@ export default function OnboardingPage() {
 
 
             {showStats && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-top-4 duration-500 ease-out stagger-children">
-                    <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border py-3 border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-blue-500/5 to-primary/5 border-l-4 border-l-blue-500/50">
-                        <CardHeader className="">
-                            <CardTitle className="text-sm font-bold flex items-center gap-1">
-                                <FileText className="h-4 w-4 text-blue-500" />
-                                Pending Offers
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="text-3xl font-black tabular-nums text-blue-600 dark:text-blue-400">
-                                {candidates?.filter(c => 
-                                    (c.status === 'hired' || c.status === 'pending_approval') && !c.offer_sent
-                                ).length || 0}
-                            </div>
-                            <p className="text-xs text-muted-foreground mt-1">Action required: send letters</p>
-                        </CardContent>
-                    </Card>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in slide-in-from-top-4 duration-500 ease-out stagger-children">
                     <Card className="bg-card/45 backdrop-blur-xl rounded-2xl border py-3 border-border/80 shadow-[0_8px_30px_rgb(0,0,0,0.02)] overflow-hidden bg-gradient-to-br from-amber-500/5 to-amber-600/5 border-l-4 border-l-amber-500/50">
                         <CardHeader className="">
                             <CardTitle className="text-sm font-bold flex items-center gap-1">
@@ -352,7 +335,7 @@ export default function OnboardingPage() {
                                 {candidates?.filter(c => {
                                     if (!c.joining_date || c.status === 'onboarded') return false
                                     // Candidates who are in the active final pipeline but not yet onboarded
-                                    if (c.status !== 'accepted' && c.status !== 'offer_sent' && c.offer_response_status !== 'accept' && c.offer_response_status !== 'accepted') return false
+                                    if (c.status !== 'offer_accepted') return false
                                     
                                     // Parse date manually to avoid timezone shifting
                                     const [y, m, d] = c.joining_date.split('T')[0].split('-').map(Number);
@@ -427,7 +410,8 @@ export default function OnboardingPage() {
                                     <SelectContent className="rounded-xl">
                                         <SelectItem value="all" className="font-bold">All Statuses</SelectItem>
                                         <SelectItem value="offer_sent" className="font-bold">Offer Sent</SelectItem>
-                                        <SelectItem value="accepted" className="font-bold">Accepted</SelectItem>
+                                        <SelectItem value="offer_accepted" className="font-bold">Offer Accepted</SelectItem>
+                                        <SelectItem value="offer_rejected" className="font-bold">Offer Declined</SelectItem>
                                         <SelectItem value="onboarded" className="font-bold">Onboarded</SelectItem>
                                         <SelectItem value="rejected" className="font-bold">Rejected</SelectItem>
                                     </SelectContent>
@@ -547,14 +531,12 @@ export default function OnboardingPage() {
                                             <div className="flex flex-col items-center gap-1.5">
                                                  {(() => {
                                                     if (candidate.status === 'onboarded') return <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Onboarded</span>;
-                                                    if (candidate.status === 'accepted' || candidate.offer_response_status === 'accept' || candidate.offer_response_status === 'accepted') return <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Accepted</span>;
-                                                    if (candidate.status === 'rejected' || candidate.offer_response_status === 'reject' || candidate.offer_response_status === 'rejected') return <span className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Rejected</span>;
+                                                    if (candidate.status === 'offer_accepted') return <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Accepted</span>;
+                                                    if (candidate.status === 'offer_rejected' || candidate.status === 'rejected') return <span className="bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Rejected</span>;
                                                     
                                                     if (candidate.status === 'offer_sent') return <span className="bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Sent - Awaiting</span>;
-                                                    if (candidate.status === 'pending_approval') return <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5 animate-pulse">Approval Pending</span>;
-                                                    if (candidate.status === 'hired') return <span className="bg-violet-500/10 text-violet-600 dark:text-violet-400 border border-violet-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Hired</span>;
                                                     
-                                                    return <span className="bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">Staging</span>;
+                                                    return <span className="bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20 text-[10px] uppercase tracking-wider font-semibold rounded-full px-2.5 py-0.5">{candidate.status}</span>;
                                                 })()}
                                                 
                                                 {(() => {
@@ -608,19 +590,6 @@ export default function OnboardingPage() {
                                                         </TooltipContent>
                                                     </Tooltip>
                                                 </TooltipProvider>
-                                                {candidate.status === 'hired' && (
-                                                    <SendOfferDialog 
-                                                        applicationId={candidate.id}
-                                                        candidateName={candidate.candidate_name}
-                                                        onSuccess={() => mutate(undefined, { revalidate: true })}
-                                                        trigger={
-                                                            <Button size="sm" className="h-8 gap-1.5 text-xs font-black shadow-lg shadow-primary/20 bg-primary hover:bg-primary/90">
-                                                                <Send className="h-3.5 w-3.5" />
-                                                                Issue Offer Letter
-                                                            </Button>
-                                                        }
-                                                    />
-                                                )}
                                                 {candidate.status === 'offer_sent' &&
                                                     candidate.offer_token_expiry &&
                                                     new Date(candidate.offer_token_expiry) < new Date() &&
@@ -642,21 +611,7 @@ export default function OnboardingPage() {
                                                          }
                                                      />
                                                 )}
-                                                {candidate.status === 'pending_approval' && (user?.role === 'super_admin' || user?.role === 'hr') && (
-                                                    <Button 
-                                                        size="sm" 
-                                                        variant="outline" 
-                                                        className="h-8 gap-1.5 text-xs text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 rounded-lg font-bold"
-                                                        onClick={() => {
-                                                            setApprovingCandidate(candidate)
-                                                            setIsApproveOpen(true)
-                                                        }}
-                                                    >
-                                                        <ShieldAlert className="h-3.5 w-3.5" />
-                                                        Approve Offer
-                                                    </Button>
-                                                )}
-                                                {candidate.status === 'accepted' && (
+                                                {candidate.status === 'offer_accepted' && (
                                                     <Button 
                                                         size="sm" 
                                                         className="h-8 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-md shadow-emerald-600/10 font-bold active:scale-[0.99] transition-all"
