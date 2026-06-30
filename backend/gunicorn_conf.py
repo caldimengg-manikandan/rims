@@ -41,8 +41,15 @@ proc_name = "ars_backend_prod"
 # Performance tuning
 max_requests = 1000
 max_requests_jitter = 50
+preload_app = True
 
 # Assign a unique 0-indexed WORKER_ID to each worker process
 def post_fork(server, worker):
     os.environ["WORKER_ID"] = str(worker.age - 1)
+    # Dispose SQLAlchemy engine connection pool after fork to prevent shared sockets
+    try:
+        from app.infrastructure.database import engine
+        engine.dispose()
+    except Exception:
+        pass
 
