@@ -136,7 +136,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
     return (
         <Sidebar collapsible="icon" {...props} className="border-r border-sidebar-border bg-sidebar/90 backdrop-blur-2xl text-sidebar-foreground shadow-[2px_0_20px_-4px_rgba(0,0,0,0.12)] transition-colors duration-300">
-            <SidebarHeader className="border-b border-sidebar-border/60 px-4 py-5 group-data-[collapsible=icon]:px-2">
+            <SidebarHeader className="border-b border-sidebar-border/60 px-4 py-5 group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:h-14 group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:justify-center">
                 <div className="flex items-center justify-between group-data-[collapsible=icon]:justify-center gap-2">
 
                     {/* Collapse Button - shown in both states */}
@@ -171,7 +171,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
             <SidebarContent className="px-3 py-4 group-data-[collapsible=icon]:px-2 overflow-y-auto scrollbar-none">
                 {groups.map((group) => (
-                    <div key={group.title} className="mb-6 last:mb-2">
+                    <div key={group.title} className="mb-6 last:mb-2 group-data-[collapsible=icon]:mb-4">
                         {/* Group Header */}
                         <div className="px-3 mb-2 text-[10px] font-black text-muted-foreground/50 tracking-wider uppercase group-data-[collapsible=icon]:hidden">
                             {group.title}
@@ -199,7 +199,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                         >
                                             <Link href={link.href} prefetch={false} className="flex items-center w-full h-full group-data-[collapsible=icon]:justify-center">
                                                 {isActive && (
-                                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-gradient-to-b from-primary to-primary/60 rounded-r-full z-20 shadow-[2px_0_8px_color-mix(in_oklab,var(--primary)_40%,transparent)] animate-in fade-in slide-in-from-left-1 duration-300 group-data-[collapsible=icon]:hidden" />
+                                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-7 bg-gradient-to-b from-primary to-primary/60 rounded-r-full z-20 shadow-[2px_0_8px_color-mix(in_oklab,var(--primary)_40%,transparent)] animate-in fade-in slide-in-from-left-1 duration-300" />
                                                 )}
                                                 <Icon className={cn(
                                                     "h-5 w-5 shrink-0 transition-all duration-200 group-hover/item:scale-110 group-hover/item:rotate-[4deg]",
@@ -267,32 +267,48 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     </div>
 
                     {/* Collapsed Avatar / Sign Out trigger */}
-                    <div className="hidden group-data-[collapsible=icon]:flex">
+                    <div className="hidden group-data-[collapsible=icon]:flex items-center justify-center w-full">
                         {state === 'collapsed' ? (
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
+                                    <button
                                         onClick={logout}
-                                        className="h-9 w-9 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive hover:scale-110 active:scale-95 transition-all duration-200"
+                                        className="relative focus:outline-none hover:scale-105 active:scale-95 transition-all duration-200"
                                     >
-                                        <LogOut className="h-4 w-4" />
-                                    </Button>
+                                        <Avatar className="h-9 w-9 border-2 border-primary/20 shadow-sm ring-2 ring-primary/5 hover:ring-primary/20 transition-all">
+                                            <AvatarImage 
+                                                src={user?.profile_image_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.email || '')}`} 
+                                                alt={user?.full_name} 
+                                                className="object-cover bg-slate-800"
+                                            />
+                                            <AvatarFallback className="bg-gradient-to-br from-primary via-primary/80 to-accent text-primary-foreground font-black text-xs">
+                                                {initials}
+                                            </AvatarFallback>
+                                        </Avatar>
+                                        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-sidebar" />
+                                    </button>
                                 </TooltipTrigger>
                                 <TooltipContent side="right">
-                                    Sign Out
+                                    Sign Out ({user?.full_name})
                                 </TooltipContent>
                             </Tooltip>
                         ) : (
-                            <Button
-                                variant="ghost"
-                                size="icon"
+                            <button
                                 onClick={logout}
-                                className="h-9 w-9 rounded-xl hover:bg-destructive/10 text-muted-foreground hover:text-destructive hover:scale-110 active:scale-95 transition-all duration-200"
+                                className="relative focus:outline-none hover:scale-105 active:scale-95 transition-all duration-200"
                             >
-                                <LogOut className="h-4 w-4" />
-                            </Button>
+                                <Avatar className="h-9 w-9 border-2 border-primary/20 shadow-sm ring-2 ring-primary/5 hover:ring-primary/20 transition-all">
+                                    <AvatarImage 
+                                        src={user?.profile_image_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.email || '')}`} 
+                                        alt={user?.full_name} 
+                                        className="object-cover bg-slate-800"
+                                    />
+                                    <AvatarFallback className="bg-gradient-to-br from-primary via-primary/80 to-accent text-primary-foreground font-black text-xs">
+                                        {initials}
+                                    </AvatarFallback>
+                                </Avatar>
+                                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 border-2 border-sidebar" />
+                            </button>
                         )}
                     </div>
 
