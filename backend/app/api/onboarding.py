@@ -895,26 +895,37 @@ async def generate_id_card(
         from app.core.branding import get_all_branding
         branding = get_all_branding(db)
         
-        # Resolve relative logo URL to absolute or local base64 so Puppeteer can load it offline without deadlock
+        # Resolve relative logo URL to base64 using the same robust logic as the offer letter
+        # (handles local filesystem in dev, and Docker-internal nginx URL in production)
         logo_url = branding.get("company_logo_url")
-        if logo_url and logo_url.startswith("/"):
-            clean_path = logo_url
-            if clean_path.startswith("/calrims"):
-                clean_path = clean_path.replace("/calrims", "", 1)
-            local_logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", clean_path.lstrip("/")))
-            if os.path.exists(local_logo_path):
-                try:
-                    import base64
-                    with open(local_logo_path, "rb") as logo_file:
-                        logo_bytes = logo_file.read()
-                        logo_base64 = base64.b64encode(logo_bytes).decode('utf-8')
-                        logo_url = f"data:image/png;base64,{logo_base64}"
-                except Exception as logo_err:
-                    logger.warning(f"Failed to read local logo file for ID card: {logo_err}")
-            
-            if logo_url and logo_url.startswith("/"):
-                frontend_url = os.environ.get("FRONTEND_BASE_URL") or settings.frontend_base_url
-                logo_url = f"{frontend_url.rstrip('/')}{logo_url}"
+        if logo_url:
+            from app.services.offer_letter_service import _fetch_logo_as_base64
+            import base64 as _base64
+            if not logo_url.startswith("data:"):
+                clean_path = logo_url
+                if clean_path.startswith("/calrims"):
+                    clean_path = clean_path.replace("/calrims", "", 1)
+                clean_path = "/" + clean_path.lstrip("/")
+
+                # 1. Try local filesystem (works in dev where frontend/ is a sibling of backend/)
+                local_logo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "public", clean_path.lstrip("/")))
+                if os.path.exists(local_logo_path):
+                    try:
+                        with open(local_logo_path, "rb") as logo_file:
+                            logo_bytes = logo_file.read()
+                            logo_base64 = _base64.b64encode(logo_bytes).decode("utf-8")
+                            logo_url = f"data:image/png;base64,{logo_base64}"
+                    except Exception as logo_err:
+                        logger.warning(f"Failed to read local logo file for ID card: {logo_err}")
+
+                # 2. Fallback: fetch via HTTP (Docker-aware — mirrors offer_letter_service logic)
+                if logo_url and not logo_url.startswith("data:"):
+                    if os.environ.get("BACKEND_START_MODE") == "docker":
+                        internal_url = f"http://nginx/calrims{clean_path}"
+                        logo_url = _fetch_logo_as_base64(internal_url)
+                    else:
+                        frontend_url = (os.environ.get("FRONTEND_BASE_URL") or settings.frontend_base_url or "").rstrip("/")
+                        logo_url = _fetch_logo_as_base64(f"{frontend_url}{clean_path}")
         
         # Get Candidate Photo (inline base64 to avoid Puppeteer network/signed-URL loading issues)
         photo_url = None
