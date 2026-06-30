@@ -383,6 +383,20 @@ async def request_offer_approval(
     if not application.candidate_email:
         raise HTTPException(status_code=400, detail="Candidate email is missing")
 
+    # Duplicate Candidate Check in Onboarding Pipeline
+    onboarding_stages = ["offer_sent", "offer_accepted", "onboarded"]
+    duplicate_candidate = db.query(Application).filter(
+        Application.candidate_email == application.candidate_email,
+        Application.id != application.id,
+        Application.status.in_(onboarding_stages)
+    ).first()
+
+    if duplicate_candidate:
+        raise HTTPException(
+            status_code=400, 
+            detail="Another candidate with the same email address is already in the onboarding pipeline."
+        )
+
     try:
         if 'T' in joining_date:
             jdate = datetime.fromisoformat(joining_date.replace('Z', '+00:00'))

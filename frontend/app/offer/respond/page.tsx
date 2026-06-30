@@ -123,25 +123,16 @@ export default function OfferRespondPage() {
                                 </div>
 
                                 {offerData.pdf_url && (
-                                    <div className="space-y-2">
-                                        <h4 className="text-xs text-muted-foreground font-bold uppercase tracking-wider">Offer Letter Document</h4>
-                                        <div className="border border-border/80 rounded-xl overflow-hidden bg-background">
-                                            <iframe
-                                                src={`${offerData.pdf_url}#toolbar=0&navpanes=0`}
-                                                className="w-full h-[550px] border-none"
-                                                title="Offer Letter PDF"
-                                            />
-                                        </div>
-                                        <div className="flex justify-end">
-                                            <Button
-                                                variant="link"
-                                                size="sm"
-                                                className="text-xs text-primary font-bold hover:no-underline"
-                                                onClick={() => window.open(offerData.pdf_url, '_blank')}
-                                            >
-                                                Download PDF Document
-                                            </Button>
-                                        </div>
+                                    <div className="flex justify-end">
+                                        <Button
+                                            variant="link"
+                                            size="sm"
+                                            className="text-xs text-primary font-bold hover:no-underline"
+                                            onClick={() => window.open(offerData.pdf_url, '_blank')}
+                                        >
+                                            Download PDF Document
+                                        </Button>
+
                                     </div>
                                 )}
 
