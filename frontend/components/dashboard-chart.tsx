@@ -28,11 +28,11 @@ const CustomizedAxisTick = React.memo(({ x, y, payload }: any) => {
     if (!payload || !payload.value) return null;
     const words = payload.value.split(' ');
     return (
-        <g transform={`translate(${x},${y})`}>
+        <g transform={`translate(${x},${y + 12})`}>
             <text
                 x={0}
                 y={0}
-                dy={18}
+                dy={10}
                 textAnchor="middle"
                 fill="var(--muted-foreground)"
                 fontSize={10}
@@ -139,7 +139,7 @@ export function DashboardChart({ data, type = 'bar' }: DashboardChartProps) {
 
     return (
         <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 20, right: 24, left: 4, bottom: 45 }}>
+            <BarChart data={data} margin={{ top: 20, right: 24, left: 4, bottom: 55 }}>
                 <defs>
                     <linearGradient id="chartGrad1" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.95}/>
