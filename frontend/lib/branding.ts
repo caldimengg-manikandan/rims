@@ -14,12 +14,12 @@ export interface BrandingConfig {
 }
 
 export const BRANDING_DEFAULTS: BrandingConfig = {
-  companyName: 'Caldim Engineering',
+  companyName: 'CALDIM',
   productName: 'CAL-RIMS',
   logoUrl: '/calrims/logo.png',
   darkLogoUrl: '/calrims/logo-dark.png',
   faviconUrl: '/calrims/logo.png',
-  footerText: 'Powered by Caldim Engineering. Built for teams who care about who they hire.',
+  footerText: 'Powered by CALDIM. Built for teams who care about who they hire.',
   supportEmail: 'support@caldimproducts.com',
   themeColor: '#2563eb', // Default blue color
   termsUrl: '/terms/',
