@@ -170,10 +170,9 @@ CREATE TABLE IF NOT EXISTS applications (
     CONSTRAINT uq_application_job_phone_hash UNIQUE (job_id, candidate_phone_hash),
     CONSTRAINT check_applications_status CHECK (
         status IN (
-            'applied', 'screened', 'aptitude_round', 'ai_interview',
-            'interview_scheduled', 'interview_completed', 'hired', 'pending_approval',
-            'offer_sent', 'accepted', 'rejected', 'onboarded', 'physical_interview',
-            'review_later', 'permanent_failure'
+            'applied', 'screened', 'interview_scheduled', 'interview_completed',
+            'review_later', 'physical_interview', 'offer_sent', 'offer_accepted',
+            'offer_rejected', 'onboarded', 'rejected'
         )
     )
 );

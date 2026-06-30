@@ -242,13 +242,32 @@ def run_startup_migrations(engine: Engine):
             _safe_rollback(conn)
             logger.warning(f"Failed to backfill applications.resume_status: {e}")
 
-        # 1c. Ensure status constraint is updated for 'offer_sent' and 'onboarded'
+        # 1c. Data migration for legacy states
+        try:
+            conn.execute(text("""
+                UPDATE applications SET status = 
+                    CASE 
+                        WHEN status = 'accepted' THEN 'offer_accepted'
+                        WHEN status IN ('hired', 'pending_approval') THEN 'interview_completed'
+                        WHEN status IN ('aptitude_round', 'ai_interview', 'in_progress') THEN 'interview_scheduled'
+                        WHEN status = 'permanent_failure' THEN 'rejected'
+                        ELSE status 
+                    END
+                WHERE status IN ('accepted', 'hired', 'pending_approval', 'aptitude_round', 'ai_interview', 'in_progress', 'permanent_failure')
+            """))
+            conn.commit()
+            logger.info("Migrated legacy application states to canonical states")
+        except Exception as e:
+            _safe_rollback(conn)
+            logger.warning(f"Failed to migrate legacy states: {e}")
+
+        # 1d. Ensure status constraint strictly enforces the 11 canonical states
         try:
             if "postgresql" in str(engine.url):
                 conn.execute(text("ALTER TABLE applications DROP CONSTRAINT IF EXISTS check_applications_status"))
                 conn.execute(text("""
                     ALTER TABLE applications ADD CONSTRAINT check_applications_status 
-                    CHECK (status IN ('applied', 'screened', 'aptitude_round', 'ai_interview', 'interview_scheduled', 'in_progress', 'interview_completed', 'hired', 'pending_approval', 'offer_sent', 'accepted', 'rejected', 'onboarded', 'physical_interview', 'review_later', 'permanent_failure'))
+                    CHECK (status IN ('applied', 'screened', 'interview_scheduled', 'interview_completed', 'review_later', 'physical_interview', 'offer_sent', 'offer_accepted', 'offer_rejected', 'onboarded', 'rejected'))
                 """))
                 conn.commit()
                 logger.info("Updated check_applications_status constraint")

@@ -158,7 +158,7 @@ export default function HRApplicationsPage() {
 
   const handleDecision = useCallback(async (
     applicationId: number,
-    decision: "hired" | "rejected",
+    decision: "offer_sent" | "rejected",
     reason?: string,
     notes?: string,
   ) => {
@@ -222,7 +222,7 @@ export default function HRApplicationsPage() {
       reject: "rejected",
       call_for_interview: "physical_interview",
       review_later: "review_later",
-      hire: "hired",
+      hire: "offer_sent",
     };
     const nextStatus = ACTION_TO_STATUS[action] ?? "applied";
 
@@ -286,7 +286,9 @@ export default function HRApplicationsPage() {
         return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
       case "physical_interview":
         return "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20";
-      case "hired":
+      case "offer_sent":
+      case "offer_accepted":
+      case "onboarded":
         return "capsule-badge-success";
       case "rejected":
         return "capsule-badge-destructive";
@@ -383,8 +385,8 @@ export default function HRApplicationsPage() {
                 <SelectItem value="interview_completed">Interview Completed</SelectItem>
                 <SelectItem value="review_later">Review Later</SelectItem>
                 <SelectItem value="physical_interview">Physical Interview</SelectItem>
-                <SelectItem value="hired">Hired</SelectItem>
                 <SelectItem value="offer_sent">Offer Sent</SelectItem>
+                <SelectItem value="offer_accepted">Offer Accepted</SelectItem>
                 <SelectItem value="onboarded">Onboarded</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
@@ -766,7 +768,7 @@ export default function HRApplicationsPage() {
                         }
                       />
                     )}
-                    {(app.status === "hired" || app.status === "offer_sent" || app.status === "onboarded") && (
+                    {(app.status === "offer_sent" || app.status === "offer_accepted" || app.status === "onboarded") && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

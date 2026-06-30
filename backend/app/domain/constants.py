@@ -1,46 +1,41 @@
 from enum import Enum
 
 class CandidateState(str, Enum):
-    # Core Production Workflow
+    # ── Core Pipeline ──────────────────────────────────────────────────────
     APPLIED = "applied"
-    SCREENED = "screened"  # After resume parsing/screening
-    APTITUDE_ROUND = "aptitude_round"
-    AI_INTERVIEW = "ai_interview"
+    SCREENED = "screened"
     INTERVIEW_SCHEDULED = "interview_scheduled"
-    IN_PROGRESS = "in_progress"
     INTERVIEW_COMPLETED = "interview_completed"
-    HIRED = "hired"
-    PENDING_APPROVAL = "pending_approval"
-    OFFER_SENT = "offer_sent"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-    ONBOARDED = "onboarded"
-    PHYSICAL_INTERVIEW = "physical_interview"
     REVIEW_LATER = "review_later"
-    PERMANENT_FAILURE = "permanent_failure"
+    PHYSICAL_INTERVIEW = "physical_interview"
+
+    # ── Onboarding ─────────────────────────────────────────────────────────
+    OFFER_SENT = "offer_sent"
+    OFFER_ACCEPTED = "offer_accepted"   # Candidate accepted via email
+    OFFER_REJECTED = "offer_rejected"   # Candidate declined via email
+    ONBOARDED = "onboarded"
+
+    # ── Terminal (HR-driven) ────────────────────────────────────────────────
+    REJECTED = "rejected"               # HR manually rejected the candidate
+
 
 class TransitionAction(str, Enum):
     """Actions that trigger state transitions."""
-    # Core Workflow Actions
+    # Core Pipeline Actions
+    MARK_SCREENED = "mark_screened"
     APPROVE_FOR_INTERVIEW = "approve_for_interview"
-    REJECT = "reject"
     CALL_FOR_INTERVIEW = "call_for_interview"
+    COMPLETE_INTERVIEW = "complete_interview"
     REVIEW_LATER = "review_later"
     HIRE = "hire"
-    MARK_SCREENED = "mark_screened"
-    SCHEDULE_INTERVIEW = "schedule_interview"
-    COMPLETE_INTERVIEW = "complete_interview"
+    REJECT = "reject"
 
     # Onboarding Actions
-    SEND_FOR_APPROVAL = "send_for_approval"
     SEND_OFFER = "send_offer"
     ACCEPT_OFFER = "accept_offer"
+    DECLINE_OFFER = "decline_offer"     # Candidate-driven (email link)
 
-    # System/Heuristic actions
-    SYSTEM_RETRY_EXTRACTION = "system_retry_extraction"
-    SYSTEM_MARK_DEGRADED = "system_mark_degraded"
+    # System Actions
     SYSTEM_PARSING_COMPLETE = "system_parsing_complete"
-    SYSTEM_APTITUDE_COMPLETE = "system_aptitude_complete"
     SYSTEM_INTERVIEW_COMPLETE = "system_interview_complete"
     SYSTEM_ONBOARD = "system_onboard"
-    MARK_PERMANENT_FAILURE = "mark_permanent_failure"

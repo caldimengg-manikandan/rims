@@ -267,7 +267,7 @@ def get_onboarding_candidates(
     from app.domain.models import Job, Onboarding
     
     query = db.query(Application).filter(
-        Application.status.in_(["hired", "pending_approval", "offer_sent", "accepted", "onboarded"])
+        Application.status.in_(["offer_sent", "offer_accepted", "offer_rejected", "onboarded"])
     )
     
     if status and status != "all":
@@ -364,12 +364,11 @@ def validate_offer_readiness(application: Application, gs: dict, branding: dict)
 async def request_offer_approval(
     application_id: int,
     joining_date: str = Query(...),
-    auto_approve: bool = Query(False),
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_hr)
 ):
-    """Stage offer for approval or release directly if auto_approve is True."""
+    """Release an offer letter for a hired candidate."""
     application = db.query(Application).filter(Application.id == application_id).with_for_update().first()
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -417,13 +416,12 @@ async def request_offer_approval(
     # Proactive configuration check
     validate_offer_readiness(application, gs, branding)
 
-    if auto_approve:
-        is_resend = (application.status == "offer_sent")
-        
-        # Direct release path
-        try:
-            if not is_resend:
-                fsm.transition(application, TransitionAction.SEND_OFFER, user_id=current_user.id)
+    is_resend = (application.status == "offer_sent")
+    
+    # Direct release path
+    try:
+        if not is_resend:
+            fsm.transition(application, TransitionAction.SEND_OFFER, user_id=current_user.id)
             
             # Generate PDF via Puppeteer (Phase 7 implementation)
             filename = f"offer_{application.id}_{int(datetime.now().timestamp())}.pdf"
@@ -480,143 +478,20 @@ async def request_offer_approval(
             background_tasks.add_task(process_offer_email, application.id, application.offer_pdf_path, gs.get("company_name", "Our Company"))
             return {"status": "success", "message": "Offer letter sent successfully."}
             
-        except HTTPException as e:
-            db.rollback()
-            raise e
-        except (InvalidTransitionError, DuplicateTransitionError) as e:
-            logger.error(f"OFFER_RELEASE_FSM_ERROR: {str(e)}")
-            db.rollback()
-            raise HTTPException(status_code=400, detail=get_user_friendly_fsm_error(e))
-        except Exception as e:
-            import traceback
-            logger.error(f"OFFER_RELEASE_CRITICAL_FAILURE: {str(e)}\n{traceback.format_exc()}")
-            db.rollback()
-            raise HTTPException(status_code=500, detail="We encountered a problem sending the offer letter. Please try again or contact support.")
-    else:
-        # Staging path
-        try:
-            fsm.transition(application, TransitionAction.SEND_FOR_APPROVAL, user_id=current_user.id)
-        except (InvalidTransitionError, DuplicateTransitionError) as e:
-            raise HTTPException(status_code=400, detail=get_user_friendly_fsm_error(e))
-        except Exception as e:
-            logger.error(f"OFFER_STAGE_ERROR: {str(e)}")
-            raise HTTPException(status_code=500, detail="Unable to stage the offer for approval. Please try again.")
-        
-        application.status = "pending_approval"
-        application.offer_approval_status = "pending"
-        
-        db.add(application)
-        log_audit(db, "OFFER_STAGED", application.id, current_user.id, {"joining_date": joining_date}, is_critical=True)
-
-        # Notify Super Admins
-        super_admins = db.query(User).filter(User.role == "super_admin").all()
-        for admin in super_admins:
-            db.add(Notification(
-                user_id=admin.id,
-                notification_type="OFFER_PENDING",
-                title="Offer Approval Required",
-                message=f"HR {current_user.full_name} has requested approval for {application.candidate_name}'s offer letter.",
-                related_application_id=application.id
-            ))
-        
-        db.commit()
-        return {"status": "success", "message": "Offer letter staged for approval"}
-
-@router.post("/applications/{application_id}/approve-offer")
-async def approve_offer_letter(
-    application_id: int,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_hr)
-):
-    """HR/Admin approves the offer. Only the Job Owner or Super Admin allowed."""
-    application = db.query(Application).filter(Application.id == application_id).with_for_update().first()
-    if not application:
-        raise HTTPException(status_code=404, detail="Application not found")
-    
-    check_hr_permission(current_user, application, db)
-    
-    # State Machine Hardening
-    fsm = CandidateStateMachine(db)
-    try:
-        fsm.transition(application, TransitionAction.SEND_OFFER, user_id=current_user.id)
+    except HTTPException as e:
+        db.rollback()
+        raise e
     except (InvalidTransitionError, DuplicateTransitionError) as e:
+        logger.error(f"OFFER_RELEASE_FSM_ERROR: {str(e)}")
+        db.rollback()
         raise HTTPException(status_code=400, detail=get_user_friendly_fsm_error(e))
     except Exception as e:
-        logger.error(f"OFFER_APPROVE_FSM_ERROR: {str(e)}")
-        raise HTTPException(status_code=500, detail="Unable to approve the offer at this time. Please try again.")
+        import traceback
+        logger.error(f"OFFER_RELEASE_CRITICAL_FAILURE: {str(e)}\n{traceback.format_exc()}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="We encountered a problem sending the offer letter. Please try again or contact support.")
 
-    settings_records = db.query(GlobalSettings).all()
-    gs = {s.key: s.value for s in settings_records}
-    from app.core.branding import get_all_branding
-    branding = get_all_branding(db)
 
-    # Proactive configuration check
-    validate_offer_readiness(application, gs, branding)
-    
-    # PDF Generation (Puppeteer + Supabase)
-    try:
-        filename = f"offer_{application.id}_{int(datetime.now().timestamp())}.pdf"
-        
-        data = get_offer_letter_data(
-            candidate_name=application.candidate_name,
-            job_role=application.job.title if application.job else "N/A",
-            department=(application.job.domain if application.job else "Engineering") or "Engineering",
-            joining_date=application.joining_date,
-            company_name=branding.get("company_name"),
-            logo_url=branding.get("company_logo_url"),
-            hr_email=gs.get("hr_email", ""),
-            hr_name=gs.get("hr_name", ""),
-            hr_phone=gs.get("hr_phone", ""),
-            company_address=gs.get("company_address", "")
-        )
-        
-        template_str = application.offer_template_snapshot or gs.get("offer_letter_template", "")
-        if not template_str:
-            raise HTTPException(status_code=400, detail="No offer template found in settings. Please configure the offer template in Settings before releasing an offer.")
-            
-        from jinja2.sandbox import SandboxedEnvironment as Environment
-        from jinja2 import select_autoescape, StrictUndefined
-        env = Environment(autoescape=select_autoescape(['html', 'xml']), undefined=StrictUndefined)
-        template = env.from_string(template_str)
-        rendered_html = template.render(**data)
-        
-        # Call Puppeteer (Phase 7 implementation)
-        final_path = await generate_pdf_via_puppeteer(rendered_html, filename, settings.supabase_bucket_offers)
-        
-        application.offer_pdf_path = final_path
-        logger.info(f"Offer PDF generated and uploaded to Supabase: {final_path}")
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Puppeteer transition failed: {e}")
-        log_audit(db, "OFFER_PDF_FAILED", application.id, current_user.id, {"error": str(e)})
-        raise HTTPException(status_code=500, detail="We encountered a problem generating the offer letter document. Please verify the offer template in Settings and try again.")
-
-    # Update Application State
-    application.offer_sent = True
-    application.offer_sent_date = get_ist_now()
-    application.offer_approval_status = "approved"
-    application.offer_approved_by = current_user.id
-    application.offer_approved_at = get_ist_now()
-    application.offer_email_status = "pending"
-    
-    db.add(application)
-    
-    # Notify HR
-    if application.hr_id:
-        db.add(Notification(
-            user_id=application.hr_id,
-            notification_type="OFFER_APPROVED",
-            title="Offer Approved",
-            message=f"Offer letter for {application.candidate_name} has been approved and moved to transit.",
-            related_application_id=application.id
-        ))
-
-    db.commit()
-
-    background_tasks.add_task(process_offer_email, application.id, application.offer_pdf_path, gs.get("company_name", "Our Company"))
-    return {"status": "success", "message": "Offer letter approved and email scheduled."}
 
 async def process_offer_email(application_id: int, storage_path: str, company_name: str):
     """Internal task with email-safe short links (Point 1)."""
@@ -727,7 +602,7 @@ async def capture_photo(
     
     check_hr_permission(current_user, application, db)
     
-    if application.status not in ["accepted", "onboarded"]:
+    if application.status not in ["offer_accepted", "onboarded"]:
         raise HTTPException(status_code=400, detail="Photo capture only allowed for candidates who have accepted the offer.")
 
     try:
@@ -792,9 +667,9 @@ def check_onboarding_reminders(background_tasks: BackgroundTasks, db: Session = 
 
     from app.domain.models import Onboarding, Offer
 
-    # ── 1. All accepted candidates joining in the next 7 days ───────────────
+    # ── 1. All offer-accepted candidates joining in the next 7 days ────────────
     all_upcoming = db.query(Application).join(Onboarding).filter(
-        Application.status.in_(["accepted"]),
+        Application.status.in_(["offer_accepted"]),
         Onboarding.joining_date >= start_of_window,
         Onboarding.joining_date <= end_of_window,
     ).all()
@@ -830,7 +705,7 @@ def check_onboarding_reminders(background_tasks: BackgroundTasks, db: Session = 
 
     # ── 4. Individual reminders for candidates not yet notified ─────────────
     unnotified = db.query(Application).join(Onboarding).outerjoin(Offer).filter(
-        Application.status.in_(["accepted"]),
+        Application.status.in_(["offer_accepted"]),
         Onboarding.joining_date >= start_of_window,
         Onboarding.joining_date <= end_of_window,
         Offer.reminder_sent_at == None,
@@ -1011,7 +886,7 @@ async def respond_to_offer(request: Request, response_req: OfferResponseRequest,
             raise HTTPException(status_code=400, detail="Offer expired. Please contact HR.")
     
     now = get_ist_now()
-    target_action = TransitionAction.ACCEPT_OFFER if response_req.response_type == "accept" else TransitionAction.REJECT
+    target_action = TransitionAction.ACCEPT_OFFER if response_req.response_type == "accept" else TransitionAction.DECLINE_OFFER
     
     from app.services.state_machine import CandidateStateMachine
     fsm = CandidateStateMachine(db)
@@ -1052,39 +927,6 @@ async def respond_to_offer(request: Request, response_req: OfferResponseRequest,
 
     return {"status": "success"}
 
-@router.post("/bulk/request-approval")
-async def bulk_request_approval(
-    application_ids: List[int],
-    joining_date: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_hr)
-):
-    """Bulk stage offers."""
-    results = {"success": [], "failed": []}
-    for app_id in application_ids:
-        try:
-            await request_offer_approval(app_id, joining_date, db, current_user)
-            results["success"].append(app_id)
-        except Exception as e:
-            results["failed"].append({"id": app_id, "error": str(e)})
-    return results
-
-@router.post("/bulk/approve")
-async def bulk_approve_offers(
-    application_ids: List[int],
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_hr)
-):
-    """Bulk approve offers."""
-    results = {"success": [], "failed": []}
-    for app_id in application_ids:
-        try:
-            await approve_offer_letter(app_id, background_tasks, db, current_user)
-            results["success"].append(app_id)
-        except Exception as e:
-            results["failed"].append({"id": app_id, "error": str(e)})
-    return results
 
 @router.get("/analytics/offers")
 def get_offer_analytics(db: Session = Depends(get_db), current_user: User = Depends(get_current_admin)):

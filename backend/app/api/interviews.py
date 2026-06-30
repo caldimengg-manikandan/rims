@@ -1396,7 +1396,7 @@ async def complete_aptitude(
             _set_interview_status(interview, "completed")
             interview.ended_at = get_ist_now()
             interview.overall_score = interview.aptitude_score
-            # Use FSM for state transition: ai_interview -> interview_completed
+            # Use FSM for state transition: interview_scheduled -> interview_completed
             from app.services.state_machine import CandidateStateMachine, TransitionAction
             fsm = CandidateStateMachine(db)
             try:

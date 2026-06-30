@@ -30,12 +30,8 @@ class CandidateService:
         status_map = {
             "Application Submitted": "applied",
             "Resume Screening": "applied",
-            "Aptitude Round": "aptitude_round",
-            "Automated AI Interview": "ai_interview",
             "AI Interview Completed": "interview_completed",
             "Review Later": "review_later",
-            # "Physical Interview": "physical_interview",
-            "Hired": "hired",
             "Rejected": "rejected"
         }
         
@@ -144,12 +140,11 @@ class CandidateService:
         
         # Candidates are only ranked once a definitive selection/rejection decision is made
         final_statuses = [
-            CandidateState.HIRED.value,
             CandidateState.REJECTED.value,
             CandidateState.OFFER_SENT.value,
-            CandidateState.ACCEPTED.value,
+            CandidateState.OFFER_ACCEPTED.value,
+            CandidateState.OFFER_REJECTED.value,
             CandidateState.ONBOARDED.value,
-            CandidateState.PENDING_APPROVAL.value
         ]
         
         return self.db.query(Application).filter(

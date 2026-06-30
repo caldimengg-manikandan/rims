@@ -21,8 +21,8 @@ def _hr_can_see_application(current_user: User):
 
 
 REPORTABLE_APPLICATION_STATUSES = [
-    "interview_completed", "review_later", "hired", "rejected",
-    "offer_sent", "pending_approval", "accepted", "onboarded",
+    "interview_completed", "review_later", "rejected",
+    "offer_sent", "offer_accepted", "offer_rejected", "onboarded",
     "physical_interview",
 ]
 

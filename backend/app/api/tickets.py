@@ -416,12 +416,9 @@ def resolve_ticket(
                 else:
                     ticket.interview.interview_stage = 'aptitude'
                     
-            # Move application out of terminal/post-interview states if it was advanced incorrectly
-            if app and app.status in ('rejected', 'interview_completed', 'review_later', 'permanent_failure'):
-                if ticket.interview.interview_stage == 'first_level':
-                    app.status = 'ai_interview'
-                else:
-                    app.status = 'aptitude_round'
+            # Move application back to interview_scheduled so it can be restarted
+            if app and app.status in ('rejected', 'interview_completed', 'review_later'):
+                app.status = 'interview_scheduled'
         
         # Send reissue email if requested
         if resolution.send_email:
@@ -450,12 +447,9 @@ def resolve_ticket(
                     else:
                         ticket.interview.interview_stage = 'aptitude'
                         
-                # Move application out of terminal/post-interview states if it was advanced incorrectly
-                if app and app.status in ('rejected', 'interview_completed', 'review_later', 'permanent_failure'):
-                    if ticket.interview.interview_stage == 'first_level':
-                        app.status = 'ai_interview'
-                    else:
-                        app.status = 'aptitude_round'
+                # Move application back to interview_scheduled so it can be restarted
+                if app and app.status in ('rejected', 'interview_completed', 'review_later'):
+                    app.status = 'interview_scheduled'
 
         # Send resolution/dismissal email if requested
         if resolution.send_email and resolution.hr_response:

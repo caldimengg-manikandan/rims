@@ -172,8 +172,6 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
         active_states = {
             "applied",
             "screened",
-            "aptitude_round",
-            "ai_interview",
             "interview_scheduled"
         }
         if interview.application.status in active_states:
