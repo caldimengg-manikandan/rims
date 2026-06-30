@@ -656,10 +656,24 @@ export default function OnboardingPage() {
                                                                 Add Photo
                                                             </Button>
                                                         ) : !candidate.id_card_url ? (
-                                                            <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 rounded-lg font-bold" onClick={() => handleGenerateID(candidate.id)}>
-                                                                <CreditCard className="h-3.5 w-3.5" />
-                                                                Generate ID
-                                                            </Button>
+                                                            <div className="flex items-center gap-2">
+                                                                <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 rounded-lg font-bold" onClick={() => handleGenerateID(candidate.id)}>
+                                                                    <CreditCard className="h-3.5 w-3.5" />
+                                                                    Generate ID
+                                                                </Button>
+                                                                <Button 
+                                                                    size="sm" 
+                                                                    variant="outline" 
+                                                                    className="h-8 gap-1.5 text-xs text-blue-600 dark:text-blue-400 border-blue-500/30 hover:bg-blue-500/10 rounded-lg font-bold"
+                                                                    onClick={() => {
+                                                                        setActiveCaptureId(candidate.id)
+                                                                        setIsCaptureOpen(true)
+                                                                    }}
+                                                                >
+                                                                    <Camera className="h-3.5 w-3.5" />
+                                                                    Retake Photo
+                                                                </Button>
+                                                            </div>
                                                         ) : (
                                                             <div className="flex items-center gap-2">
                                                                 <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10 rounded-lg font-bold" onClick={async () => {
@@ -686,6 +700,18 @@ export default function OnboardingPage() {
                                                                 >
                                                                     <RefreshCcw className="h-3.5 w-3.5" />
                                                                     Regenerate ID
+                                                                </Button>
+                                                                <Button 
+                                                                    size="sm" 
+                                                                    variant="outline" 
+                                                                    className="h-8 gap-1.5 text-xs text-blue-600 dark:text-blue-400 border-blue-500/30 hover:bg-blue-500/10 rounded-lg font-bold"
+                                                                    onClick={() => {
+                                                                        setActiveCaptureId(candidate.id)
+                                                                        setIsCaptureOpen(true)
+                                                                    }}
+                                                                >
+                                                                    <Camera className="h-3.5 w-3.5" />
+                                                                    Retake Photo
                                                                 </Button>
                                                             </div>
                                                         )}
