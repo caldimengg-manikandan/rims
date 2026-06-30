@@ -423,60 +423,60 @@ async def request_offer_approval(
         if not is_resend:
             fsm.transition(application, TransitionAction.HIRE, user_id=current_user.id)
             
-            # Generate PDF via Puppeteer (Phase 7 implementation)
-            filename = f"offer_{application.id}_{int(datetime.now().timestamp())}.pdf"
-            
-            data = get_offer_letter_data(
-                candidate_name=application.candidate_name,
-                job_role=application.job.title if application.job else "N/A",
-                department=(application.job.domain if application.job else "Engineering") or "Engineering",
-                joining_date=application.joining_date,
-                company_name=branding.get("company_name"),
-                logo_url=branding.get("company_logo_url"),
-                hr_email=gs.get("hr_email", ""),
-                hr_name=gs.get("hr_name", ""),
-                hr_phone=gs.get("hr_phone", ""),
-                company_address=gs.get("company_address", "")
+        # Generate PDF via Puppeteer (Phase 7 implementation)
+        filename = f"offer_{application.id}_{int(datetime.now().timestamp())}.pdf"
+        
+        data = get_offer_letter_data(
+            candidate_name=application.candidate_name,
+            job_role=application.job.title if application.job else "N/A",
+            department=(application.job.domain if application.job else "Engineering") or "Engineering",
+            joining_date=application.joining_date,
+            company_name=branding.get("company_name"),
+            logo_url=branding.get("company_logo_url"),
+            hr_email=gs.get("hr_email", ""),
+            hr_name=gs.get("hr_name", ""),
+            hr_phone=gs.get("hr_phone", ""),
+            company_address=gs.get("company_address", "")
+        )
+        
+        from jinja2 import Environment, select_autoescape, StrictUndefined
+        template_str = application.offer_template_snapshot or gs.get("offer_letter_template", "")
+        if not template_str:
+            raise HTTPException(status_code=400, detail="No offer template found in settings. Please configure the offer template in Settings before releasing an offer.")
+        env = Environment(autoescape=select_autoescape(['html', 'xml']), undefined=StrictUndefined)
+        template = env.from_string(template_str)
+        rendered_html = template.render(**data)
+        
+        final_path = await generate_pdf_via_puppeteer(rendered_html, filename, settings.supabase_bucket_offers)
+        
+        application.offer_pdf_path = final_path
+        application.offer_sent = True
+        application.offer_sent_date = get_ist_now()
+        application.offer_approval_status = "approved"
+        application.offer_approved_by = current_user.id
+        application.offer_approved_at = get_ist_now()
+        application.offer_email_status = "pending"
+        
+        if is_resend:
+            audit = AuditLog(
+                resource_id=application.id,
+                resource_type="Application",
+                user_id=current_user.id,
+                action="OFFER_RESENT",
+                details=json.dumps({
+                    "message": "Offer letter resent with updated expiry.",
+                    "new_joining_date": str(application.joining_date)
+                }),
+                created_at=get_ist_now()
             )
-            
-            from jinja2 import Environment, select_autoescape, StrictUndefined
-            template_str = application.offer_template_snapshot or gs.get("offer_letter_template", "")
-            if not template_str:
-                raise HTTPException(status_code=400, detail="No offer template found in settings. Please configure the offer template in Settings before releasing an offer.")
-            env = Environment(autoescape=select_autoescape(['html', 'xml']), undefined=StrictUndefined)
-            template = env.from_string(template_str)
-            rendered_html = template.render(**data)
-            
-            final_path = await generate_pdf_via_puppeteer(rendered_html, filename, settings.supabase_bucket_offers)
-            
-            application.offer_pdf_path = final_path
-            application.offer_sent = True
-            application.offer_sent_date = get_ist_now()
-            application.offer_approval_status = "approved"
-            application.offer_approved_by = current_user.id
-            application.offer_approved_at = get_ist_now()
-            application.offer_email_status = "pending"
-            
-            if is_resend:
-                audit = AuditLog(
-                    resource_id=application.id,
-                    resource_type="Application",
-                    user_id=current_user.id,
-                    action="OFFER_RESENT",
-                    details=json.dumps({
-                        "message": "Offer letter resent with updated expiry.",
-                        "new_joining_date": str(application.joining_date)
-                    }),
-                    created_at=get_ist_now()
-                )
-                db.add(audit)
-            
-            db.add(application)
-            db.commit() # Commit status change before background task
-            logger.info(f"Offer released/resent and status committed for App {application_id}")
-            
-            background_tasks.add_task(process_offer_email, application.id, application.offer_pdf_path, gs.get("company_name", "Our Company"))
-            return {"status": "success", "message": "Offer letter sent successfully."}
+            db.add(audit)
+        
+        db.add(application)
+        db.commit() # Commit status change before background task
+        logger.info(f"Offer released/resent and status committed for App {application_id}")
+        
+        background_tasks.add_task(process_offer_email, application.id, application.offer_pdf_path, gs.get("company_name", "Our Company"))
+        return {"status": "success", "message": "Offer letter sent successfully."}
             
     except HTTPException as e:
         db.rollback()
