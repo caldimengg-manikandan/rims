@@ -619,13 +619,21 @@ async def get_offer_pdf(token: str, db: Session = Depends(get_db)):
     )
 
 def generate_employee_id(db: Session):
-    """Utility to generate a unique employee ID (Task 8)."""
-    import secrets
-    while True:
-        emp_id = 'EMP-' + ''.join(secrets.choice(string.digits) for _ in range(6))
-        exists = db.query(Application).filter(Application.employee_id == emp_id).first()
-        if not exists:
-            return emp_id
+    """Utility to generate a unique sequential employee ID starting from 001."""
+    from app.domain.models import Onboarding
+    existing_ids = db.query(Onboarding.employee_id).filter(Onboarding.employee_id.isnot(None)).all()
+    max_seq = 0
+    for (emp_id,) in existing_ids:
+        if emp_id and emp_id.startswith("EMP-"):
+            suffix = emp_id[4:]
+            if suffix.isdigit():
+                val = int(suffix)
+                # Ignore the old 6-digit random IDs (e.g. 731338) to start our sequence at 001
+                if val < 10000:
+                    if val > max_seq:
+                        max_seq = val
+    next_seq = max_seq + 1
+    return f"EMP-{next_seq:03d}"
 
 @router.post("/applications/{application_id}/capture-photo")
 async def capture_photo(
