@@ -97,6 +97,9 @@ export default function HRApplicationsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
+  const [hireDialogApp, setHireDialogApp] = useState<{ id: number; name: string } | null>(null);
+  const [joiningDate, setJoiningDate] = useState<string>("");
+  const [hireLoading, setHireLoading] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 400);
@@ -214,6 +217,15 @@ export default function HRApplicationsPage() {
     action: string,
     notes?: string,
   ) => {
+    if (action === "hire") {
+        const app = paginatedData?.items?.find((a: Application) => a.id === applicationId);
+        const today = new Date();
+        today.setDate(today.getDate() + 1);
+        setJoiningDate(today.toISOString().split('T')[0]);
+        setHireDialogApp({ id: applicationId, name: app?.candidate_name ?? 'Candidate' });
+        return;
+    }
+
     setProcessingIds(prev => new Set(prev).add(applicationId));
     // Map action → optimistic status for immediate UI feedback
     const ACTION_TO_STATUS: Record<string, string> = {
@@ -848,6 +860,64 @@ export default function HRApplicationsPage() {
                 </div>
               </div>
               </div>
+              
+              {/* ─── Hire & Send Offer Dialog ────────────────────────────────────── */}
+              {hireDialogApp && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                      <div className="bg-card border border-border rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4 animate-in fade-in zoom-in-95 duration-200">
+                          <h2 className="text-lg font-bold text-foreground mb-1">Issue Offer Letter</h2>
+                          <p className="text-sm text-muted-foreground mb-5">
+                              Set the joining date and release the offer letter to <span className="font-semibold text-foreground">{hireDialogApp.name}</span> immediately.
+                          </p>
+                          <div className="mb-5">
+                              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                                  Joining Date
+                              </label>
+                              <input
+                                  id="hire-joining-date"
+                                  type="date"
+                                  value={joiningDate}
+                                  min={new Date().toISOString().split('T')[0]}
+                                  onChange={e => setJoiningDate(e.target.value)}
+                                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                              />
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                              <button
+                                  onClick={() => setHireDialogApp(null)}
+                                  disabled={hireLoading}
+                                  className="px-4 py-2 rounded-lg text-sm font-medium border border-border text-muted-foreground hover:bg-muted/60 transition-colors disabled:opacity-50"
+                              >
+                                  Cancel
+                              </button>
+                              <button
+                                  id="hire-confirm-btn"
+                                  onClick={async () => {
+                                      if (!hireDialogApp || !joiningDate) return;
+                                      setHireLoading(true);
+                                      try {
+                                          await APIClient.post(
+                                              `/api/onboarding/applications/${hireDialogApp.id}/send-offer?joining_date=${joiningDate}`,
+                                              {}
+                                          );
+                                          setHireDialogApp(null);
+                                          mutate();
+                                      } catch (err: any) {
+                                          alert(err?.message || 'Failed to Issue offer. Please try again.');
+                                      } finally {
+                                          setHireLoading(false);
+                                      }
+                                  }}
+                                  disabled={hireLoading || !joiningDate}
+                                  className="px-4 py-2 rounded-lg text-sm font-bold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 shadow-md shadow-primary/20"
+                              >
+                                  {hireLoading ? "Releasing..." : "Release Offer"}
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+              )}
+
             </div>
   );
 }

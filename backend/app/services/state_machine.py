@@ -150,7 +150,7 @@ ACTION_DISPLAY_NAMES = {
     "send_offer": "release offer letter",
     "accept_offer": "accept offer",
     "decline_offer": "decline offer",
-    "hire": "hire candidate",
+    "hire": "issue offer",
     "reject": "reject candidate",
     "complete_interview": "complete interview",
 }
@@ -414,7 +414,7 @@ class CandidateStateMachine:
             if not application.interview or not application.interview.first_level_completed:
                 raise InvalidTransitionError(
                     application.status, action.value,
-                    "Cannot hire candidate: The interview has not been completed."
+                    "Cannot Issue offer: The interview has not been completed."
                 )
 
     def _resolve_approve_target(self, application: Application) -> CandidateState:
@@ -520,7 +520,7 @@ def get_ui_buttons_for_state(state: str) -> List[Dict[str, str]]:
         buttons = []  # Waiting state — no HR transition buttons
     elif state == CandidateState.INTERVIEW_COMPLETED.value:
         buttons = [
-            {"action": "hire", "label": "Hire Candidate", "variant": "success"},
+            {"action": "hire", "label": "Issue Offer Letter", "variant": "success"},
             {"action": "call_for_interview", "label": "Call for Physical Interview", "variant": "primary"},
             {"action": "review_later", "label": "Review Later", "variant": "secondary"},
         ]
@@ -531,7 +531,7 @@ def get_ui_buttons_for_state(state: str) -> List[Dict[str, str]]:
         ]
     elif state == CandidateState.PHYSICAL_INTERVIEW.value:
         buttons = [
-            {"action": "hire", "label": "Hire Candidate", "variant": "success"},
+            {"action": "hire", "label": "Issue Offer Letter", "variant": "success"},
             {"action": "reject", "label": "Reject Candidate", "variant": "destructive"},
         ]
     elif state == CandidateState.ONBOARDED.value:

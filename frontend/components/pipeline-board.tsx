@@ -199,7 +199,7 @@ export function PipelineBoard({ jobId }: { jobId?: string }) {
             setHireDialogApp(null)
             mutate()
         } catch (err: any) {
-            alert(err?.message || 'Failed to hire candidate. Please try again.')
+            alert(err?.message || 'Failed to Issue offer. Please try again.')
         } finally {
             setHireLoading(false)
         }

@@ -41,7 +41,7 @@ const FSM_BUTTONS: Record<string, { action: string; label: string; icon: React.R
     // interview_scheduled: waiting state — no HR transition buttons
     interview_scheduled: [],
     interview_completed: [
-        { action: "hire", label: "HIRE CANDIDATE", icon: <Star className="h-4 w-4" />, className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg hover:scale-102 hover:shadow-emerald-600/15 active:scale-[0.98] transition-all duration-300" },
+        { action: "hire", label: "ISSUE OFFER LETTER", icon: <Star className="h-4 w-4" />, className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg hover:scale-102 hover:shadow-emerald-600/15 active:scale-[0.98] transition-all duration-300" },
         { action: "call_for_interview", label: "CALL FOR PHYSICAL INTERVIEW", icon: <PhoneCall className="h-4 w-4" />, className: "bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:scale-102 hover:shadow-primary/15 active:scale-[0.98] transition-all duration-300" },
         { action: "review_later", label: "REVIEW LATER", icon: <Clock className="h-4 w-4" />, className: "bg-amber-500 hover:bg-amber-600 text-white shadow-lg hover:scale-102 hover:shadow-amber-500/15 active:scale-[0.98] transition-all duration-300" },
         // NOTE: No reject from interview_completed per spec
@@ -51,7 +51,7 @@ const FSM_BUTTONS: Record<string, { action: string; label: string; icon: React.R
         { action: "reject", label: "REJECT CANDIDATE", icon: <XCircle className="h-4 w-4" />, className: "bg-destructive hover:bg-destructive/90 text-white shadow-lg hover:scale-102 hover:shadow-destructive/15 active:scale-[0.98] transition-all duration-300" },
     ],
     physical_interview: [
-        { action: "hire", label: "HIRE CANDIDATE", icon: <Star className="h-4 w-4" />, className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg hover:scale-102 hover:shadow-emerald-600/15 active:scale-[0.98] transition-all duration-300" },
+        { action: "hire", label: "ISSUE OFFER LETTER", icon: <Star className="h-4 w-4" />, className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg hover:scale-102 hover:shadow-emerald-600/15 active:scale-[0.98] transition-all duration-300" },
         { action: "reject", label: "REJECT CANDIDATE", icon: <XCircle className="h-4 w-4" />, className: "bg-destructive hover:bg-destructive/90 text-white shadow-lg hover:scale-102 hover:shadow-destructive/15 active:scale-[0.98] transition-all duration-300" },
     ],
     offer_accepted: [
