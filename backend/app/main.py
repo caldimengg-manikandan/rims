@@ -318,7 +318,7 @@ async def _imap_polling_loop():
                     try:
                         imap_password = decrypt_field(target["password_enc"]).strip()
                         logger.info(f"Running auto-sync for user ID {target['id']} ({target['email']})")
-                        fetch_resume_attachments(None, target["email"], imap_password, hr_id=target["id"])
+                        await asyncio.to_thread(fetch_resume_attachments, None, target["email"], imap_password, target["id"])
                         await run_batch_resume_processing(None, hr_id=target["id"])
                     except Exception as sync_err:
                         logger.error(f"Auto-sync failed for user {target['id']}: {sync_err}")

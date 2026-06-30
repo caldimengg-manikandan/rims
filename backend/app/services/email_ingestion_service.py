@@ -891,7 +891,8 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
                 # Download file and calculate hash
                 content = b""
                 try:
-                    response = requests.get(resume.file_url, timeout=30)
+                    import asyncio
+                    response = await asyncio.to_thread(requests.get, resume.file_url, timeout=30)
                     if response.status_code == 200:
                         content = response.content
                     else:
