@@ -453,7 +453,8 @@ async def request_offer_approval(
             company_address=gs.get("company_address", "")
         )
         
-        from jinja2 import Environment, select_autoescape, StrictUndefined
+        from jinja2.sandbox import SandboxedEnvironment as Environment
+        from jinja2 import select_autoescape, StrictUndefined
         template_str = application.offer_template_snapshot or gs.get("offer_letter_template", "")
         if not template_str:
             raise HTTPException(status_code=400, detail="No offer template found in settings. Please configure the offer template in Settings before releasing an offer.")

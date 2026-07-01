@@ -19,8 +19,6 @@ export function getApiBaseUrl(): string {
   return url;
 }
 
-export const API_BASE_URL = 'http://127.0.0.1:10000'; // Deprecated - use getApiBaseUrl() instead
-
 // Safeguard: warn in production if API base URL is missing (fallback remains localhost).
 if (typeof window !== 'undefined') {
   const isProd = process.env.NODE_ENV === 'production'
