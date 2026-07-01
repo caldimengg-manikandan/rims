@@ -730,8 +730,8 @@ async def send_interview_invitation_email(application: Any, raw_access_key: str 
       <div style="background:#f8fafc; border-left:4px solid #f59e0b; padding:16px; border-radius:6px; margin:24px 0; text-align:left;">
         <p style="margin:0 0 8px 0; font-weight:700; color:#92400e; font-size:14px;">📅 Need to Reschedule?</p>
         <p style="margin:0 0 8px 0; color:#555; font-size:13px; line-height:1.5;">If you are unable to attend the interview at this time or encountered a technical issue, please contact us via the Support Portal below.</p>
-        <p style="margin:0; font-size:13px;">
-          👉 <a href="{html.escape(str(support_url))}" style="color:{theme_color}; font-weight:700; text-decoration:underline;">Support Portal &amp; Reschedule Request</a>
+        <p style="margin:0; font-size:13px; word-break:break-all; line-height:1.5;">
+          👉 <a href="{html.escape(str(support_url))}" style="color:{theme_color}; font-weight:700; text-decoration:underline;">{html.escape(str(support_url))}</a>
         </p>
       </div>
     """
@@ -779,8 +779,8 @@ async def send_approved_for_interview_email(to_email: str, job_title: str, raw_a
       <div style="background:#f8fafc; border-left:4px solid #f59e0b; padding:16px; border-radius:6px; margin:24px 0; text-align:left;">
         <p style="margin: 0 0 6px 0; font-weight:700; color:#92400e; font-size:14px;">Need help with your interview experience?</p>
         <p style="margin: 0 0 12px 0; color:#555; font-size:13px; line-height:1.5;">If you faced a technical issue, unexpected termination, or need to raise a grievance, use the Support Portal:</p>
-        <p style="margin: 0; font-size:13px;">
-          👉 <a href="{html.escape(str(support_url))}" style="color:{theme_color}; font-weight:700; text-decoration:underline;">Support Portal Link</a>
+        <p style="margin: 0; font-size:13px; word-break:break-all; line-height:1.5;">
+          👉 <a href="{html.escape(str(support_url))}" style="color:{theme_color}; font-weight:700; text-decoration:underline;">{html.escape(str(support_url))}</a>
         </p>
       </div>
     """
@@ -1225,6 +1225,12 @@ async def send_interview_terminated_email(application: Any, reason: str):
       <div style="text-align:center; margin:32px 0;">
         <a href="{html.escape(support_url)}" style="background-color:#ef4444; color:#ffffff; padding:12px 24px; text-decoration:none; border-radius:6px; font-weight:bold; display:inline-block; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">Access Support Portal</a>
       </div>
+      <p style="font-size:13px; line-height:1.5; color:#64748b; text-align:center;">
+        If the button above does not work, copy and paste this link into your browser:
+      </p>
+      <p style="font-size:13px; word-break:break-all; line-height:1.5; color:#64748b; text-align:center; margin-bottom:24px;">
+        <a href="{html.escape(support_url)}" style="color:#ef4444; text-decoration:underline;">{html.escape(support_url)}</a>
+      </p>
     """
     body = get_templated_email(content_html, subject)
     return await execute_email_with_retries(
