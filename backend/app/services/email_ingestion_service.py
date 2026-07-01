@@ -251,7 +251,7 @@ def _normalize_job_code(code: str) -> str:
 def _is_job_related_email(sender: str, subject: str, allowed_jobs: list = None) -> bool:
     """
     Return True ONLY for emails that look like genuine job applications matching an open job.
-    An email is accepted when the Job ID is present in the subject line (normalized).
+    Matches by alphanumeric Job Code, numeric Job ID, or Job Title.
     """
     subject_lower = (subject or "").lower().strip()
     sender_lower  = (sender  or "").lower().strip()
@@ -279,17 +279,38 @@ def _is_job_related_email(sender: str, subject: str, allowed_jobs: list = None) 
             logger.debug(f"🚫 Skipping non-job email — automated subject prefix '{prefix}': {subject!r}")
             return False
 
-    # 3. Match against allowed jobs (must have Job ID matching)
+    # 3. Match against allowed jobs
     if allowed_jobs:
+        # Pattern A: Match Job Code (e.g. JOB-XXXXXX)
         subject_norm = _normalize_job_code(subject_upper)
-        for job_id, title in allowed_jobs:
+        for job_db_id, job_id, title in allowed_jobs:
             code = (job_id or "").upper().strip()
             norm_code = _normalize_job_code(code)
             if norm_code and norm_code in subject_norm:
-                logger.info(f"✅ Email subject matched job '{code}' ('{title}') via Job ID.")
+                logger.info(f"✅ Email subject matched job '{code}' ('{title}') via Job Code.")
                 return True
 
-    logger.debug(f"🚫 Skipping email — does not contain Job ID of any open job in subject line: {subject!r}")
+        # Pattern B: Match numeric Job ID with word boundaries
+        numeric_id_match = re.search(r'\bjob\s*(?:id|code)?\s*[:\-\#]?\s*(\d+)\b', subject_lower)
+        if numeric_id_match:
+            extracted_id = int(numeric_id_match.group(1).strip())
+            for job_db_id, job_id, title in allowed_jobs:
+                if job_db_id == extracted_id:
+                    logger.info(f"✅ Email subject matched job ID {job_db_id} ('{title}') via numeric Job ID.")
+                    return True
+
+        # Pattern C: Match Job Title with 80% word intersection threshold
+        subject_words = set(subject_lower.split())
+        for job_db_id, job_id, title in allowed_jobs:
+            job_title_words = set((title or "").lower().split())
+            if len(job_title_words) > 0:
+                match_count = len(job_title_words & subject_words)
+                match_percentage = match_count / len(job_title_words)
+                if match_percentage >= 0.8:
+                    logger.info(f"✅ Email subject matched Job Title '{title}' ({match_percentage:.0%} match).")
+                    return True
+
+    logger.debug(f"🚫 Skipping email — does not match any open job by Code, ID, or Title in subject line: {subject!r}")
     return False
 
 def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id: int = None):
@@ -391,7 +412,7 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
             if hr_id is not None and not is_super_admin:
                 query = query.filter(Job.hr_id == hr_id)
             hr_jobs = query.all()
-            allowed_jobs = [(j.job_id, j.title) for j in hr_jobs if j.job_id and j.title]
+            allowed_jobs = [(j.id, j.job_id, j.title) for j in hr_jobs if j.job_id and j.title]
 
         logger.info(f"📋 Loaded {len(allowed_jobs)} open jobs for relevance filtering: {allowed_jobs}")
         

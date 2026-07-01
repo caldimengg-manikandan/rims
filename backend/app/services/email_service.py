@@ -183,7 +183,6 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, attachments: lis
         if "@" in from_addr:
             from_domain = from_addr.split("@")[-1]
         msg["Message-ID"] = make_msgid(domain=from_domain)
-        msg["Auto-Submitted"] = "auto-generated"
         msg["X-Auto-Response-Suppress"] = "All"
 
         # Create the alternative container for text/plain and text/html
