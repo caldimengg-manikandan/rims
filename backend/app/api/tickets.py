@@ -224,7 +224,7 @@ def list_feedback(
         .join(Application, Interview.application_id == Application.id)
         .join(Job, Application.job_id == Job.id)
     )
-    if current_user.role.lower() not in ["super_admin", "admin"]:
+    if current_user.role.lower() != "super_admin":
         query = query.filter(or_(Job.hr_id == current_user.id, Application.hr_id == current_user.id))
 
     total = query.count()

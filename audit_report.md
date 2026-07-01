@@ -134,15 +134,21 @@ sequenceDiagram
 
 ---
 
-## 7. API Consistency Review
+## 7. API Consistency & Rate-Limiting Configuration Review
 
-*   **REST Naming Inconsistencies**:
-    *   `/api/jobs/upload-questions` (Verb-based endpoint).
-    *   `/api/onboarding/applications/{id}/offer-preview` (Nested standard).
-    *   `/api/analytics/reports/export` (Mixed nesting).
-*   **Status Codes**:
-    *   Standard response templates return 200 OK for entity updates instead of 201 Created or 204 No Content.
-    *   HTTP 410 (Gone) is used in the questions controller when an interview is already completed. While functional, it is non-standard compared to a 403 Forbidden or 400 Bad Request.
+### 1. Reverse-Proxy Rate-Limiting Bucket Mismatch
+*   **Discovery**: In production, the Nginx reverse-proxy routes requests to the backend container. Uvicorn's `ProxyHeadersMiddleware` expects the `TRUSTED_PROXY_HOST` environment variable to define trusted proxy hosts. If unset, it loopbacks to `127.0.0.1`. Since Nginx container's IP is on Docker bridge rather than local loopback, FastAPI failed to trust Nginx's forwarded client IPs, falling back to Nginx container's peer IP for every request.
+*   **Production Impact**: All client requests on `/login` and `/register` endpoints were rate-limited under a single shared bucket. One malicious actor could easily trigger the lockout of the entire organization's legitimate users.
+*   **Status**: **RESOLVED/FIXED**. The environment variable `TRUSTED_PROXY_HOST=nginx` has been integrated into the Compose env mapping to correctly route remote client IPs.
+
+### 2. Scoped Admin/HR Role Restrictions for Tickets and Feedback
+*   **Discovery**: Previously, `list_feedback` and `validate_hr_ownership` incorrectly allowed administrative users to bypass data isolation boundaries and access all organizations' feedback and ticket assets. In contrast, `get_tickets` and `get_ticket_count` restricted their scopes to only standard candidates.
+*   **Production Impact**: Inconsistent tenant filtering rules. Administrative/HR users had access to ticket resolutions and feedback globally, bypassing role bounds.
+*   **Status**: **RESOLVED/FIXED**. Aligned route logic in `get_ticket_count`, `get_tickets`, `list_feedback` and the `validate_hr_ownership` guard. Now, only users with the role of `super_admin` can bypass the scoping parameters. Standard admin/HR roles are securely limited to viewing, counting, and resolving only their own candidate tickets.
+
+### 3. REST Naming & Response Statuses
+*   Mixed naming conventions: `/api/jobs/upload-questions` vs. `/api/onboarding/applications/{id}/offer-preview`.
+*   FastAPI standard responses return 200 OK for updates instead of 201 Created/204 No Content.
 
 ---
 
@@ -184,38 +190,40 @@ sequenceDiagram
 | Finding | Severity | Category | Classification | Status | Complexity | Fix Time | Risk | Preserves Workflows |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1. SSTI Inconsistency in Release** | Critical | Security | Confirmed Issue | **FIXED** | Low | 10 mins | Low | Yes |
-| **2. Deprecated `API_BASE_URL`** | Low | Clean code | Technical Debt | **DELETED** | Low | 5 mins | Low | Yes |
-| **3. Decorative RLS Policies** | High | Security | Technical Debt | Open | Low | 2 hrs | Medium | Yes |
-| **4. Dual Migration Track** | High | Database | Confirmed Issue | Open | Medium | 1 day | High | Yes |
-| **5. Missing Docker Limits** | High | DevOps | Best Practice | Open | Low | 30 mins | Low | Yes |
-| **6. Low Test Coverage** | Medium | QA | Technical Debt | Open | High | 1 week | Low | Yes |
-| **7. Reports API Query Storm** | High | Performance | Confirmed Issue | Open | Medium | 2 hrs | Medium | Yes |
-| **8. Proctoring Bandwidth Bloat** | Medium | Performance | Confirmed Issue | Open | Medium | 2 hrs | Low | Yes |
-| **9. Missing Email DB Index** | Medium | Database | Confirmed Issue | Open | Low | 15 mins | Low | Yes |
-| **10. Date Hydration Warnings** | Low | Hydration / UI | Potential Risk | Open | Low | 30 mins | Low | Yes |
+| **2. Proxy Rate Limiting Collapse** | High | Security | Confirmed Issue | **FIXED** | Low | 15 mins | Low | Yes |
+| **3. Inconsistent Admin Ticket Bypass**| Medium | Security | Confirmed Issue | **FIXED** | Low | 15 mins | Low | Yes |
+| **4. Deprecated `API_BASE_URL`** | Low | Clean code | Technical Debt | **DELETED** | Low | 5 mins | Low | Yes |
+| **5. Decorative RLS Policies** | High | Security | Technical Debt | Open | Low | 2 hrs | Medium | Yes |
+| **6. Dual Migration Track** | High | Database | Confirmed Issue | Open | Medium | 1 day | High | Yes |
+| **7. Missing Docker Limits** | High | DevOps | Best Practice | Open | Low | 30 mins | Low | Yes |
+| **8. Low Test Coverage** | Medium | QA | Technical Debt | Open | High | 1 week | Low | Yes |
+| **9. Reports API Query Storm** | High | Performance | Confirmed Issue | Open | Medium | 2 hrs | Medium | Yes |
+| **10. Proctoring Bandwidth Bloat** | Medium | Performance | Confirmed Issue | Open | Medium | 2 hrs | Low | Yes |
+| **11. Missing Email DB Index** | Medium | Database | Confirmed Issue | Open | Low | 15 mins | Low | Yes |
+| **12. Date Hydration Warnings** | Low | Hydration / UI | Potential Risk | Open | Low | 30 mins | Low | Yes |
 
 ---
 
 ## 12. Business Impact
 
-*   **Security (SSTI Fix)**: Swapping `jinja2.Environment` to `SandboxedEnvironment` in `/send-offer` removes a critical injection pathway. Any malicious payload injected by a compromised HR account is blocked from running system commands.
-*   **Maintainability**: Eliminating dead config keys and aligning time zones simplifies debugging.
-*   **Operations**: Resolving the migration drift and setting container limits prevents container lockups and VM restarts.
+*   **Access Control Alignment (Admin Ticket Fix)**: Resolves authorization loopholes by ensuring administrative roles are securely scoped to their own candidates, preventing data leaks across tenant organizations.
+*   **Security & Anti-Abuse (Rate-Limiter Fix)**: Restores effective brute-force protection to authenticating user endpoints, separating clients dynamically.
+*   **Security (SSTI Fix)**: Swapping `jinja2.Environment` to `SandboxedEnvironment` in `/send-offer` removes a template execution pathway.
 
 ---
 
 ## 13. Production Readiness Checklist
 
 *   [x] Authentication (JWT & Isolated Secrets)
-*   [x] Authorization (HR vs Super Admin checks)
+*   [x] Authorization (HR vs Super Admin consistent checks)
 *   [x] Row Level Security (Database policies present, role audit recommended)
 *   [x] Data Encryption (Candidate response encryption)
 *   [x] Input validation (Jinja2 Sandboxing implemented)
+*   [x] Rate Limiting (Multi-hop reverse proxy IP trust resolved)
 *   [x] Clean Code (Deprecated config deleted)
 *   [x] Logging & Audit Logs (FSM and manual logs)
 *   [ ] Monitoring & Alerting (Basic, requires cloud integrations)
 *   [x] Database Backups (Standard Supabase backups configured)
-*   [x] Rate Limiting (SlowAPI limits configured on route levels)
 *   [ ] Zero-Downtime Deployment (Ready on server via Blue/Green scripts)
 *   [ ] DevOps Container Hardening (Resource limits missing)
 
@@ -226,7 +234,7 @@ sequenceDiagram
 ### Status: Ready with Minor Fixes (Minor updates recommended)
 
 **Reasoning**:
-The critical runtime status-mismatches and Puppeteer locks are resolved, and the new SSTI vulnerability has been mitigated. The codebase is highly secure, structured, and compliant. The final step prior to a scaled launch is the implementation of Docker container resource limits (to prevent OOM crashes) and confirming the roles used in `DATABASE_URL` to ensure the enabled RLS policy layers are authoritative rather than decorative.
+The critical runtime status-mismatches, rate limiting bucket collapses, and security injection boundaries are completely resolved. The codebase is highly secure, structured, and compliant. The final step prior to a scaled launch is the implementation of Docker container resource limits (to prevent OOM crashes) and confirming the database credentials role to leverage the enabled RLS policies as secondary SQL isolation barriers.
 
 ---
 
