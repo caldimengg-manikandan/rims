@@ -60,7 +60,9 @@ export default function DemoInterviewPage() {
           <div className="bg-amber-950/30 border border-amber-900/50 rounded-lg p-4 text-sm text-amber-200/80 flex gap-3">
             <ShieldAlert className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
             <p>
-              This will instantly bypass the application workflow and generate a live mock interview session. Database records are created under <code className="bg-black/50 px-1 py-0.5 rounded text-amber-400">INTERNAL_DEMO_JOB</code>.
+              This launches a live mock interview under job <code className="bg-black/50 px-1 py-0.5 rounded text-amber-400">JOB-05A5RV</code>.
+              An application record is <strong>only saved</strong> if the interview is completed successfully.
+              Ending the session early or being terminated by proctoring will leave <strong>no record</strong> in the pipeline.
             </p>
           </div>
           

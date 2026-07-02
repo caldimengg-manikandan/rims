@@ -87,63 +87,85 @@ STAGE_COMPLETED = "completed"
 @router.post("/demo", response_model=dict)
 def create_demo_interview(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
-    Private endpoint to generate a 'Demo Interview' without requiring a real application or approval.
-    Creates a mock job, mock application, and returns a valid interview access key.
+    Private endpoint to generate a Demo Interview session.
+
+    Behaviour:
+    - Looks up the real job with job_id='JOB-05A5RV' — that job must be pre-configured in the system.
+    - Creates a provisional Application + Interview with is_demo=True.
+    - On successful completion  → application is kept, status moves to interview_completed, report is generated.
+    - On early End Session, proctoring auto-termination, or tab-close → application/interview are cascade-deleted; no report is saved.
     """
+    import uuid, random
     from app.services.candidate_service import CandidateService
-    import uuid
 
-    # 1. Ensure a Demo HR User exists (or pick the first HR user to own the job)
-    hr_user = db.query(User).filter(User.role == 'hr').first()
-    if not hr_user:
-        # If no HR user exists, create a dummy one just for the demo
-        hr_user = User(
-            email=f"demo_hr_{uuid.uuid4().hex[:6]}@demo.com",
-            password_hash="mock",
-            full_name="System Demo HR",
-            role="hr",
-            is_active=True,
-            is_verified=True
-        )
-        db.add(hr_user)
-        db.commit()
-        db.refresh(hr_user)
-    
-    # 2. Ensure Demo Job exists
-    job = db.query(Job).filter(Job.title == "INTERNAL_DEMO_JOB").first()
+    # Curated pool of realistic sample applicant identities for demo sessions.
+    DEMO_SAMPLE_APPLICANTS = [
+        ("Arjun Sharma", "arjun.sharma"),
+        ("Priya Nair", "priya.nair"),
+        ("Rahul Verma", "rahul.verma"),
+        ("Sneha Iyer", "sneha.iyer"),
+        ("Vikram Patel", "vikram.patel"),
+        ("Ananya Krishnan", "ananya.krishnan"),
+        ("Rohan Mehta", "rohan.mehta"),
+        ("Divya Reddy", "divya.reddy"),
+        ("Karthik Bose", "karthik.bose"),
+        ("Meera Joshi", "meera.joshi"),
+    ]
+
+    # 1. Resolve the designated demo job — must already exist in the system.
+    job = db.query(Job).filter(Job.job_id == "JOB-05A5RV").first()
     if not job:
-        job = Job(
-            title="INTERNAL_DEMO_JOB",
-            description="Private job for testing demo interviews.",
-            experience_level="Entry-Level",
-            primary_evaluated_skills="React, Python, Communication",
-            hr_id=hr_user.id,
-            status="open"
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Demo job 'JOB-05A5RV' not found. "
+                "Please create and publish a job with job_id='JOB-05A5RV' before using the demo."
+            ),
         )
-        db.add(job)
-        db.commit()
-        db.refresh(job)
 
-    # 3. Create Demo Application
+    # 2. Pick an HR owner (the job's own HR user, or the first available HR).
+    hr_user = (
+        db.query(User).filter(User.id == job.hr_id).first()
+        or db.query(User).filter(User.role == "hr").first()
+    )
+    if not hr_user:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No HR user found in the system. Cannot create demo interview.",
+        )
+
+    # 3. Sample a random applicant identity from the pool.
+    name, slug = random.choice(DEMO_SAMPLE_APPLICANTS)
     uid = uuid.uuid4().hex[:6]
-    app = Application(
+    candidate_email = f"{slug}_{uid}@demo-calrims.com"
+
+    # 4. Create a provisional demo Application.
+    app_record = Application(
         job_id=job.id,
         hr_id=hr_user.id,
-        candidate_name=f"Demo Candidate {uid.upper()}",
-        candidate_email=f"demo_{uid}@example.com",
-        status="interview_scheduled"
+        candidate_name=name,
+        candidate_email=candidate_email,
+        status="interview_scheduled",
     )
-    db.add(app)
+    db.add(app_record)
     db.commit()
-    db.refresh(app)
+    db.refresh(app_record)
 
-    # 4. Generate Interview using existing business logic
+    # 5. Generate the Interview record using existing business logic.
     svc = CandidateService(db)
-    access_key = svc.ensure_interview_record_exists(app)
+    access_key = svc.ensure_interview_record_exists(app_record)
 
-    interview = db.query(Interview).filter(Interview.application_id == app.id).first()
+    interview = db.query(Interview).filter(Interview.application_id == app_record.id).first()
+    if not interview:
+        # Clean up orphaned application and bail out
+        db.delete(app_record)
+        db.commit()
+        raise HTTPException(status_code=500, detail="Failed to create interview record for demo session.")
 
-    # Generate a valid JWT token for this interview
+    # 6. Mark the interview as a provisional demo session.
+    interview.is_demo = True
+
+    # 7. Generate a short-lived (4-hour) JWT for the candidate interface.
     from datetime import timedelta
     from app.core.auth import create_access_token
     token_expiry_delta = timedelta(hours=4)
@@ -151,20 +173,26 @@ def create_demo_interview(background_tasks: BackgroundTasks, db: Session = Depen
     access_token = create_access_token(
         data={"sub": str(interview.id), "role": "interview"},
         expires_delta=token_expiry_delta,
-        secret=interview_secret
+        secret=interview_secret,
     )
 
     db.commit()
 
-    # Trigger fallback question generation for demo interviews
+    # 8. Kick off fallback question generation in the background.
     background_tasks.add_task(_generate_fallback_questions_direct, interview.id)
+
+    logger.info(
+        f"[Demo] Provisional interview created: interview_id={interview.id} "
+        f"application_id={app_record.id} job_id=JOB-05A5RV candidate='{name}'"
+    )
 
     return {
         "interview_id": interview.id,
         "access_key": access_key,
         "access_token": access_token,
-        "demo_url": f"/calrims/interview/{interview.id}?token={access_token}"
+        "demo_url": f"/calrims/interview/{interview.id}?token={access_token}",
     }
+
 
 from app.services.interview_evaluation_service import evaluate_answer_task
 from app.services.interview_reporting_service import _finalize_interview_and_report, _finalize_interview_and_report_internal
@@ -1695,6 +1723,29 @@ async def end_interview(
                 detail=f"Please answer all questions before ending. Missing: {len(questions) - answered_count}"
             )
 
+    # ── DEMO EARLY-END: cancel and purge all provisional records ──────────────
+    # If the candidate clicks "End Session" on a demo interview (ended_early=true
+    # or force=true) before completing it, silently delete the application record.
+    # CASCADE on Application → Interview → questions/answers cleans everything up.
+    # No report is generated; the session leaves no trace in the pipeline.
+    if (ended_early or is_forced) and getattr(interview, "is_demo", False):
+        app_record = interview.application
+        app_id = app_record.id if app_record else None
+        logger.info(
+            f"[Demo] Early end detected for provisional demo interview {interview_id} "
+            f"(application_id={app_id}). Purging all records — no report will be saved."
+        )
+        if app_record:
+            db.delete(app_record)
+        else:
+            db.delete(interview)
+        db.commit()
+        return {
+            "success": True,
+            "demo_cancelled": True,
+            "message": "Demo session cancelled. No application or report was saved.",
+        }
+
     # 1.5 Handle termination reason if provided (proctoring violations etc.)
     if data and data.get("termination_reason"):
         from app.domain.models import InterviewIssue
@@ -1773,6 +1824,24 @@ async def abandon_interview(
         return {"success": True, "message": f"Interview is already in {interview.status} state."}
 
     try:
+        # ── DEMO ABANDON: purge provisional records on tab-close ──────────────
+        # If a provisional demo interview is abandoned (tab closed), silently
+        # delete the application record. CASCADE removes the interview, questions,
+        # answers, and any monitoring events. No report is generated.
+        if getattr(interview, "is_demo", False):
+            app_record = interview.application
+            app_id = app_record.id if app_record else None
+            logger.info(
+                f"[Demo] Tab-close abandon detected for demo interview {interview_id} "
+                f"(application_id={app_id}). Purging provisional records — no report will be saved."
+            )
+            if app_record:
+                db.delete(app_record)
+            else:
+                db.delete(interview)
+            db.commit()
+            return {"success": True, "demo_cancelled": True, "message": "Demo session abandoned. No records were saved."}
+
         # Mark as terminated
         _set_interview_status(interview, "terminated")
         interview.interview_stage = STAGE_COMPLETED
@@ -2387,47 +2456,74 @@ async def create_monitoring_event(
                     except Exception as revoke_err:
                         logger.error(f"[Proctoring] Token revocation failed for interview {interview_id}: {revoke_err}")
 
-                # 3. Transition FSM to INTERVIEW_COMPLETED
-                try:
-                    from app.services.state_machine import CandidateStateMachine, TransitionAction
-                    fsm = CandidateStateMachine(db)
-                    if interview_session.application:
-                        fsm.transition(
-                            interview_session.application,
-                            TransitionAction.SYSTEM_INTERVIEW_COMPLETE,
-                            notes=f"Auto-completed early: {actual_strike_count} proctoring strikes.",
-                        )
-                except Exception as fsm_err:
-                    logger.warning(f"[Proctoring] FSM transition failed (non-fatal): {fsm_err}")
-                    if interview_session.application:
-                        interview_session.application.status = "interview_completed"
-
-                # 4. Trigger report generation in background task
-                background_tasks.add_task(_finalize_interview_and_report, interview_id)
-
-                # 5. Write critical audit entry
-                from app.domain.models import AuditLog
-                db.add(AuditLog(
-                    user_id=None,
-                    action="INTERVIEW_TERMINATED_VIOLATION",
-                    resource_type="Interview",
-                    resource_id=interview_id,
-                    details=json.dumps({
-                        "interview_id": interview_id,
-                        "strike_count": actual_strike_count,
-                        "token_revoked": token_revoked,
-                        "reason": reason_slug,
-                    }),
-                    is_critical=True,
-                ))
-
-                # Clean up sequence tracking for terminated interview
-                LAST_SEQUENCE_NUMBERS.pop(interview_id, None)
-                if redis_client is not None:
+                # ── DEMO: purge provisional records on auto-termination ──────────────
+                # If this is a provisional demo session, silently delete the application
+                # (CASCADE cleans up interview, questions, answers, monitoring events).
+                # No report is saved, no pipeline entry is created.
+                if getattr(interview_session, "is_demo", False):
+                    app_record = interview_session.application
+                    app_id = app_record.id if app_record else None
+                    logger.info(
+                        f"[Demo] Proctoring auto-termination for demo interview {interview_id} "
+                        f"({actual_strike_count} strikes, application_id={app_id}). "
+                        "Purging provisional records — no report will be saved."
+                    )
+                    # Commit the revoked-token entry before deleting the interview
+                    db.commit()
+                    if app_record:
+                        db.delete(app_record)
+                    else:
+                        db.delete(interview_session)
+                    db.commit()
+                    # Clean up in-memory sequence tracking
+                    LAST_SEQUENCE_NUMBERS.pop(interview_id, None)
+                    if redis_client is not None:
+                        try:
+                            redis_client.delete(f"seq:{interview_id}")
+                        except Exception:
+                            pass
+                else:
+                    # 3. Transition FSM to INTERVIEW_COMPLETED (non-demo path)
                     try:
-                        redis_client.delete(f"seq:{interview_id}")
-                    except Exception:
-                        pass
+                        from app.services.state_machine import CandidateStateMachine, TransitionAction
+                        fsm = CandidateStateMachine(db)
+                        if interview_session.application:
+                            fsm.transition(
+                                interview_session.application,
+                                TransitionAction.SYSTEM_INTERVIEW_COMPLETE,
+                                notes=f"Auto-completed early: {actual_strike_count} proctoring strikes.",
+                            )
+                    except Exception as fsm_err:
+                        logger.warning(f"[Proctoring] FSM transition failed (non-fatal): {fsm_err}")
+                        if interview_session.application:
+                            interview_session.application.status = "interview_completed"
+
+                    # 4. Trigger report generation in background task
+                    background_tasks.add_task(_finalize_interview_and_report, interview_id)
+
+                    # 5. Write critical audit entry
+                    from app.domain.models import AuditLog
+                    db.add(AuditLog(
+                        user_id=None,
+                        action="INTERVIEW_TERMINATED_VIOLATION",
+                        resource_type="Interview",
+                        resource_id=interview_id,
+                        details=json.dumps({
+                            "interview_id": interview_id,
+                            "strike_count": actual_strike_count,
+                            "token_revoked": token_revoked,
+                            "reason": reason_slug,
+                        }),
+                        is_critical=True,
+                    ))
+
+                    # Clean up sequence tracking for terminated interview
+                    LAST_SEQUENCE_NUMBERS.pop(interview_id, None)
+                    if redis_client is not None:
+                        try:
+                            redis_client.delete(f"seq:{interview_id}")
+                        except Exception:
+                            pass
     else:
         # Non-strike event: still report current strike count for client sync
         actual_strike_count = db.query(InterviewMonitoringEvent).filter(

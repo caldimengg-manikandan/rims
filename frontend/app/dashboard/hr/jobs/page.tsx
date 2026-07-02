@@ -106,7 +106,7 @@ export default function HRJobsPage() {
 
     const filteredJobs = useMemo(() => {
         return jobs.filter(job => {
-            if (!job.job_id && job.title !== "INTERNAL_DEMO_JOB") return false
+            if (!job.job_id) return false
 
             const matchesSearch =
                 (job.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||

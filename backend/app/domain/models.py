@@ -460,6 +460,11 @@ class Interview(Base):
     risk_score = Column(Float, default=0.0, nullable=False, server_default='0.0')
     is_terminated_by_violations = Column(Boolean, default=False, nullable=False, server_default='0')
     active_session_jti = Column(String(50), nullable=True)
+    # Marks interviews created via the /demo endpoint as provisional.
+    # When True: application + interview records are deleted on early-end,
+    # proctoring auto-termination, or abandon. Report is only generated on
+    # successful completion.
+    is_demo = Column(Boolean, default=False, nullable=False, server_default='0')
     created_at = Column(DateTime, default=get_ist_now, server_default=func.now())
     updated_at = Column(DateTime, default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
 
