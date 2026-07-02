@@ -383,15 +383,16 @@ async def access_interview(
             
             # Notify HR Owner
             if application and application.hr_id:
-                from app.domain.models import Notification
-                db.add(Notification(
+                from app.core.websocket import trigger_realtime_notification
+                trigger_realtime_notification(
+                    db=db,
                     user_id=application.hr_id,
                     notification_type="INTERVIEW_STARTED",
                     title="Interview Started",
-                    message=f"{application.candidate_name} has started the AI interview for {job.title if job else 'the position'}.",
+                    message_content=f"{application.candidate_name} has started the AI interview for {job.title if job else 'the position'}.",
                     related_application_id=application.id,
                     related_interview_id=interview.id
-                ))
+                )
         
         # 5. Background Question Generation Trigger
         # Check for existing questions to avoid duplicate background processing

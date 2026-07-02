@@ -339,16 +339,19 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
             apt_score = interview.aptitude_score
             apt_info = f" | Aptitude: {apt_score:.1f}" if apt_score is not None else ""
             status_desc = "completed" if interview.status == "completed" else "terminated early"
-            notification = Notification(
-                user_id=job.hr_id if job else None,
-                notification_type="INTERVIEW_COMPLETED",
-                title=f"Interview {status_desc.capitalize()}: {interview.application.candidate_name if interview.application else 'Candidate'}",
-                message=f"{interview.application.candidate_name if interview.application else 'Candidate'} {status_desc} for {job.title if job else 'Job'}. Score: {interview_score:.1f}{apt_info}",
-                related_application_id=interview.application_id,
-                related_interview_id=interview_id
-            )
-            db.add(notification)
-            db.commit()
+            hr_id = job.hr_id if job else None
+            if hr_id:
+                from app.core.websocket import trigger_realtime_notification
+                trigger_realtime_notification(
+                    db=db,
+                    user_id=hr_id,
+                    notification_type="INTERVIEW_COMPLETED",
+                    title=f"Interview {status_desc.capitalize()}: {interview.application.candidate_name if interview.application else 'Candidate'}",
+                    message_content=f"{interview.application.candidate_name if interview.application else 'Candidate'} {status_desc} for {job.title if job else 'Job'}. Score: {interview_score:.1f}{apt_info}",
+                    related_application_id=interview.application_id,
+                    related_interview_id=interview_id
+                )
+                db.commit()
         except Exception as e:
             logger.error(f"Error creating notification: {e}")
 

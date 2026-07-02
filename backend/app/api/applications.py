@@ -631,14 +631,15 @@ async def apply_for_job(
             new_application.candidate_photo_path = returned_photo_path
 
         # Create HR Notification
-        from app.domain.models import Notification
-        db.add(Notification(
+        from app.core.websocket import trigger_realtime_notification
+        trigger_realtime_notification(
+            db=db,
             user_id=job.hr_id,
             notification_type="NEW_APPLICATION",
             title=f"New Application: {candidate_name}",
-            message=f"{candidate_name} has applied for {job.title}.",
+            message_content=f"{candidate_name} has applied for {job.title}.",
             related_application_id=new_application.id,
-        ))
+        )
 
         db.commit()
         db.refresh(new_application)

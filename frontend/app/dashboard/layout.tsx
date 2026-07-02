@@ -14,6 +14,7 @@ import { Search } from 'lucide-react'
 import { SWRConfig, mutate as globalMutate } from 'swr'
 import { fetcher } from '@/app/dashboard/lib/swr-fetcher'
 import { useSessionIntelligence } from '@/hooks/use-session-intelligence'
+import { useWebSocket } from '@/hooks/use-websocket'
 
 export default function DashboardLayout({
   children,
@@ -26,6 +27,9 @@ export default function DashboardLayout({
 
   // Session intelligence: auto-tracks page visits
   useSessionIntelligence()
+
+  // Real-time WebSocket notifications
+  useWebSocket(user)
 
   useEffect(() => {
     setIsMounted(true)

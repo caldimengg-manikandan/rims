@@ -964,13 +964,15 @@ async def respond_to_offer(request: Request, response_req: OfferResponseRequest,
 
     # Notify HR Owner
     if application.hr_id:
-        db.add(Notification(
+        from app.core.websocket import trigger_realtime_notification
+        trigger_realtime_notification(
+            db=db,
             user_id=application.hr_id,
             notification_type="OFFER_RESPONSE",
             title=f"Offer {response_req.response_type.capitalize()}ed",
-            message=f"{application.candidate_name} has {response_req.response_type}ed the offer for {application.job.title if application.job else 'the position'}.",
+            message_content=f"{application.candidate_name} has {response_req.response_type}ed the offer for {application.job.title if application.job else 'the position'}.",
             related_application_id=application.id
-        ))
+        )
 
     db.commit() # Atomic release of lock
 
@@ -1045,13 +1047,15 @@ def complete_onboarding(
     
     # Notify HR Owner
     if application.hr_id:
-        db.add(Notification(
+        from app.core.websocket import trigger_realtime_notification
+        trigger_realtime_notification(
+            db=db,
             user_id=application.hr_id,
             notification_type="CANDIDATE_ONBOARDED",
             title="Candidate Onboarded",
-            message=f"{application.candidate_name} has been successfully onboarded.",
+            message_content=f"{application.candidate_name} has been successfully onboarded.",
             related_application_id=application.id
-        ))
+        )
     db.commit()
     return {"status": "success"}
 
@@ -1085,13 +1089,15 @@ def check_candidate_arrivals(db: Session = Depends(get_db), current_admin: User 
         
         # Notify HR
         if app.hr_id:
-             db.add(Notification(
+             from app.core.websocket import trigger_realtime_notification
+             trigger_realtime_notification(
+                 db=db,
                  user_id=app.hr_id,
                  notification_type="CANDIDATE_ARRIVED",
                  title="Candidate Joined",
-                 message=f"{app.candidate_name} has joined today. Capture photo and generate ID card.",
+                 message_content=f"{app.candidate_name} has joined today. Capture photo and generate ID card.",
                  related_application_id=app.id
-             ))
+             )
         onboarded_count += 1
         
     db.commit()
