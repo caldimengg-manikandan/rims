@@ -305,6 +305,21 @@ function getFaceQuality(prediction: any, video: HTMLVideoElement) {
   };
 }
 
+function getTerminationBadgeText(reason: string | null): string {
+  if (!reason) return "Access Key Invalidated";
+  const r = reason.toLowerCase();
+  if (r.includes("bypass") || r.includes("hardware") || r.includes("camera") || r.includes("microphone")) {
+    return "Hardware Check Failed";
+  }
+  if (r.includes("strike") || r.includes("violation") || r.includes("fullscreen") || r.includes("focus")) {
+    return "Proctoring Violation";
+  }
+  if (r.includes("expired") || r.includes("duration")) {
+    return "Session Expired";
+  }
+  return "Access Key Invalidated";
+}
+
 function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const interviewId = sessionId;
 
@@ -488,6 +503,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
             if (data.token_revoked === true && !terminationSentRef.current) {
               terminationSentRef.current = true;
               setIsTerminated(true);
+              setTerminationReason("Security violation: Session token has been revoked due to proctoring strikes.");
             }
           }
           return data;
@@ -534,6 +550,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         if (!terminationSentRef.current) {
           terminationSentRef.current = true;
           setIsTerminated(true);
+          setTerminationReason(`Security violation: ${reason}`);
           fetch(`${getApiBaseUrl()}/api/interviews/${interviewId}/security-violation`, {
             method: 'POST',
             headers: authHeaders(token),
@@ -624,6 +641,12 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           if (!cancelled) setTimeout(poll, 2500);
           return;
         }
+        if (stage.status === 'terminated') {
+          setIsTerminated(true);
+          setTerminationReason(stage.termination_reason || "Security violation: Proctoring enforcement.");
+          setIsLoading(false);
+          return;
+        }
         if (stage.status === 'completed' || stage.interview_stage === 'completed') {
           setIsFinished(true);
           setIsLoading(false);
@@ -655,13 +678,19 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           errorMsg.includes('mismatch');
 
         if (isPermanentError) {
-          setPollingError(errorMsg);
           setIsLoading(false);
-          // If 401, also trigger global termination
-          if (e.status === 401 || errorMsg.toLowerCase().includes('revoked')) {
+          // Trigger global termination on 401/403 or if explicitly terminated/revoked
+          if (
+            e.status === 401 ||
+            e.status === 403 ||
+            errorMsg.toLowerCase().includes('revoked') ||
+            errorMsg.toLowerCase().includes('terminated')
+          ) {
             setIsTerminated(true);
-            setTerminationReason("Security violation: Session token has been revoked due to proctoring strikes.");
+            setTerminationReason(errorMsg || "Security violation: Session token has been revoked due to proctoring strikes.");
             terminationSentRef.current = true;
+          } else {
+            setPollingError(errorMsg);
           }
           return;
         }
@@ -704,6 +733,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
 
       if (res.terminated) {
         setIsTerminated(true);
+        setTerminationReason("Security violation: Session terminated due to proctoring violations.");
         return;
       }
 
@@ -930,6 +960,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
             if (isTerminatedError) {
               toast.error('Voice service is unavailable as the session has been terminated.');
               setIsTerminated(true);
+              setTerminationReason("Security violation: Session terminated due to proctoring violation.");
             } else {
               toast.error('Voice transcription failed. You can type your response.');
             }
@@ -1632,7 +1663,9 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           <p className="text-muted-foreground font-semibold mb-4 leading-relaxed">
             {terminationReason || "This interview has been deactivated due to security protocol violations."}
           </p>
-          <p className="text-xs text-destructive/70 font-mono font-bold mb-8 uppercase tracking-widest bg-destructive/10 py-2 rounded-lg">Access Key Invalidated</p>
+          <p className="text-xs text-destructive/70 font-mono font-bold mb-8 uppercase tracking-widest bg-destructive/10 py-2 rounded-lg">
+            {getTerminationBadgeText(terminationReason)}
+          </p>
           <Button variant="outline" className="w-full h-14 rounded-xl font-bold shadow-lg active:scale-[0.99] transition-all" onClick={() => window.location.href = '/calrims/'}>Return to Home</Button>
         </Card>
       </div>

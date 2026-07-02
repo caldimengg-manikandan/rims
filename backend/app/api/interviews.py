@@ -728,6 +728,20 @@ async def get_interview_stage(
         application = getattr(interview, 'application', None)
         job = getattr(application, 'job', None) if application else None
         
+        termination_reason = None
+        if interview.status == "terminated":
+            try:
+                from app.domain.models import AuditLog
+                log = db.query(AuditLog).filter(
+                    AuditLog.action == "INTERVIEW_TERMINATED_VIOLATION",
+                    AuditLog.resource_id == interview.id
+                ).order_by(AuditLog.created_at.desc()).first()
+                if log and log.details:
+                    log_data = json.loads(log.details)
+                    termination_reason = log_data.get("reason")
+            except Exception as log_err:
+                logger.error(f"Failed to fetch dynamic termination reason in stage: {log_err}")
+
         return {
             "id": interview.id,
             "status": interview.status,
@@ -741,6 +755,7 @@ async def get_interview_stage(
             "started_at": getattr(interview, 'started_at', None),
             "duration_minutes": getattr(interview, 'duration_minutes', 60) or 60,
             "questions_ready": questions_ready,
+            "termination_reason": termination_reason,
         }
     except HTTPException:
         raise
@@ -1472,7 +1487,22 @@ async def fail_device_test(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
 
     reason = (data.get("reason") or "").strip() or "Failed device hardware verification"
-    logger.warning(f"DEVICE_TEST_VIOLATION: Terminating interview {interview_id}. Reason: {reason}")
+    # Add audit log record (CRIT-02)
+    try:
+        from app.domain.models import AuditLog
+        audit_entry = AuditLog(
+            user_id=None,
+            action="INTERVIEW_TERMINATED_VIOLATION",
+            resource_type="Interview",
+            resource_id=interview_id,
+            details=json.dumps({
+                "reason": reason,
+                "proctoring_source": "device_test_verification"
+            })
+        )
+        db.add(audit_entry)
+    except Exception as audit_err:
+        logger.error(f"Failed to write device test violation audit log: {audit_err}")
 
     # 1. Clear access key hash completely to make it permanently invalid
     interview.access_key_hash = None
