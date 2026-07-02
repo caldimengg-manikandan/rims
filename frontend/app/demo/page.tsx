@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Rocket, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
+import { getApiBaseUrl } from "@/lib/config";
 
 export default function DemoInterviewPage() {
   const [isLoading, setIsLoading] = useState(false);
@@ -12,7 +13,7 @@ export default function DemoInterviewPage() {
   const handleLaunchDemo = async () => {
     setIsLoading(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:10000";
+      const apiUrl = getApiBaseUrl();
       const response = await fetch(`${apiUrl}/api/interviews/demo`, {
         method: "POST",
         headers: {
