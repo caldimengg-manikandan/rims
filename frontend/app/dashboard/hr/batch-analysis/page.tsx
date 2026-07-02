@@ -21,6 +21,7 @@ import useSWR from 'swr'
 import { APIClient } from '@/app/dashboard/lib/api-client'
 import { fetcher } from '@/app/dashboard/lib/swr-fetcher'
 import * as XLSX from 'xlsx'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 // ─── Phone normalizer (mirrored from batch-upload-modal) ────────────
 function normalizePhone(rawPhone: string, countryCode?: string | null): string {
@@ -150,7 +151,8 @@ export default function BatchAnalysisPage() {
     setExportCount(null)
   }
 
-  // ─── Export handler ───────────────────────────────────────────
+  // ─── Export handler ───────────────────────────────────────────────────
+  const confirm = useConfirm()
   const handleFilteredExport = async () => {
     if (dateError) return
     setIsExporting(true)
@@ -171,7 +173,13 @@ export default function BatchAnalysisPage() {
 
       // BA_033: Hard requirement to indicate filters
       if (!hasFilters) {
-        const confirmAll = window.confirm('IMPORTANT: You have not applied any filters. This will export ALL candidates in the system (up to 1000). To download specific data, please apply a Job, Date, or Time filter first. Continue anyway?')
+        const confirmAll = await confirm({
+          title: 'Export All Candidates?',
+          description: 'You have not applied any filters. This will export ALL candidates in the system (up to 1,000). Apply a Job, Date, or Time filter first for specific data.',
+          confirmLabel: 'Export All',
+          cancelLabel: 'Add Filters',
+          variant: 'warning',
+        })
         if (!confirmAll) {
           setIsExporting(false)
           return

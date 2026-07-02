@@ -5,6 +5,7 @@ import { AuthProvider } from '@/app/dashboard/lib/auth-context'
 import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 import { Toaster } from '@/components/ui/sonner'
+import { ConfirmProvider } from '@/components/ui/confirm-dialog'
 import { SWRProvider } from '@/app/dashboard/lib/swr-provider';
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { GlobalNavbar } from '@/components/global-navbar'
@@ -95,16 +96,32 @@ export default async function RootLayout({
               >
                 <div className="app-shell-content flex flex-col h-full flex-1 overflow-hidden" suppressHydrationWarning>
                   <TooltipProvider delayDuration={300}>
-                    <Suspense fallback={null}>
-                      <NavigationProgress />
-                    </Suspense>
-                    <header className="shrink-0 flex flex-col sticky top-0 z-[100]">
-                      <GlobalNavbar />
-                    </header>
-                    <ScrollContainer>
-                      {children}
-                    </ScrollContainer>
-                    <Toaster richColors position="top-right" />
+                    <ConfirmProvider>
+                      <Suspense fallback={null}>
+                        <NavigationProgress />
+                      </Suspense>
+                      <header className="shrink-0 flex flex-col sticky top-0 z-[100]">
+                        <GlobalNavbar />
+                      </header>
+                      <ScrollContainer>
+                        {children}
+                      </ScrollContainer>
+                      <Toaster
+                        richColors
+                        position="top-right"
+                        expand
+                        gap={8}
+                        offset={16}
+                        toastOptions={{
+                          style: { borderRadius: '12px' },
+                          classNames: {
+                            toast: 'font-sans text-sm shadow-lg border border-border/40',
+                            title: 'font-semibold',
+                            description: 'text-muted-foreground',
+                          },
+                        }}
+                      />
+                    </ConfirmProvider>
                   </TooltipProvider>
                 </div>
               </ThemeProvider>

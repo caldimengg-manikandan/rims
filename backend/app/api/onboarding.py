@@ -1021,6 +1021,13 @@ def complete_onboarding(
         raise HTTPException(status_code=404, detail="Application not found")
     
     check_hr_permission(current_user, application, db)
+
+    # Photo required guard: candidate must have a photo before being marked as onboarded.
+    if not application.candidate_photo_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Candidate photo is required before finalizing onboarding. Please capture the candidate's photo first."
+        )
         
     # Relaxed Guard: Onboarding allowed even if before joining date, with a log warning.
     if application.joining_date:

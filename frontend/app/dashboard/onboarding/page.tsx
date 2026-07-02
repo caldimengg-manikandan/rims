@@ -222,17 +222,29 @@ export default function OnboardingPage() {
     }
 
     const handleComplete = async (id: number) => {
+        // Find the candidate to check if photo has been taken
+        const candidate = candidates.find(c => c.id === id)
+        if (!candidate?.candidate_photo_path) {
+            toast.error("Photo required", {
+                description: "Please capture the candidate's photo before finalizing onboarding.",
+                duration: 6000,
+            })
+            // Auto-open the photo capture dialog instead
+            setActiveCaptureId(id)
+            setIsCaptureOpen(true)
+            return
+        }
+
         try {
             await APIClient.post(`/api/onboarding/applications/${id}/onboard`, {})
             toast.success("Candidate marked as onboarded")
             mutate(undefined, { revalidate: true })
-            setActiveCaptureId(id)
-            setIsCaptureOpen(true)
         } catch (error: unknown) {
             const err = error as { response?: { data?: { error?: string } } }
             toast.error(err?.response?.data?.error || "Failed to complete onboarding. Candidate's joining date may not have arrived yet.")
         }
     }
+
 
 
     const handleGenerateID = async (id: number) => {

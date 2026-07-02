@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { APIClient } from '@/app/dashboard/lib/api-client'
 import { toast } from 'sonner'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { PageHeader } from '@/components/page-header'
 import { Badge } from "@/components/ui/badge"
 import {
@@ -276,6 +277,7 @@ interface SetFormProps {
 
 function SetFormModal({ open, onClose, onSaved, initial, sets }: SetFormProps) {
     const isEdit = Boolean(initial)
+    const confirm = useConfirm()
 
     const [title, setTitle] = useState('')
     const [roundType, setRoundType] = useState<'aptitude' | 'technical' | 'behavioural'>('technical')
@@ -528,8 +530,14 @@ function SetFormModal({ open, onClose, onSaved, initial, sets }: SetFormProps) {
                                         type="button"
                                         variant="ghost"
                                         size="sm"
-                                        onClick={() => {
-                                            if (window.confirm("Are you sure you want to clear all questions? This cannot be undone.")) {
+                                        onClick={async () => {
+                                            const ok = await confirm({
+                                                title: 'Clear All Questions?',
+                                                description: 'This will remove all imported questions. This cannot be undone.',
+                                                confirmLabel: 'Clear All',
+                                                variant: 'destructive',
+                                            })
+                                            if (ok) {
                                                 setQuestions([]);
                                                 setError('Add at least one question.');
                                                 toast.error('All questions cleared');
@@ -570,8 +578,14 @@ function SetFormModal({ open, onClose, onSaved, initial, sets }: SetFormProps) {
                                         </div>
                                         <button
                                             type="button"
-                                            onClick={() => {
-                                                if (window.confirm("Are you sure you want to delete this question?")) {
+                                            onClick={async () => {
+                                                const ok = await confirm({
+                                                    title: 'Delete Question?',
+                                                    description: 'This question will be removed from the set.',
+                                                    confirmLabel: 'Delete',
+                                                    variant: 'destructive',
+                                                })
+                                                if (ok) {
                                                     const next = questions.filter((_, idx) => idx !== i);
                                                     setQuestions(next);
                                                     if (next.filter(q => q.question.trim()).length === 0) {
@@ -612,8 +626,14 @@ function SetFormModal({ open, onClose, onSaved, initial, sets }: SetFormProps) {
                                 {questions.filter(q => q.question.trim()).length} question{questions.filter(q => q.question.trim()).length !== 1 ? 's' : ''} imported
                                 <button
                                     type="button"
-                                    onClick={() => {
-                                        if (window.confirm('Are you sure you want to clear all questions? This action cannot be undone.')) {
+                                    onClick={async () => {
+                                        const ok = await confirm({
+                                            title: 'Clear All Questions?',
+                                            description: 'All imported questions will be removed. You will need to add at least one question to save.',
+                                            confirmLabel: 'Clear All',
+                                            variant: 'destructive',
+                                        })
+                                        if (ok) {
                                             setQuestions([]);
                                             const msg = 'All questions have been cleared. Please add at least one question to save.';
                                             setError(msg);

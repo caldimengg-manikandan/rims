@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getApiBaseUrl } from '@/lib/config';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { APIClient } from '@/app/dashboard/lib/api-client';
 
 import * as tf from '@tensorflow/tfjs-core';
@@ -802,8 +803,15 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   };
 
   // ─── END SESSION (early) ──────────────────────────────────────────────────
+  const confirm = useConfirm();
   const handleEndSession = async () => {
-    const confirmed = window.confirm("Are you sure you want to end this interview session? Your progress will be saved, but you won't be able to return to it.");
+    const confirmed = await confirm({
+      title: 'End Interview Session?',
+      description: "Your progress will be saved, but you won't be able to return to this session.",
+      confirmLabel: 'End Session',
+      cancelLabel: 'Keep Going',
+      variant: 'destructive',
+    });
     if (!confirmed) return;
 
     try {
