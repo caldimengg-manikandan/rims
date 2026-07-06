@@ -1,5 +1,0 @@
-# Minimal root pin for some deploy scripts. Full app deps: backend/requirements.txt
-# Local Windows dev: backend/start.ps1 → backend/requirements_core.txt
--r backend/requirements.txt
-gunicorn>=21.0.0
-uvicorn>=0.30.0
