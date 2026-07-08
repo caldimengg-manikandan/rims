@@ -534,8 +534,12 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
             exp = payload.get("exp")
             if jti and exp:
                 from app.domain.models import RevokedToken
-                existing = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                from sqlalchemy import select
+                existing = db.execute(select(RevokedToken).where(RevokedToken.jti == jti)).scalar_one_or_none()
                 if not existing:
+                    # Note: expires_at is Column(DateTime) which is naive in the DB schema.
+                    # We store it as a naive UTC timestamp to prevent database/SQLAlchemy warnings.
+                    # This is metadata only; no reads or comparisons of this field exist in Python.
                     exp_dt = datetime.fromtimestamp(exp, tz=timezone.utc).replace(tzinfo=None)
                     revoked = RevokedToken(jti=jti, expires_at=exp_dt)
                     db.add(revoked)

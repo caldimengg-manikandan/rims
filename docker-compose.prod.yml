@@ -45,6 +45,7 @@ services:
       - BACKEND_START_MODE=docker
       - FRONTEND_BASE_URL=https://caldimproducts.com/calrims
       - TRUSTED_PROXY_HOST=nginx
+      - ENABLE_DEMO=false
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
       interval: 10s
@@ -87,6 +88,7 @@ services:
       - BACKEND_START_MODE=docker
       - FRONTEND_BASE_URL=https://caldimproducts.com/calrims
       - TRUSTED_PROXY_HOST=nginx
+      - ENABLE_DEMO=false
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
       interval: 10s

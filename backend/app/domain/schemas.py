@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from datetime import datetime
 import re
 import json
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from app.domain.constants import CandidateState
 
 # ============================================================================
@@ -1094,7 +1094,7 @@ class GlobalSettingsResponse(BaseModel):
 
 class OfferResponseRequest(BaseModel):
     token: str
-    response_type: str  # 'accept' or 'reject'
+    response_type: Literal["accept", "reject"]
 
 class BulkDeleteEmailsRequest(BaseModel):
     ids: List[int]

@@ -175,3 +175,8 @@ export const AllReportsMetricsChart = React.memo(({ reports }: { reports: any[] 
         </ResponsiveContainer>
     )
 })
+
+StatusChart.displayName = 'StatusChart'
+DetailedMetricsChart.displayName = 'DetailedMetricsChart'
+SkillProficiencyChart.displayName = 'SkillProficiencyChart'
+AllReportsMetricsChart.displayName = 'AllReportsMetricsChart'

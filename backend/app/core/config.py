@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     env: str = "development"
     ws_enforce_interview_jwt: bool = False
     enable_request_id_idempotency: bool = True
+    # Demo interview endpoint toggle — set ENABLE_DEMO=true in development/staging to enable the public demo.
+    # Defaults to False (disabled) to prevent accidental exposure in production.
+    enable_demo: bool = False
     # redis://host:6379/0 — shared idempotency + X-Request-ID replay across workers
     redis_url: str = ""
     # Clamp idempotency marker + ephemeral replay TTLs (seconds); Redis and in-memory fallback both honor this band.

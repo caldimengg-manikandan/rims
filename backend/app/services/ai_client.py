@@ -1,7 +1,7 @@
 import os
 import logging
 import re
-from groq import AsyncGroq
+from groq import AsyncGroq, APIConnectionError, APITimeoutError, RateLimitError, APIStatusError
 import time
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class AIClient:
                 self.disabled = True
 
     @retry(
-        retry=retry_if_exception_type((Exception)), # We filter inside or keep generic for LLM volatility
+        retry=retry_if_exception_type((APIConnectionError, APITimeoutError, RateLimitError)),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         before_sleep=before_sleep_log(logger, logging.INFO),
@@ -94,23 +94,37 @@ class AIClient:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             logger.debug("AI generate ok", extra={"elapsed_ms": elapsed_ms, "len": len(content)})
             return content
-        except Exception as e:
-            logger.error(f"AI error with model {model}: {e}")
-            # Self-healing fallback to lightweight model
+        except APIStatusError as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            if e.status_code == 429:
+                logger.error(f"AI rate limit exceeded (429): {e}", extra={"elapsed_ms": elapsed_ms})
+            elif e.status_code >= 500:
+                logger.error(f"AI gateway/server error ({e.status_code}): {e}", extra={"elapsed_ms": elapsed_ms})
+            else:
+                logger.error(f"AI terminal client error ({e.status_code}): {e}", extra={"elapsed_ms": elapsed_ms})
+            
             fallback_model = "llama-3.1-8b-instant"
             if model != fallback_model:
                 logger.warning(f"Attempting self-healing fallback to lightweight model: {fallback_model}")
                 try:
                     raw = await self._generate_with_retry(prompt, system_instr, fallback_model)
                     if raw is not None and str(raw).strip():
-                        content = sanitize_content(str(raw).strip())
-                        logger.info("Self-healing fallback successful.")
-                        return content
+                        return sanitize_content(str(raw).strip())
                 except Exception as fallback_err:
                     logger.error(f"Fallback model also failed: {fallback_err}")
-            
+            return "AI_DISABLED"
+        except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            logger.error(f"AI Final Failure: {e}", extra={"elapsed_ms": elapsed_ms})
+            logger.error(f"AI unexpected error with model {model}: {e}", extra={"elapsed_ms": elapsed_ms})
+            fallback_model = "llama-3.1-8b-instant"
+            if model != fallback_model:
+                logger.warning(f"Attempting self-healing fallback to lightweight model: {fallback_model}")
+                try:
+                    raw = await self._generate_with_retry(prompt, system_instr, fallback_model)
+                    if raw is not None and str(raw).strip():
+                        return sanitize_content(str(raw).strip())
+                except Exception as fallback_err:
+                    logger.error(f"Fallback model also failed: {fallback_err}")
             return "AI_DISABLED"
 
 # Singleton instance to be imported globally

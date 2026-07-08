@@ -884,7 +884,7 @@ class RevokedToken(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     jti = Column(String(255), unique=True, index=True, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)  # Naive UTC datetime (db constraint). Future cleanups should compare using datetime.now(timezone.utc).replace(tzinfo=None)
     created_at = Column(DateTime, default=get_ist_now)
 
 

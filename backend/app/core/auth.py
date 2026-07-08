@@ -3,6 +3,7 @@ from typing import Iterable, Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, Depends, status, Request
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 import logging
 from app.core.config import get_settings
@@ -61,13 +62,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, s
     to_encode = data.copy()
     
     if expires_delta:
-        expire = get_ist_now() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = get_ist_now() + timedelta(minutes=settings.jwt_expiration_minutes)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiration_minutes)
     
     to_encode.update({
         "exp": expire,
-        "iat": get_ist_now(),
+        "iat": datetime.now(timezone.utc),
         "jti": secrets.token_hex(16)
     })
     
@@ -211,7 +212,7 @@ def get_current_user(
         if jti:
             from app.domain.models import RevokedToken
             try:
-                revoked = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                revoked = db.execute(select(RevokedToken).where(RevokedToken.jti == jti)).scalar_one_or_none()
                 if revoked:
                     logger.warning(f"Rejected revoked token JTI (DB): {jti}")
                     raise HTTPException(
@@ -242,7 +243,7 @@ def get_current_user(
         
         user_id = int(sub)
         logger.debug(f"[Auth] Validating user_id={user_id} with role '{role}'")  # BUG-035: downgraded INFO→DEBUG
-        user = db.query(User).filter(User.id == user_id).first()
+        user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
         if user is None:
             logger.warning(f"[Auth] User not found (id redacted for PII safety)")  # BUG-035: no user_id in logs
             raise HTTPException(
@@ -366,7 +367,7 @@ def get_current_interview(
         if jti:
             from app.domain.models import RevokedToken
             try:
-                revoked = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                revoked = db.execute(select(RevokedToken).where(RevokedToken.jti == jti)).scalar_one_or_none()
                 if revoked:
                     logger.warning(f"Rejected revoked interview JTI: {jti}")
                     raise HTTPException(
@@ -411,7 +412,7 @@ def get_current_interview(
             
         interview_id = int(sub)
         
-        interview = db.query(Interview).filter(Interview.id == interview_id).first()
+        interview = db.execute(select(Interview).where(Interview.id == interview_id)).scalar_one_or_none()
         
         # Check basic existence and active status
         if not interview:
@@ -578,7 +579,7 @@ def get_current_interview_any_status(
         if jti:
             from app.domain.models import RevokedToken
             try:
-                revoked = db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                revoked = db.execute(select(RevokedToken).where(RevokedToken.jti == jti)).scalar_one_or_none()
                 if revoked:
                     logger.warning(f"Rejected revoked interview JTI (any status): {jti}")
                     raise HTTPException(
@@ -629,7 +630,7 @@ def get_current_interview_any_status(
             )
 
         interview_id = int(sub)
-        interview = db.query(Interview).filter(Interview.id == interview_id).first()
+        interview = db.execute(select(Interview).where(Interview.id == interview_id)).scalar_one_or_none()
         if not interview:
             logger.warning(
                 "Interview auth failed (any status): interview not found "

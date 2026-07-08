@@ -75,31 +75,7 @@ if os.environ.get("WORKER_ID", "0") == "0":
             "Run 'alembic upgrade head' to apply schema changes."
         )
 
-# Migration safety: Ensure message_id exists in attachment_resumes
-if os.environ.get("WORKER_ID", "0") == "0":
-    try:
-        with engine.connect() as conn:
-            from sqlalchemy import text
-            from app.migrations import column_exists
-            if not column_exists(conn, "attachment_resumes", "message_id"):
-                if "postgresql" in str(engine.url):
-                    conn.execute(text("ALTER TABLE attachment_resumes ADD COLUMN IF NOT EXISTS message_id VARCHAR(255) UNIQUE"))
-                else:
-                    conn.execute(text("ALTER TABLE attachment_resumes ADD COLUMN message_id VARCHAR(255) UNIQUE"))
-                conn.commit()
-    except Exception as e:
-        logger.warning(f"Database migration check failed (attachment_resumes.message_id): {e}")
-
-from app.migrations import run_startup_migrations, validate_required_columns
-if os.environ.get("WORKER_ID", "0") == "0":
-    if os.environ.get("RIMS_STARTUP_MIGRATIONS_DONE", "0") != "1":
-        os.environ["RIMS_STARTUP_MIGRATIONS_DONE"] = "1"
-        try:
-            run_startup_migrations(engine)
-            validate_required_columns(engine)
-        except RuntimeError as e:
-            logger.critical(f"STARTUP FAILED — database migration/validation error: {e}")
-            sys.exit(1)
+# Startup schema validation is now managed strictly via supabase/migrations/ SQL files.
 
 from app.infrastructure.database import SessionLocal
 
@@ -172,7 +148,9 @@ async def _sweep_stuck_applications(db):
         from app.services.state_machine import CandidateState
         from sqlalchemy import or_, and_
 
-        cutoff = datetime.utcnow() - timedelta(minutes=15)
+        from app.core.timezone import get_ist_now
+
+        cutoff = get_ist_now() - timedelta(minutes=15)
         stuck_apps = db.query(Application).filter(
             Application.resume_status.in_(["parsing", "pending"]),
             or_(
@@ -191,7 +169,7 @@ async def _sweep_stuck_applications(db):
             if retries < 3:
                 logger.warning(f"[SWEEPER] Application #{app.id} is stuck. Resetting and retrying background parsing (attempt {retries + 1}).")
                 app.resume_status = "parsing"
-                app.parsing_started_at = datetime.utcnow()
+                app.parsing_started_at = get_ist_now()
                 app.retry_count = retries + 1
                 db.commit()
 
@@ -523,7 +501,7 @@ def health_check():
                 if expires_record and expires_record.value:
                     from datetime import timezone, timedelta
                     expires_at = datetime.fromisoformat(expires_record.value)
-                    now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.utcnow()
+                    now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
                     if expires_at < now + timedelta(days=7):
                         diff = expires_at - now
                         days_left = diff.days
@@ -557,21 +535,36 @@ def health_check():
             from app.core.storage import get_supabase_client
             client = get_supabase_client()
             if client:
-                client.table("users").select("id").limit(1).execute()
+                # Use storage bucket listing — avoids RLS-protected tables.
+                # If the service role key is valid, this always succeeds regardless of RLS policies.
+                client.storage.list_buckets()
                 supabase_status = "ok"
             else:
                 supabase_status = "unavailable"
-        except Exception:
+        except Exception as _supa_err:
+            logger.warning(f"Supabase health probe failed: {_supa_err}")
             supabase_status = "error"
-    
+
     rate_limiter_status = "active" if getattr(app.state, "limiter", None) else "inactive"
-    
+
     imap_status = "not_running"
     if os.environ.get("WORKER_ID", "0") == "0":
         last_success = getattr(app.state, "imap_last_success", 0)
         last_error_time = getattr(app.state, "imap_last_error_time", 0)
-        
-        if last_error_time > last_success:
+
+        # Check if any user actually has IMAP auto-sync enabled before reporting stuck.
+        try:
+            from app.infrastructure.database import SessionLocal as _SL
+            from app.domain.models import User as _User
+            _chk_db = _SL()
+            _has_imap_users = _chk_db.query(_User.id).filter(_User.auto_sync_enabled == True).first() is not None
+            _chk_db.close()
+        except Exception:
+            _has_imap_users = True  # Assume configured if we can't check
+
+        if not _has_imap_users:
+            imap_status = "not_configured"
+        elif last_error_time > last_success:
             imap_status = f"error: {getattr(app.state, 'imap_last_error', 'unknown')}"
         elif time.time() - last_success > 300 and last_success > 0:
             imap_status = "stuck_or_delayed"
@@ -595,7 +588,7 @@ def health_check():
 
     response_data = {
         "status": "healthy" if is_healthy else "unhealthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "uptime_seconds": uptime_seconds,
         "services": {
             "database": db_status,
@@ -633,11 +626,13 @@ def readiness_check():
             from app.core.storage import get_supabase_client
             client = get_supabase_client()
             if client:
-                client.table("users").select("id").limit(1).execute()
+                # Use storage bucket listing — avoids RLS-protected tables.
+                client.storage.list_buckets()
                 supabase_status = "ok"
             else:
                 supabase_status = "unavailable"
-        except Exception:
+        except Exception as _supa_err:
+            logger.warning(f"Supabase readiness probe failed: {_supa_err}")
             supabase_status = "error"
 
     smtp_status = "not_configured"

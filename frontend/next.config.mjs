@@ -11,7 +11,7 @@ const nextConfig = {
     buildActivityPosition: 'bottom-right',
   },
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
 
   images: {
@@ -117,8 +117,8 @@ const nextConfig = {
     const backendUrl = (process.env.BACKEND_URL || 'http://127.0.0.1:10000').replace(/\/$/, '');
     return [
       {
-        source: '/api/((?!generate-pdf|health).*)',
-        destination: `${backendUrl}/api/:1`,
+        source: '/api/:path((?!generate-pdf|health).*)',
+        destination: `${backendUrl}/api/:path`,
       },
     ]
   }

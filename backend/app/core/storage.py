@@ -1,4 +1,6 @@
 import logging
+import os
+from urllib.parse import urlparse
 
 from typing import Optional, Any, List
 from app.core.config import get_settings
@@ -15,6 +17,25 @@ except ImportError:
 
 import functools
 
+def _append_no_proxy_host(host: str) -> None:
+    if not host:
+        return
+    for key in ("NO_PROXY", "no_proxy"):
+        existing = os.environ.get(key, "")
+        entries = [item.strip() for item in existing.split(",") if item.strip()]
+        if host not in entries:
+            entries.append(host)
+        os.environ[key] = ",".join(entries)
+
+def _ensure_supabase_bypasses_local_proxy() -> None:
+    parsed = urlparse(settings.supabase_url or "")
+    host = parsed.hostname or ""
+    if not host:
+        return
+    _append_no_proxy_host(host)
+    if host.endswith(".supabase.co"):
+        _append_no_proxy_host(".supabase.co")
+
 def resolve_bucket_and_path(bucket: str, path: str):
     if bucket == "MAIL_ATTACHMENTS":
         bucket = settings.supabase_bucket_resumes
@@ -29,6 +50,7 @@ def resolve_bucket_and_path(bucket: str, path: str):
 def get_supabase_client() -> Optional[Any]:
     if settings.supabase_url and settings.supabase_key and SUPABASE_AVAILABLE:
         try:
+            _ensure_supabase_bypasses_local_proxy()
             return create_client(settings.supabase_url, settings.supabase_key)
         except Exception as e:
             logger.error(f"Failed to initialize Supabase client: {e}")

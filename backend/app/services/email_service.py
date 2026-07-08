@@ -15,7 +15,7 @@ from urllib.parse import urlparse, urlencode
 import httpx
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 settings = get_settings()
@@ -425,11 +425,12 @@ async def execute_email_with_retries(
             from app.infrastructure.database import SessionLocal
             from app.domain.models import Application
             from sqlalchemy import update, and_, or_
+            from app.core.timezone import get_ist_now
             
             # Crash/restart tolerance window: 15 minutes.
             # If email_status is 'processing' but updated_at is older than 15 minutes,
             # we assume the process died/hung and allow retrying it.
-            expiry_threshold = datetime.utcnow() - timedelta(minutes=15)
+            expiry_threshold = get_ist_now() - timedelta(minutes=15)
             
             with SessionLocal() as db:
                 # Atomically set to 'processing' ONLY if:
@@ -445,7 +446,7 @@ async def execute_email_with_retries(
                             Application.updated_at < expiry_threshold
                         )
                     ))
-                    .values(email_status='processing', updated_at=datetime.utcnow())
+                    .values(email_status='processing', updated_at=get_ist_now())
                 )
                 res = db.execute(stmt)
                 db.commit()
@@ -469,11 +470,12 @@ async def execute_email_with_retries(
                     from app.infrastructure.database import SessionLocal
                     from app.domain.models import Application
                     from sqlalchemy import update
+                    from app.core.timezone import get_ist_now
                     with SessionLocal() as db:
                         db.execute(
                             update(Application)
                             .where(Application.id == application.id)
-                            .values(email_sent_at=datetime.utcnow(), email_status='sent', updated_at=datetime.utcnow())
+                            .values(email_sent_at=get_ist_now(), email_status='sent', updated_at=get_ist_now())
                         )
                         db.commit()
                 except Exception as db_err:
@@ -492,11 +494,12 @@ async def execute_email_with_retries(
             from app.infrastructure.database import SessionLocal
             from app.domain.models import Application
             from sqlalchemy import update
+            from app.core.timezone import get_ist_now
             with SessionLocal() as db:
                 db.execute(
                     update(Application)
                     .where(Application.id == application.id)
-                    .values(email_status='failed', updated_at=datetime.utcnow())
+                    .values(email_status='failed', updated_at=get_ist_now())
                 )
                 db.commit()
         except Exception as e:
@@ -607,7 +610,7 @@ def get_templated_email(content_html: str, title: str) -> str:
         This email was automatically generated. If you did not initiate this request, please ignore this email or contact support.
       </p>
       <p style="margin-top: 8px; font-size: 11px; color: #94a3b8;">
-        © {datetime.utcnow().year} {html.escape(company_name)}. All rights reserved.
+        © {datetime.now(timezone.utc).year} {html.escape(company_name)}. All rights reserved.
       </p>
     </div>
   </div>

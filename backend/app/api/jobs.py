@@ -369,12 +369,13 @@ def create_job(
         key=idempotency_key,
         ttl_seconds=45,
     ):
+        from app.core.timezone import get_ist_now
         recent_dup = (
             db.query(Job)
             .filter(
                 Job.hr_id == current_user.id,
                 Job.title.ilike((job_data.title or "").strip()),
-                Job.created_at >= datetime.utcnow() - timedelta(seconds=90),
+                Job.created_at >= get_ist_now() - timedelta(seconds=90),
             )
             .order_by(Job.id.desc())
             .first()
@@ -691,7 +692,8 @@ def update_job(
         job.domain = job_data.domain
     if job_data.status:
         if job_data.status == "closed" and job.status != "closed":
-            job.closed_at = datetime.utcnow()
+            from app.core.timezone import get_ist_now
+            job.closed_at = get_ist_now()
         elif job_data.status != "closed":
             job.closed_at = None
         job.status = job_data.status

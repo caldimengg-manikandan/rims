@@ -1923,7 +1923,7 @@ class AssignResumeRequest(BaseModel):
 
 
 @router.post("/ingested-emails/{resume_id}/assign")
-async def assign_ingested_email(
+def assign_ingested_email(
     resume_id: int,
     req: AssignResumeRequest,
     background_tasks: BackgroundTasks,
@@ -2577,7 +2577,7 @@ async def retry_application_background(application_id: int, job_id: int, bucket_
         db.close()
 
 @router.post("/{application_id}/retry-analysis")
-async def retry_resume_analysis(
+def retry_resume_analysis(
     application_id: int, 
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_hr),
@@ -2622,7 +2622,7 @@ async def retry_resume_analysis(
     }
 
 @router.post("/{application_id}/resend-interview-invitation")
-async def resend_interview_invitation(
+def resend_interview_invitation(
     application_id: int,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_hr),
@@ -2683,7 +2683,7 @@ async def resend_interview_invitation(
     }
 
 @router.put("/{application_id}/status")
-async def update_application_status(
+def update_application_status(
     application_id: int,
     status_update: ApplicationStatusUpdate,
     background_tasks: BackgroundTasks,
@@ -2874,7 +2874,7 @@ async def update_application_status(
 
 
 @router.delete("/{application_id}")
-async def delete_application(
+def delete_application(
     application_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_hr)
@@ -2920,7 +2920,7 @@ async def delete_application(
     return {"message": "Application deleted successfully"}
     
 @router.post("/bulk-delete")
-async def bulk_delete_applications(
+def bulk_delete_applications(
     application_ids: List[int],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_hr)
@@ -2987,7 +2987,7 @@ async def bulk_delete_applications(
     return {"message": f"Successfully deleted {len(apps)} applications"}
 
 @router.post("/{application_id}/merge/{target_id}")
-async def merge_applications(
+def merge_applications(
     application_id: int,
     target_id: int,
     current_user: User = Depends(get_current_hr),
@@ -3038,7 +3038,7 @@ async def merge_applications(
         
     return {"status": "success", "message": f"Application {application_id} merged into {target_id}"}
 @router.put("/{application_id}/notes", response_model=ApplicationResponse)
-async def update_hr_notes(
+def update_hr_notes(
     application_id: int,
     notes_update: ApplicationNotesUpdate,
     current_user: User = Depends(get_current_hr),

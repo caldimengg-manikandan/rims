@@ -192,6 +192,13 @@ export default function OnboardingPage() {
         return filteredCandidates.slice(start, start + pageSize)
     }, [filteredCandidates, currentPage, pageSize])
 
+    const [approvingCandidate, setApprovingCandidate] = useState<OnboardingCandidate | null>(null)
+    const [isApproveOpen, setIsApproveOpen] = useState(false)
+    const [isCaptureOpen, setIsCaptureOpen] = useState(false)
+    const [activeCaptureId, setActiveCaptureId] = useState<number | null>(null)
+    const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+    const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+
     if (user && user.role !== 'hr' && user.role !== 'super_admin') {
         return (
             <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
@@ -203,16 +210,10 @@ export default function OnboardingPage() {
         )
     }
 
-    const [approvingCandidate, setApprovingCandidate] = useState<OnboardingCandidate | null>(null)
-    const [isApproveOpen, setIsApproveOpen] = useState(false)
-    const [isCaptureOpen, setIsCaptureOpen] = useState(false)
-    const [activeCaptureId, setActiveCaptureId] = useState<number | null>(null)
-    const [previewHtml, setPreviewHtml] = useState<string | null>(null)
-    const [isPreviewOpen, setIsPreviewOpen] = useState(false)
-
     const handleApprove = async (candidate: OnboardingCandidate) => {
         try {
-            await APIClient.post(`/api/onboarding/applications/${candidate.id}/approve-offer`, {})
+            const joiningDate = candidate.joining_date ? candidate.joining_date.split('T')[0] : new Date().toISOString().split('T')[0]
+            await APIClient.post(`/api/onboarding/applications/${candidate.id}/send-offer?joining_date=${joiningDate}`, {})
             toast.success("Offer letter approved and sent to candidate")
             mutate(undefined, { revalidate: true })
             setIsApproveOpen(false)

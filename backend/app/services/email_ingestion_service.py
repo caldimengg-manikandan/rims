@@ -343,6 +343,7 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
         
         # ── Checkpoint-based IMAP search ──────────────────────────────────
         from app.infrastructure.database import SessionLocal
+        from app.core.timezone import get_ist_now
 
         since_date_str = None
         with SessionLocal() as local_db:
@@ -364,9 +365,9 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
                         since_date_str = last_sync_dt.strftime("%d-%b-%Y")
                         logger.info(f"📌 Global checkpoint found: last sync was {checkpoint_row.value} → SINCE {since_date_str}")
                     except Exception:
-                        since_date_str = datetime.utcnow().strftime("%d-%b-%Y")
+                        since_date_str = get_ist_now().strftime("%d-%b-%Y")
                 else:
-                    since_date_str = datetime.utcnow().strftime("%d-%b-%Y")
+                    since_date_str = get_ist_now().strftime("%d-%b-%Y")
                     logger.info(f"📌 No checkpoint found. Using today: {since_date_str}")
 
         # 1. Fetch UNSEEN emails
@@ -453,7 +454,7 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
                 
                 # Parse date with fallback
                 date_str = header_obj.get("Date")
-                received_at = datetime.utcnow()
+                received_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 if date_str:
                     try:
                         received_dt = parsedate_to_datetime(date_str)
@@ -682,7 +683,7 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
 
         # ── Save global checkpoint only if hr_id is None ────────────────
         if hr_id is None:
-            sync_now = datetime.utcnow().isoformat()
+            sync_now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             try:
                 with SessionLocal() as local_db:
                     from app.domain.models import GlobalSettings as GS
@@ -962,6 +963,7 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
                     local_db.commit()
                     continue
     
+                from app.core.timezone import get_ist_now
                 # Create application
                 new_app = Application(
                     job_id=job_record.id,
@@ -973,7 +975,7 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
                     resume_hash=resume_hash,
                     status='applied',
                     hr_notes="Ingested automatically from Email Recruiter Channel.",
-                    applied_at=datetime.utcnow(),
+                    applied_at=get_ist_now(),
                     resume_status='pending'
                 )
                 local_db.add(new_app)

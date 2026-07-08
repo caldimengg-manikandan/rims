@@ -682,18 +682,6 @@ export default function RepositoryPage() {
     const [deleteTarget, setDeleteTarget] = useState<QuestionSet | null>(null)
     const [deleting, setDeleting] = useState(false)
 
-    // Access guard
-    if (user && user.role !== 'hr' && user.role !== 'super_admin') {
-        return (
-            <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
-                <Database className="h-16 w-16 text-muted-foreground/20" />
-                <h2 className="text-2xl font-black">Access Denied</h2>
-                <p className="text-muted-foreground">This page is restricted to HR and Administrators.</p>
-                <Button onClick={() => router.push('/dashboard/hr')}>Return to Dashboard</Button>
-            </div>
-        )
-    }
-
     const fetchSets = useCallback(async () => {
         setLoading(true)
         try {
@@ -708,6 +696,34 @@ export default function RepositoryPage() {
     }, [])
 
     useEffect(() => { fetchSets() }, [fetchSets])
+
+    // Filtered view — computed before access guard so useMemo is unconditional
+    const filteredSets = sets.filter(s => {
+        const matchRound = filterRound === 'all' || s.round_type === filterRound
+        const q = search.toLowerCase()
+        const matchSearch = !q ||
+            s.title.toLowerCase().includes(q) ||
+            s.job_roles.some(r => r.toLowerCase().includes(q)) ||
+            s.topic_tags.some(t => t.toLowerCase().includes(q))
+        return matchRound && matchSearch
+    })
+
+    const paginatedSets = useMemo(() => {
+        const start = (currentPage - 1) * pageSize
+        return filteredSets.slice(start, start + pageSize)
+    }, [filteredSets, currentPage, pageSize])
+
+    // Access guard — placed AFTER all hooks to satisfy rules-of-hooks
+    if (user && user.role !== 'hr' && user.role !== 'super_admin') {
+        return (
+            <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
+                <Database className="h-16 w-16 text-muted-foreground/20" />
+                <h2 className="text-2xl font-black">Access Denied</h2>
+                <p className="text-muted-foreground">This page is restricted to HR and Administrators.</p>
+                <Button onClick={() => router.push('/dashboard/hr')}>Return to Dashboard</Button>
+            </div>
+        )
+    }
 
     const openCreate = () => {
         setEditTarget(null)
@@ -742,21 +758,6 @@ export default function RepositoryPage() {
         }
     }
 
-    // Filtered view
-    const filteredSets = sets.filter(s => {
-        const matchRound = filterRound === 'all' || s.round_type === filterRound
-        const q = search.toLowerCase()
-        const matchSearch = !q ||
-            s.title.toLowerCase().includes(q) ||
-            s.job_roles.some(r => r.toLowerCase().includes(q)) ||
-            s.topic_tags.some(t => t.toLowerCase().includes(q))
-        return matchRound && matchSearch
-    })
-
-    const paginatedSets = useMemo(() => {
-        const start = (currentPage - 1) * pageSize
-        return filteredSets.slice(start, start + pageSize)
-    }, [filteredSets, currentPage, pageSize])
 
     const totalPages = Math.ceil(filteredSets.length / pageSize)
 

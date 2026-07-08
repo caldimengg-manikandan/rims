@@ -61,7 +61,7 @@ class CandidateService:
             stage = ApplicationStage(
                 application_id=application_id,
                 stage_name=stage_name,
-                started_at=datetime.utcnow()
+                started_at=get_ist_now()
             )
             self.db.add(stage)
 
@@ -74,7 +74,7 @@ class CandidateService:
             stage.evaluator_id = evaluator_id
         
         if status in ['pass', 'fail', 'hold']:
-            stage.completed_at = datetime.utcnow()
+            stage.completed_at = get_ist_now()
         
         # Trigger composite score update if scores changed
         self.update_composite_score(application_id)

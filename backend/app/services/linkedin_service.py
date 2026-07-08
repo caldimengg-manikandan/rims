@@ -75,7 +75,7 @@ def get_active_linkedin_token(db: Session) -> str:
     if expires_at_str:
         try:
             expires_at = datetime.fromisoformat(expires_at_str)
-            now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.utcnow()
+            now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
             if expires_at < now + timedelta(days=7):
                 should_refresh = True
         except Exception as e:
@@ -106,7 +106,7 @@ def get_active_linkedin_token(db: Session) -> str:
                     
                     if new_access_token:
                         access_token = new_access_token
-                        now = datetime.utcnow()
+                        now = datetime.now(timezone.utc).replace(tzinfo=None)
                         token_expiry = (now + timedelta(seconds=expires_in)).isoformat()
                         
                         def update_or_create(k, v):

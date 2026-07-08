@@ -40,22 +40,7 @@ export default function SettingsPage() {
         seo_description_default: ''
     })
 
-    if (user && user.role !== 'super_admin') {
-        return (
-            <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
-                <ShieldAlert className="h-16 w-16 text-destructive opacity-20" />
-                <h2 className="text-2xl font-black">Access Denied</h2>
-                <p className="text-muted-foreground">This page is restricted to Super Administrators only.</p>
-                <Button onClick={() => router.push('/dashboard/hr')}>Return to Dashboard</Button>
-            </div>
-        )
-    }
-
-    useEffect(() => {
-        fetchSettings()
-    }, [])
-
-    const fetchSettings = async () => {
+    const fetchSettings = React.useCallback(async () => {
         setLoading(true)
         try {
             const data = await APIClient.get('/api/settings/sensitive') as any
@@ -83,8 +68,25 @@ export default function SettingsPage() {
         } finally {
             setLoading(false)
         }
+    }, [])
+
+    useEffect(() => {
+        fetchSettings()
+    }, [fetchSettings])
+
+    if (user && user.role !== 'super_admin') {
+        return (
+            <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
+                <ShieldAlert className="h-16 w-16 text-destructive opacity-20" />
+                <h2 className="text-2xl font-black">Access Denied</h2>
+                <p className="text-muted-foreground">This page is restricted to Super Administrators only.</p>
+                <Button onClick={() => router.push('/dashboard/hr')}>Return to Dashboard</Button>
+            </div>
+        )
     }
+
     const handleSave = async () => {
+
         if (!settings.company_name.trim() || !settings.hr_name.trim() || !settings.hr_email.trim() || !settings.hr_phone.trim() || !settings.company_address.trim()) {
             toast.error("Please fill in all required fields (Company Name, Address, HR Name, Email, Phone)");
             return;

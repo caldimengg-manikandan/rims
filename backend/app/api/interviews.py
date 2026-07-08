@@ -1,12 +1,13 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, BackgroundTasks, Body
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.orm import Session, joinedload, load_only
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone, timedelta
 import json
 import os
+import asyncio
 import logging
 import traceback
 import tempfile
@@ -212,7 +213,7 @@ from app.services.job_queue import ai_jobs, create_job
 
 @router.post("/access")
 @limiter.limit("15/minute")
-async def access_interview(
+def access_interview(
     request: Request,
     data: InterviewAccess,
     background_tasks: BackgroundTasks,
@@ -233,24 +234,26 @@ async def access_interview(
         email_clean = data.email.lower().strip()
         
         # Inner join with Application since we filter by email
-        interviews = db.query(Interview).join(Interview.application).filter(
-            Application.candidate_email == email_clean
-        ).options(
-            joinedload(Interview.application).load_only(
-                Application.id, 
-                Application.candidate_email, 
-                Application.candidate_name, 
-                Application.job_id
-            ),
-            load_only(
-                Interview.id, 
-                Interview.access_key_hash, 
-                Interview.is_used, 
-                Interview.status, 
-                Interview.used_at, 
-                Interview.expires_at
+        interviews = db.execute(
+            select(Interview).join(Interview.application).where(
+                Application.candidate_email == email_clean
+            ).options(
+                joinedload(Interview.application).load_only(
+                    Application.id, 
+                    Application.candidate_email, 
+                    Application.candidate_name, 
+                    Application.job_id
+                ),
+                load_only(
+                    Interview.id, 
+                    Interview.access_key_hash, 
+                    Interview.is_used, 
+                    Interview.status, 
+                    Interview.used_at, 
+                    Interview.expires_at
+                )
             )
-        ).all()
+        ).scalars().all()
         
         if not interviews:
             logger.warning(f"Access attempt failed: No interview found for email {email_clean}")
@@ -280,30 +283,30 @@ async def access_interview(
         # "FOR UPDATE cannot be applied to the nullable side of an outer join"
         
         # Query 1: Lock only the interviews table row
-        db.query(Interview).filter(
-            Interview.id == matched_interview.id
-        ).with_for_update().first()
+        db.execute(
+            select(Interview).where(Interview.id == matched_interview.id).with_for_update()
+        ).scalar_one_or_none()
         
         # Query 2: Fetch the full object graph with relationships (no lock needed here)
-        interview = db.query(Interview).options(
-            joinedload(Interview.application).options(
-                joinedload(Application.job),
+        interview = db.execute(
+            select(Interview).options(
+                joinedload(Interview.application).options(
+                    joinedload(Application.job),
+                    load_only(
+                        Application.id, 
+                        Application.candidate_email, 
+                        Application.candidate_name, 
+                        Application.job_id
+                    )
+                ),
                 load_only(
-                    Application.id, 
-                    Application.candidate_email, 
-                    Application.candidate_name, 
-                    Application.job_id
+                    Interview.id, Interview.application_id, Interview.status, 
+                    Interview.is_used, Interview.used_at, Interview.expires_at,
+                    Interview.started_at, Interview.duration_minutes, Interview.interview_stage,
+                    Interview.locked_skill
                 )
-            ),
-            load_only(
-                Interview.id, Interview.application_id, Interview.status, 
-                Interview.is_used, Interview.used_at, Interview.expires_at,
-                Interview.started_at, Interview.duration_minutes, Interview.interview_stage,
-                Interview.locked_skill
-            )
-        ).filter(
-            Interview.id == matched_interview.id
-        ).first()
+            ).where(Interview.id == matched_interview.id)
+        ).scalar_one_or_none()
         
         if not interview:
             raise HTTPException(
@@ -552,7 +555,7 @@ async def access_interview(
 
 
 @router.get("/jobs/{job_id}")
-async def check_job_status(job_id: str):
+def check_job_status(job_id: str):
     """Polling endpoint for async AI generation tasks"""
     from app.services.job_queue import get_job
     job = get_job(job_id)
@@ -565,7 +568,7 @@ async def check_job_status(job_id: str):
 
 
 @router.post("/{interview_id}/generate-test-token")
-async def generate_test_token(
+def generate_test_token(
     request: Request,
     interview_id: int,
     interview_requester: User = Depends(get_current_hr),
@@ -609,7 +612,7 @@ async def generate_test_token(
 
 @router.post("/{interview_id}/start")
 @limiter.limit("20/minute")
-async def start_interview_session(
+def start_interview_session(
     request: Request,
     interview_id: int,
     data: InterviewStart,
@@ -703,7 +706,7 @@ async def start_interview_session(
 
 @router.get("/{interview_id}/stage")
 @limiter.limit("20/minute")
-async def get_interview_stage(
+def get_interview_stage(
     request: Request,
     interview_id: int,
     interview_session: Interview = Depends(get_current_interview_any_status),
@@ -795,7 +798,7 @@ async def get_interview_stage(
 
 @router.get("/{interview_id}/questions")
 @limiter.limit("20/minute")
-async def get_all_questions(
+def get_all_questions(
     request: Request,
     interview_id: int,
     interview_session: Interview = Depends(get_current_interview_any_status),
@@ -866,7 +869,7 @@ async def get_all_questions(
 
 @router.get("/{interview_id}/current-question", response_model=InterviewQuestionResponse)
 @limiter.limit("20/minute")
-async def get_current_question(
+def get_current_question(
     request: Request,
     interview_id: int,
     interview_session: Interview = Depends(get_current_interview_any_status),
@@ -937,7 +940,7 @@ async def get_current_question(
 
 @router.post("/{interview_id}/submit-answer")
 @limiter.limit("60/minute")
-async def submit_answer(
+def submit_answer(
     request: Request,
     interview_id: int,
     data: InterviewAnswerSubmit,
@@ -1320,7 +1323,7 @@ async def submit_answer(
 
 @router.post("/{interview_id}/complete-aptitude")
 @limiter.limit("20/minute")
-async def complete_aptitude(
+def complete_aptitude(
     request: Request,
     interview_id: int,
     interview_session: Interview = Depends(get_current_interview),
@@ -1495,7 +1498,7 @@ async def complete_aptitude(
 
 
 @router.post("/{interview_id}/fail-device-test")
-async def fail_device_test(
+def fail_device_test(
     interview_id: int,
     background_tasks: BackgroundTasks,
     data: dict = Body(...),
@@ -1567,7 +1570,7 @@ async def fail_device_test(
 
 @router.post("/{interview_id}/security-violation")
 @limiter.limit("20/minute")
-async def report_security_violation(
+def report_security_violation(
     request: Request,
     interview_id: int,
     background_tasks: BackgroundTasks,
@@ -1674,7 +1677,7 @@ async def report_security_violation(
 
 @router.post("/{interview_id}/end")
 @limiter.limit("20/minute")
-async def end_interview(
+def end_interview(
     request: Request,
     interview_id: int,
     background_tasks: BackgroundTasks,
@@ -1831,7 +1834,7 @@ async def end_interview(
 
 @router.post("/{interview_id}/abandon")
 @limiter.limit("20/minute")
-async def abandon_interview(
+def abandon_interview(
     request: Request,
     interview_id: int,
     background_tasks: BackgroundTasks,
@@ -1942,7 +1945,7 @@ async def get_interview_report(
     db: Session = Depends(get_db)
 ):
     """Get interview report (HR only)"""
-    interview = db.query(Interview).filter(Interview.id == interview_id).first()
+    interview = await asyncio.to_thread(lambda: db.query(Interview).filter(Interview.id == interview_id).first())
     
     if not interview:
         raise HTTPException(
@@ -1951,9 +1954,9 @@ async def get_interview_report(
         )
     validate_hr_ownership_for_interview(interview, current_user, resource_name="interview")
     
-    report = db.query(InterviewReport).filter(
+    report = await asyncio.to_thread(lambda: db.query(InterviewReport).filter(
         InterviewReport.interview_id == interview_id
-    ).first()
+    ).first())
     
     # Task: On-the-fly report generation fallback
     if not report and interview.status in ["completed", "terminated"]:
@@ -1977,7 +1980,7 @@ async def get_interview_report(
     return report_dict
 
 @router.get("/{interview_id}/video-stream")
-async def get_video_stream(
+def get_video_stream(
     interview_id: int,
     request: Request,
     current_user: User = Depends(get_current_hr),
@@ -2132,7 +2135,7 @@ EVENT_WEIGHTS = {
 
 @router.post("/{interview_id}/monitoring-events", response_model=MonitoringEventResponse)
 @limiter.limit("40/minute")
-async def create_monitoring_event(
+def create_monitoring_event(
     request: Request,
     interview_id: int,
     event_data: MonitoringEventCreate,
@@ -2464,15 +2467,18 @@ async def create_monitoring_event(
                         exp_ts = raw_payload.get("exp")
                         if jti_to_revoke:
                             # Upsert: avoid duplicate-key on repeated 4th strike hits
-                            existing_revoked = db.query(RevokedToken).filter(
-                                RevokedToken.jti == jti_to_revoke
-                            ).first()
+                            existing_revoked = db.execute(
+                                select(RevokedToken).where(RevokedToken.jti == jti_to_revoke)
+                            ).scalar_one_or_none()
                             if not existing_revoked:
-                                from datetime import datetime as _dt
+                                # Note: expires_at is Column(DateTime) which is naive in the DB schema.
+                                # We store it as a naive UTC timestamp to prevent database/SQLAlchemy warnings.
+                                # This is metadata only; no reads or comparisons of this field exist in Python.
+                                from datetime import datetime as _dt, timezone as _tz
                                 expires_at = (
-                                    _dt.utcfromtimestamp(exp_ts)
+                                    _dt.fromtimestamp(exp_ts, tz=_tz.utc).replace(tzinfo=None)
                                     if exp_ts
-                                    else get_ist_now() + timedelta(hours=4)
+                                    else _dt.now(_tz.utc).replace(tzinfo=None) + timedelta(hours=4)
                                 )
                                 db.add(RevokedToken(
                                     jti=jti_to_revoke,
@@ -2632,7 +2638,7 @@ async def create_monitoring_event(
 
 @router.post("/{interview_id}/monitoring-events/{event_id}/flag-false-positive", response_model=MonitoringEventResponse)
 @limiter.limit("20/minute")
-async def flag_false_positive(
+def flag_false_positive(
     request: Request,
     interview_id: int,
     event_id: int,
@@ -2719,7 +2725,7 @@ async def flag_false_positive(
 
 
 @router.get("/{interview_id}/monitoring-events", response_model=List[MonitoringEventResponse])
-async def get_monitoring_events(
+def get_monitoring_events(
     interview_id: int,
     current_user: User = Depends(get_current_hr),
     db: Session = Depends(get_db)

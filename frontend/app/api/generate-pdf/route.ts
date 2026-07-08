@@ -8,14 +8,15 @@ const MAX_CONCURRENT_GENERATIONS = 3;
 const MAX_PAYLOAD_SIZE = 5 * 1024 * 1024; // 5MB limit
 
 export async function POST(req: NextRequest) {
-  // Security check: Validate Authorization header matches JWT_SECRET or PDF_GENERATION_SECRET
+  // Security check: Validate Authorization header against PDF_GENERATION_SECRET only.
+  // JWT_SECRET must NOT be used as a fallback — doing so would expose the app's primary signing key.
   const authHeader = req.headers.get("authorization")
-  const pdfSecret = process.env.PDF_GENERATION_SECRET || process.env.JWT_SECRET
+  const pdfSecret = process.env.PDF_GENERATION_SECRET
 
-  // Always require a valid secret. Fail closed if the server is misconfigured.
+  // Always require PDF_GENERATION_SECRET explicitly. Fail closed if missing.
   if (!pdfSecret) {
-    console.error("CRITICAL: PDF_GENERATION_SECRET and JWT_SECRET are both unset. Rejecting PDF request.");
-    return NextResponse.json({ error: "Server configuration error" }, { status: 500 })
+    console.error("CRITICAL: PDF_GENERATION_SECRET is not set. Set it in your environment variables to enable PDF generation.");
+    return NextResponse.json({ error: "Server configuration error: PDF_GENERATION_SECRET is not configured" }, { status: 500 })
   }
 
   if (!authHeader || !authHeader.startsWith("Bearer ") || authHeader.substring(7) !== pdfSecret) {

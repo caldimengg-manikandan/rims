@@ -206,12 +206,10 @@ async def generate_pdf_via_puppeteer(html_content: str, filename: str, bucket: s
                 logger.info(f"Uploaded fallback ReportLab PDF to Supabase. Path: {result_url}")
                 return result_url
             
-            mock_url = f"https://mock-storage.local/{bucket}/{storage_path}"
-            logger.warning(f"Fallback upload failed. Returning mock URL: {mock_url}")
-            return mock_url
+            raise Exception("Fallback PDF upload to Supabase failed.")
         except Exception as fallback_err:
             logger.error(f"ReportLab fallback PDF generation/upload failed: {str(fallback_err)}")
-            return f"https://mock-storage.local/{bucket}/onboarding/{filename}"
+            raise RuntimeError(f"PDF generation and upload failed: {str(e)}. Fallback error: {str(fallback_err)}")
 
 @router.get("/applications/{application_id}/offer-preview")
 async def get_hr_offer_preview(
@@ -906,6 +904,7 @@ def download_id_card(
     if not application or not application.id_card_url:
         raise HTTPException(status_code=404, detail="ID Card not found")
         
+    check_hr_permission(current_user, application, db)
     signed_url = get_signed_url(settings.supabase_bucket_id_cards, application.id_card_url)
     if not signed_url:
         raise HTTPException(status_code=500, detail="Failed to generate download link")
@@ -919,6 +918,9 @@ from app.core.rate_limiter import limiter
 async def respond_to_offer(request: Request, response_req: OfferResponseRequest, db: Session = Depends(get_db)):
     """Public response with Row Locking & Short ID support (Point 1, 2, 6)."""
     
+    if response_req.response_type not in ("accept", "reject"):
+        raise HTTPException(status_code=400, detail="Invalid response type. Must be 'accept' or 'reject'.")
+
     # Use offer_token (UUID) lookup with ROW LOCKING
     from app.domain.models import Offer
     application = db.query(Application).join(Offer).filter(Offer.offer_token == response_req.token).with_for_update().first()
@@ -1072,7 +1074,7 @@ def check_candidate_arrivals(db: Session = Depends(get_db), current_admin: User 
     (System/Admin) Auto-transition candidates to 'onboarded' if joining date is today.
     Task 2 Requirement.
     """
-    from app.services.state_machine import CandidateState
+    from app.services.state_machine import CandidateState, CandidateStateMachine, TransitionAction
     today = get_ist_now().date()
     
     # Range check for the whole day
@@ -1082,30 +1084,34 @@ def check_candidate_arrivals(db: Session = Depends(get_db), current_admin: User 
     # Find candidates who accepted offer and join today
     from app.domain.models import Onboarding
     candidates = db.query(Application).join(Onboarding).filter(
-        Application.status == "accepted",
+        Application.status == CandidateState.OFFER_ACCEPTED.value,
         Onboarding.joining_date >= start_of_day,
         Onboarding.joining_date <= end_of_day
     ).all()
     
+    fsm = CandidateStateMachine(db)
     onboarded_count = 0
     for app in candidates:
-        app.status = "onboarded"
-        app.onboarded_at = get_ist_now()
-        
-        log_audit(db, "SYSTEM_AUTO_ONBOARD", app.id, None, {"reason": "Joining date reached"}, is_critical=True)
-        
-        # Notify HR
-        if app.hr_id:
-             from app.core.websocket import trigger_realtime_notification
-             trigger_realtime_notification(
-                 db=db,
-                 user_id=app.hr_id,
-                 notification_type="CANDIDATE_ARRIVED",
-                 title="Candidate Joined",
-                 message_content=f"{app.candidate_name} has joined today. Capture photo and generate ID card.",
-                 related_application_id=app.id
-             )
-        onboarded_count += 1
+        try:
+            fsm.transition(app, TransitionAction.SYSTEM_ONBOARD)
+            app.onboarded_at = get_ist_now()
+            
+            log_audit(db, "SYSTEM_AUTO_ONBOARD", app.id, None, {"reason": "Joining date reached"}, is_critical=True)
+            
+            # Notify HR
+            if app.hr_id:
+                 from app.core.websocket import trigger_realtime_notification
+                 trigger_realtime_notification(
+                     db=db,
+                     user_id=app.hr_id,
+                     notification_type="CANDIDATE_ARRIVED",
+                     title="Candidate Joined",
+                     message_content=f"{app.candidate_name} has joined today. Capture photo and generate ID card.",
+                     related_application_id=app.id
+                 )
+            onboarded_count += 1
+        except Exception as e:
+            logger.error(f"Failed to auto-onboard application {app.id}: {e}")
         
     db.commit()
     return {"status": "success", "onboarded_count": onboarded_count}
