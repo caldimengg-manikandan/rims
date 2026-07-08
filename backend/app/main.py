@@ -499,7 +499,7 @@ def health_check():
             try:
                 expires_record = db.query(GlobalSettings).filter(GlobalSettings.key == "linkedin_token_expires_at").first()
                 if expires_record and expires_record.value:
-                    from datetime import timezone, timedelta
+                    from datetime import timedelta
                     expires_at = datetime.fromisoformat(expires_record.value)
                     now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
                     if expires_at < now + timedelta(days=7):
