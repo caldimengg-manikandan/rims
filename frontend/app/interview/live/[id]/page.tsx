@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import InterviewSession from '@/modules/interview/InterviewSession';
 
 export default function LiveInterviewPage() {
@@ -26,7 +27,7 @@ export default function LiveInterviewPage() {
                 ) : (
                     <p className="text-center text-muted-foreground mt-12">
                         Missing interview token. Open this page from your interview link, complete access on{' '}
-                        <a href="/interview/access" className="text-primary underline">/interview/access</a>
+                        <Link href="/interview/access" className="text-primary underline">/interview/access</Link>
                         , or add <code className="text-xs">?token=…</code> for testing.
                     </p>
                 )}

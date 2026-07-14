@@ -1586,6 +1586,37 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   // isStarted is the only meaningful dependency here.
   }, [isStarted]);
 
+  // Intercept browser back/forward navigation and window close/refresh during active interview
+  useEffect(() => {
+    if (!isStarted || isFinished || isTerminated) return;
+
+    // Push an extra history state to lock the back button
+    window.history.pushState(null, '', window.location.href);
+
+    const handlePopState = () => {
+      // Re-push the state to prevent navigation back/forward in browser history
+      window.history.pushState(null, '', window.location.href);
+      toast.warning(
+        'Browser back/forward navigation is disabled during the active interview. Please complete or exit the session via the provided on-screen buttons.',
+        { duration: 5000 }
+      );
+    };
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'Are you sure you want to leave? Your active interview session progress will be lost and may result in auto-termination.';
+      return e.returnValue;
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isStarted, isFinished, isTerminated]);
+
   // ── PRE-START TRACKING (Device Check Page) ──
   // Continuously verify framing before the interview begins.
   useEffect(() => {

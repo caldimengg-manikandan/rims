@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
+import Link from 'next/link';
 const InterviewSession = dynamic(
     () => import('@/modules/interview/InterviewSession'),
     { ssr: false }
@@ -30,7 +31,7 @@ export default function CandidateInterviewPage() {
                 ) : (
                     <p className="text-center text-muted-foreground mt-12">
                         Missing interview token. Open this page from your interview link, complete access on{' '}
-                        <a href="/interview/access" className="text-primary underline">/interview/access</a>
+                        <Link href="/interview/access" className="text-primary underline">/interview/access</Link>
                         , or add <code className="text-xs">?token=…</code> for testing.
                     </p>
                 )}

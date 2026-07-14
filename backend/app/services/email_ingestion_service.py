@@ -279,38 +279,38 @@ def _is_job_related_email(sender: str, subject: str, allowed_jobs: list = None) 
             logger.debug(f"🚫 Skipping non-job email — automated subject prefix '{prefix}': {subject!r}")
             return False
 
-    # 3. Match against allowed jobs
+    # 3. Match against allowed jobs (must match BOTH Job ID and Job Title)
     if allowed_jobs:
-        # Pattern A: Match Job Code (e.g. JOB-XXXXXX)
-        subject_norm = _normalize_job_code(subject_upper)
-        for job_db_id, job_id, title in allowed_jobs:
-            code = (job_id or "").upper().strip()
-            norm_code = _normalize_job_code(code)
-            if norm_code and norm_code in subject_norm:
-                logger.info(f"✅ Email subject matched job '{code}' ('{title}') via Job Code.")
-                return True
-
-        # Pattern B: Match numeric Job ID with word boundaries
-        numeric_id_match = re.search(r'\bjob\s*(?:id|code)?\s*[:\-\#]?\s*(\d+)\b', subject_lower)
-        if numeric_id_match:
-            extracted_id = int(numeric_id_match.group(1).strip())
-            for job_db_id, job_id, title in allowed_jobs:
-                if job_db_id == extracted_id:
-                    logger.info(f"✅ Email subject matched job ID {job_db_id} ('{title}') via numeric Job ID.")
-                    return True
-
-        # Pattern C: Match Job Title with 80% word intersection threshold
         subject_words = set(subject_lower.split())
+        subject_norm = _normalize_job_code(subject_upper)
+        numeric_id_match = re.search(r'\bjob\s*(?:id|code)?\s*[:\-\#]?\s*(\d+)\b', subject_lower)
+        extracted_db_id = int(numeric_id_match.group(1).strip()) if numeric_id_match else None
+
         for job_db_id, job_id, title in allowed_jobs:
+            # A. Check Job Title match (80% word intersection threshold)
             job_title_words = set((title or "").lower().split())
+            title_matched = False
             if len(job_title_words) > 0:
                 match_count = len(job_title_words & subject_words)
                 match_percentage = match_count / len(job_title_words)
                 if match_percentage >= 0.8:
-                    logger.info(f"✅ Email subject matched Job Title '{title}' ({match_percentage:.0%} match).")
-                    return True
+                    title_matched = True
 
-    logger.debug(f"🚫 Skipping email — does not match any open job by Code, ID, or Title in subject line: {subject!r}")
+            # B. Check Job ID / Code match
+            id_matched = False
+            code = (job_id or "").upper().strip()
+            norm_code = _normalize_job_code(code)
+            if norm_code and norm_code in subject_norm:
+                id_matched = True
+            elif extracted_db_id is not None and job_db_id == extracted_db_id:
+                id_matched = True
+
+            # Must satisfy both conditions
+            if title_matched and id_matched:
+                logger.info(f"✅ Email subject matched both Job ID '{job_id}' (db_id={job_db_id}) and Job Title '{title}'.")
+                return True
+
+    logger.debug(f"🚫 Skipping email — does not match both Job ID and Job Title in subject line: {subject!r}")
     return False
 
 def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id: int = None):
@@ -785,50 +785,40 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
                     continue
                 
                 # Map to target Job
-                target_job_data = None
                 subject_str = resume.subject or ""
                 body_str = resume.email_body or ""
+                subject_lower = subject_str.lower()
+                subject_upper = subject_str.upper()
+                subject_words = set(subject_lower.split())
+                subject_norm = _normalize_job_code(subject_upper)
                 
-                # Pattern A: Match Job Code ONLY in subject line (not body).
-                job_codes = re.findall(r'JOB-[A-Z0-9]{4,10}', subject_str, re.IGNORECASE)
-                if job_codes:
-                    for code in job_codes:
-                        norm_extracted_code = _normalize_job_code(code)
-                        for job in open_jobs_data:
-                            if job["job_id"] and _normalize_job_code(job["job_id"]) == norm_extracted_code:
-                                target_job_data = job
-                                break
-                        if target_job_data:
-                            logger.info(f"Successfully mapped emailed resume {resume.id} to Job Code {job['job_id']}")
-                            if len(job_codes) > 1:
-                                logger.info(f"Alternative job codes found in subject: {[c for c in job_codes if _normalize_job_code(c) != norm_extracted_code]}")
-                            break
-                
-                # Pattern B: Match numeric Job ID with word boundaries in subject line only
-                if not target_job_data:
-                    subject_lower = subject_str.lower()
-                    numeric_id_match = re.search(r'\bjob\s*(?:id|code)?\s*[:\-\#]?\s*(\d+)\b', subject_lower)
-                    if numeric_id_match:
-                        extracted_id = int(numeric_id_match.group(1).strip())
-                        for job in open_jobs_data:
-                            if job["id"] == extracted_id:
-                                target_job_data = job
-                                break
-                        if target_job_data:
-                            logger.info(f"Mapped resume {resume.id} to Job ID {extracted_id}")
-                
-                # Pattern C: Job title matching with 80% threshold in subject line only
-                if not target_job_data:
-                    subject_words = set(subject_str.lower().split())
-                    for job in open_jobs_data:
-                        job_title_words = set(job["title"].lower().split())
-                        if len(job_title_words) > 0:
-                            match_count = len(job_title_words & subject_words)
-                            match_percentage = match_count / len(job_title_words)
-                            if match_percentage >= 0.8:
-                                target_job_data = job
-                                logger.info(f"Mapped resume {resume.id} to Job Title '{job['title']}' ({match_percentage:.0%} match in subject)")
-                                break
+                numeric_id_match = re.search(r'\bjob\s*(?:id|code)?\s*[:\-\#]?\s*(\d+)\b', subject_lower)
+                extracted_db_id = int(numeric_id_match.group(1).strip()) if numeric_id_match else None
+
+                # Enforce that a job is matched only if both ID/Code and Title match
+                for job in open_jobs_data:
+                    # 1. Check Job Title match (80% threshold)
+                    job_title_words = set((job["title"] or "").lower().split())
+                    title_matched = False
+                    if len(job_title_words) > 0:
+                        match_count = len(job_title_words & subject_words)
+                        match_percentage = match_count / len(job_title_words)
+                        if match_percentage >= 0.8:
+                            title_matched = True
+
+                    # 2. Check Job ID / Code match
+                    id_matched = False
+                    code = (job["job_id"] or "").upper().strip()
+                    norm_code = _normalize_job_code(code)
+                    if norm_code and norm_code in subject_norm:
+                        id_matched = True
+                    elif extracted_db_id is not None and job["id"] == extracted_db_id:
+                        id_matched = True
+
+                    if title_matched and id_matched:
+                        target_job_data = job
+                        logger.info(f"Mapped resume {resume.id} to job '{job['job_id']}' ('{job['title']}') because BOTH matched.")
+                        break
     
                 if not target_job_data:
                     logger.warning(f"Could not map resume {resume.id} from {resume.sender_email} to any open job.")
