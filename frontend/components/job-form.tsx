@@ -23,6 +23,7 @@ import {
 import { APIClient } from '@/app/dashboard/lib/api-client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useNavigationGuard } from '@/hooks/use-navigation-guard'
 import { Sparkles, UploadCloud, Loader2, FileText, X, PlusCircle, ArrowLeft, CheckCircle2, BookOpen } from 'lucide-react'
 import { getApiBaseUrl } from '@/lib/config'
 import { toast } from 'sonner'
@@ -233,17 +234,31 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
     }, [initialData])
 
     // Warning for unsaved changes (H020)
-    useEffect(() => {
-        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-            const hasData = formData.title || formData.description || formData.location;
-            if (isSubmitting || !hasData) return;
-            e.preventDefault();
-            e.returnValue = '';
-        };
+    const isFormModified = () => {
+        if (mode === 'create') {
+            return !!(formData.title || formData.description || formData.location);
+        }
+        if (!initialData) return false;
+        return (
+            formData.title !== (initialData.title || '') ||
+            formData.description !== (initialData.description || '') ||
+            formData.location !== (initialData.location || '') ||
+            formData.experience_level !== (initialData.experience_level || 'junior') ||
+            formData.mode_of_work !== (initialData.mode_of_work || 'Remote') ||
+            formData.job_type !== (initialData.job_type || 'Full-Time') ||
+            formData.domain !== (initialData.domain || 'Engineering') ||
+            formData.aptitude_enabled !== (initialData.aptitude_enabled || false) ||
+            formData.first_level_enabled !== (initialData.first_level_enabled ?? true)
+        );
+    };
+    const isDirty = isFormModified() && !isSubmitting;
 
-        window.addEventListener('beforeunload', handleBeforeUnload);
-        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, [isSubmitting, formData]);
+    useNavigationGuard(isDirty, {
+        title: 'Unsaved Job Changes',
+        description: 'You have unsaved changes in your job form. If you leave, your changes will be lost.',
+        confirmLabel: 'Leave',
+        cancelLabel: 'Stay'
+    });
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {

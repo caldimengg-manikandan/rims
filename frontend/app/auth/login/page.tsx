@@ -205,7 +205,7 @@ function LoginContent() {
             </div>
           </motion.div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} noValidate className="space-y-5">
             <AnimatePresence>
               {error && (
                 <motion.div
@@ -267,7 +267,10 @@ function LoginContent() {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    setShowPassword(!showPassword)
+                  }}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-primary transition-colors focus:outline-none z-10"
                 >
                   {showPassword ? (

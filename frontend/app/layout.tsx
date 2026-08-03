@@ -65,11 +65,10 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
-      <head>
-        <script src="/calrims/js/chunk-error-handler.js" defer nonce={nonce} />
-      </head>
+      <head />
       <body className="app-shell font-sans" suppressHydrationWarning style={{ margin: 0, padding: 0 }}>
-        <style nonce={nonce} dangerouslySetInnerHTML={{ __html: `
+        <script src="/calrims/js/chunk-error-handler.js" defer nonce={nonce} suppressHydrationWarning />
+        <style nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: `
           :root {
             --primary: ${safeThemeColor} !important;
             --ring: ${safeThemeColor} !important;

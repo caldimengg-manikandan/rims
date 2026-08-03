@@ -7,7 +7,10 @@
     "dev": "npx --yes kill-port 3000 && next dev -p 3000 --webpack",
     "lint": "eslint .",
     "start": "next start",
-    "postinstall": "node patch-lightswind.js"
+    "postinstall": "node patch-lightswind.js",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run --headless",
+    "cypress:run:e2e": "cypress run --headless --spec 'cypress/e2e/**/*.cy.ts'"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -97,6 +100,7 @@
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
     "baseline-browser-mapping": "^2.10.10",
+    "cypress": "^15.18.1",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.35",
     "tailwindcss": "^4.0.0",
@@ -104,3 +108,47 @@
     "typescript": "^5"
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

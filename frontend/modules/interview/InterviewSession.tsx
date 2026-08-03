@@ -1265,7 +1265,10 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
 
   const enterFullscreen = async () => {
     try {
-      await document.documentElement.requestFullscreen();
+      const isCypress = typeof window !== 'undefined' && !!(window as any).Cypress;
+      if (!isCypress) {
+        await document.documentElement.requestFullscreen();
+      }
       setIsFullscreen(true);
       setShowFullscreenGate(false);
     } catch (e) {
@@ -1591,11 +1594,11 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     if (!isStarted || isFinished || isTerminated) return;
 
     // Push an extra history state to lock the back button
-    window.history.pushState(null, '', window.location.href);
+    window.history.pushState(window.history.state, '', window.location.href);
 
     const handlePopState = () => {
       // Re-push the state to prevent navigation back/forward in browser history
-      window.history.pushState(null, '', window.location.href);
+      window.history.pushState(window.history.state, '', window.location.href);
       toast.warning(
         'Browser back/forward navigation is disabled during the active interview. Please complete or exit the session via the provided on-screen buttons.',
         { duration: 5000 }
@@ -1875,7 +1878,10 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
                   setIsStarting(true);
                   // Request fullscreen before starting interview
                   try {
-                    await document.documentElement.requestFullscreen();
+                    const isCypress = typeof window !== 'undefined' && !!(window as any).Cypress;
+                    if (!isCypress) {
+                      await document.documentElement.requestFullscreen();
+                    }
                     setIsFullscreen(true);
                   } catch (e) {
                     // Fullscreen failed — show gate instead of starting

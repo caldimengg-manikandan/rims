@@ -333,6 +333,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     fetchCurrentUser()
   }, [fetchCurrentUser])
 
+  // Expose a data-hydrated attribute to signal to Cypress E2E tests that React has hydrated and bound events
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !isLoading) {
+      document.body.setAttribute('data-hydrated', 'true')
+    }
+  }, [isLoading])
+
   const value = useMemo<AuthContextType>(() => ({
     user,
     token,
