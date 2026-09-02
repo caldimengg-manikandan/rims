@@ -56,7 +56,8 @@ def trigger_realtime_notification(
     title: str,
     message_content: str,
     related_application_id: int = None,
-    related_interview_id: int = None
+    related_interview_id: int = None,
+    tenant_id=None,   # UUID | None — stamped for RLS isolation
 ) -> Notification:
     """
     Creates a Notification in the database and dispatches a background task 
@@ -71,6 +72,7 @@ def trigger_realtime_notification(
         is_read=False,
         related_application_id=related_application_id,
         related_interview_id=related_interview_id,
+        tenant_id=tenant_id,
         created_at=get_ist_now()
     )
     db.add(notification)

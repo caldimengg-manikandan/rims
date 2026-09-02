@@ -27,7 +27,8 @@ from app.domain.schemas import (
     BulkDeleteEmailsRequest,
 )
 from app.core.auth import get_current_hr, get_current_admin
-from app.core.ownership import validate_hr_ownership
+from app.core.ownership import validate_hr_ownership, get_tenant_context, get_optional_tenant_context
+from app.core.tenant_context import TenantContext
 from app.services.ai_service import parse_resume_with_ai, extract_basic_candidate_info
 from app.services.email_service import send_application_received_email, send_rejected_email, send_approved_for_interview_email
 from passlib.context import CryptContext
@@ -585,6 +586,10 @@ async def apply_for_job(
     new_application = Application(
         job_id=job_id,
         hr_id=job.hr_id,
+        # Multi-tenancy: inherit tenant from the parent job so applications always
+        # stay within the same tenant space. The apply endpoint is public (no auth),
+        # so we derive tenant from the job row rather than request headers.
+        tenant_id=getattr(job, 'tenant_id', None),
         candidate_name=candidate_name,
         candidate_email=candidate_email,
         candidate_phone=candidate_phone_normalized,
@@ -639,6 +644,7 @@ async def apply_for_job(
             title=f"New Application: {candidate_name}",
             message_content=f"{candidate_name} has applied for {job.title}.",
             related_application_id=new_application.id,
+            tenant_id=getattr(job, 'tenant_id', None),
         )
 
         db.commit()
@@ -1127,6 +1133,7 @@ def get_pending_applications_count(
 
 @router.get("", response_model=ApplicationListResponse, response_class=ORJSONResponse)
 def get_hr_applications(
+    request: Request,
     job_id: str = None,
     from_date: str = None,
     to_date: str = None,
@@ -1136,7 +1143,8 @@ def get_hr_applications(
     skip: int = 0,
     limit: int = Query(default=50, le=1000),
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get all applications for HR's jobs (HR only)"""
     t_start = time.perf_counter()
@@ -1153,6 +1161,9 @@ def get_hr_applications(
         base_query = db.query(Application).join(Job, Application.job_id == Job.id).filter(
             and_(Job.job_id.isnot(None), Job.job_id != "")
         )
+
+        # Multi-tenancy: scope to the active tenant (belt-and-suspenders over RLS).
+        base_query = base_query.filter(Application.tenant_id == tenant_ctx.id)
 
         # 2. Filters (applied to base_query so both count and data share the same filters)
         if job_id and str(job_id).strip() not in ("all", "All"):

@@ -5,7 +5,8 @@ from app.infrastructure.database import get_db
 from app.domain.models import User, Job, Application, JobVersion
 from app.domain.schemas import JobCreate, JobUpdate, JobResponse, JobExtractionResponse, JobPublicResponse
 from app.core.auth import get_current_hr
-from app.core.ownership import validate_hr_ownership
+from app.core.ownership import validate_hr_ownership, get_tenant_context
+from app.core.tenant_context import TenantContext
 from app.core.rate_limiter import limiter
 from app.services.ai_service import extract_job_details
 from app.services.resume_parser import parse_resume
@@ -357,7 +358,8 @@ def create_job(
     request: Request,
     job_data: JobCreate,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Create a new job posting (HR only)"""
     request_id = request.headers.get("X-Request-ID") or get_request_id(request)
@@ -443,6 +445,8 @@ def create_job(
         description=description,
         experience_level=job_data.experience_level,
         hr_id=current_user.id,
+        # Multi-tenancy: stamp the active tenant on creation
+        tenant_id=tenant_ctx.id,
         location=job_data.location,
         mode_of_work=job_data.mode_of_work,
         job_type=job_data.job_type,
@@ -561,14 +565,18 @@ def list_public_jobs(
 
 @router.get("", response_model=list[JobResponse])
 def list_jobs(
+    request: Request,
     status: str = None,
     skip: int = 0,
     limit: Optional[int] = None,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """List jobs for the HR user (paginated; default limit 100, max 200)."""
     query = db.query(Job)
+    # Multi-tenancy: scope to the active tenant (belt-and-suspenders over RLS).
+    query = query.filter(Job.tenant_id == tenant_ctx.id)
     # Apply visibility isolation: Anyone not a super_admin is restricted to their own jobs
     if current_user.role.lower() not in ["super_admin", "admin"]:
         query = query.filter(Job.hr_id == current_user.id)

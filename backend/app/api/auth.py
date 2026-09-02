@@ -577,6 +577,18 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current authenticated user info"""
     return current_user
 
+@router.get("/ws-token")
+def get_websocket_token(current_user: User = Depends(get_current_user)):
+    """Generate a short-lived token for WebSocket connection authentication."""
+    token_data = {
+        "sub": str(current_user.id),
+        "role": current_user.role,
+        "purpose": "ws"
+    }
+    ws_token = create_access_token(token_data, expires_delta=timedelta(minutes=15))
+    return {"token": ws_token}
+
+
 @router.put("/me", response_model=UserResponse)
 def update_current_user_info(
     data: UserProfileUpdate, 

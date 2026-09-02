@@ -10,6 +10,7 @@ import { UserNav } from '@/components/user-nav'
 import { NotificationBell } from '@/components/notification-bell'
 import { ToggleTheme } from '@/components/lightswind/toggle-theme'
 import { ThemeTogglerButton } from '@/components/animate-ui/components/buttons/theme-toggler'
+import { TenantSwitcher } from '@/components/tenant-switcher'
 import useSWR from 'swr'
 import { APIClient } from '@/app/dashboard/lib/api-client'
 import { useBranding } from '@/lib/branding-client'
@@ -64,6 +65,7 @@ export const GlobalNavbar = React.memo(function GlobalNavbar() {
 
       {isDashboard ? (
         <div className="flex items-center gap-2 md:gap-4">
+          <TenantSwitcher />
           <NotificationBell />
           <UserNav />
         </div>

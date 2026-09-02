@@ -1,4 +1,4 @@
-// API Client - Last Updated: 2026-04-10
+// API Client - Last Updated: 2026-09-01 (multi-tenancy)
 import { getApiBaseUrl } from '@/lib/config'
 import { toast } from 'sonner'
 
@@ -25,6 +25,28 @@ export function revalidateDashboardData() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Module-level tenant context store
+// ---------------------------------------------------------------------------
+interface TenantMeta {
+  id: string
+  slug: string
+  name?: string
+  logo_url?: string | null
+}
+
+let _activeTenant: TenantMeta | null = null
+
+/** Called by AuthContext (or TenantSwitcher) when the active tenant changes. */
+export function setActiveTenantMeta(tenant: TenantMeta | null): void {
+  _activeTenant = tenant
+}
+
+/** Read the currently active tenant metadata (or null if not set). */
+export function getActiveTenantMeta(): TenantMeta | null {
+  return _activeTenant
+}
+
 export class APIClient {
   private static MAX_RETRIES = 3
   private static TIMEOUT_MS = 120000 // Increased to 120s globally for heavy tasks
@@ -49,6 +71,14 @@ export class APIClient {
     )
   }
 
+  /**
+   * Set the active tenant context so all subsequent API calls carry the
+   * correct X-Tenant-Slug / X-Tenant-ID headers.
+   */
+  static setTenantContext(tenant: TenantMeta | null): void {
+    setActiveTenantMeta(tenant)
+  }
+
   private static getHeaders(isMultipart = false, endpoint?: string): Record<string, string> {
     const headers: Record<string, string> = {}
     if (!isMultipart) {
@@ -62,10 +92,31 @@ export class APIClient {
           headers['Authorization'] = `Bearer ${interviewToken}`
         }
       }
+
+      // ── Multi-tenancy: attach tenant headers to every authenticated call ──
+      // First try the module-level store (set by AuthContext after login).
+      // Then fall back to the x-tenant-slug cookie injected by Next.js middleware.
+      const tenant = _activeTenant
+      if (tenant) {
+        headers['X-Tenant-Slug'] = tenant.slug
+        if (tenant.id) {
+          headers['X-Tenant-ID'] = tenant.id
+        }
+      } else {
+        // Edge middleware injects x-tenant-slug as a response header that the
+        // browser exposes via document.cookie or a <meta> tag; alternatively we
+        // read it from sessionStorage if the auth-context wrote it on login.
+        const storedSlug =
+          (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tenant_slug')) || ''
+        if (storedSlug) {
+          headers['X-Tenant-Slug'] = storedSlug
+        }
+      }
     }
     headers['X-Request-Source'] = 'rims-frontend'
     return headers
   }
+
 
   private static async fetchWithRetry(url: string, options: RequestInit, retries = 0, customTimeoutMs?: number): Promise<Response> {
     const controller = new AbortController()

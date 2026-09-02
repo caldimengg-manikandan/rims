@@ -183,6 +183,9 @@ class CandidateService:
                 expires_at=expiration,
                 is_used=False,
                 interview_stage=interview_stage,
+                # Multi-tenancy: inherit tenant from the parent application so the
+                # interview row stays within the same tenant space.
+                tenant_id=getattr(application, 'tenant_id', None),
             )
             self.db.add(new_interview)
             self.db.flush()

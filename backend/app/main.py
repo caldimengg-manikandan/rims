@@ -453,9 +453,10 @@ else:
     trusted_proxy_hosts = ["127.0.0.1"]
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted_proxy_hosts)
 
-from app.core.middleware import PerformanceLoggingMiddleware, SecurityHeadersMiddleware
+from app.core.middleware import PerformanceLoggingMiddleware, SecurityHeadersMiddleware, TenantResolutionMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(PerformanceLoggingMiddleware)
+app.add_middleware(TenantResolutionMiddleware)
 
 allowed_origins = list(set(settings.get_allowed_origins()))
 if settings.env == "development":
@@ -466,7 +467,12 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Requested-With", "TEST_ADMIN_SECRET", "X-Request-Source"],
+    allow_headers=[
+        "Content-Type", "Authorization", "X-Request-ID", "X-Requested-With",
+        "TEST_ADMIN_SECRET", "X-Request-Source",
+        # Multi-tenancy headers
+        "X-Tenant-ID", "X-Tenant-Slug",
+    ],
 )
 
 def check_tcp_connection(host: str, port: int, timeout: float = 2.0) -> str:

@@ -26,7 +26,8 @@ from app.domain.schemas import (
 
 
 from app.core.auth import get_current_user, get_current_hr, get_current_interview, get_current_interview_any_status, pwd_context, create_access_token
-from app.core.ownership import validate_hr_ownership, validate_hr_ownership_for_interview
+from app.core.ownership import validate_hr_ownership, validate_hr_ownership_for_interview, get_tenant_context, get_optional_tenant_context
+from app.core.tenant_context import TenantContext
 from app.services.ai_service import (
     generate_adaptive_interview_question,
     evaluate_interview_answer,
@@ -144,6 +145,8 @@ def create_demo_interview(background_tasks: BackgroundTasks, db: Session = Depen
     app_record = Application(
         job_id=job.id,
         hr_id=hr_user.id,
+        # Multi-tenancy: inherit tenant from the demo job
+        tenant_id=getattr(job, 'tenant_id', None),
         candidate_name=name,
         candidate_email=candidate_email,
         status="interview_scheduled",

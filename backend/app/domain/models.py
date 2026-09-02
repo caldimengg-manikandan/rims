@@ -1,15 +1,52 @@
 import datetime
+import uuid
 from datetime import timezone
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Boolean, Float,
     ForeignKey, UniqueConstraint, CheckConstraint, Index, JSON, Enum, LargeBinary
 )
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.sql import func
 from app.infrastructure.database import Base
 from app.core.encryption import EncryptedText
 from app.domain.constants import CandidateState
 from app.core.timezone import get_ist_now
+
+
+# ---------------------------------------------------------------------------
+# Tenant model — must be defined before all tenant-scoped models so that FK
+# relationships resolve correctly during SQLAlchemy mapper configuration.
+# ---------------------------------------------------------------------------
+
+class Tenant(Base):
+    """Represents a tenant (organisation) in the shared-database multi-tenant architecture."""
+    __tablename__ = "tenants"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended', 'trial')", name="check_tenants_status"),
+        Index("idx_tenants_slug", "slug"),
+        Index("idx_tenants_custom_domain", "custom_domain"),
+    )
+
+    id            = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name          = Column(String(255), nullable=False)
+    slug          = Column(String(100), unique=True, nullable=False)
+    custom_domain = Column(String(255), unique=True, nullable=True)
+    logo_url      = Column(Text, nullable=True)
+    settings      = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    status        = Column(String(50), nullable=False, default="active")
+    created_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # Reverse relationships to tenant-scoped tables
+    jobs              = relationship("Job",              back_populates="tenant", cascade="all, delete-orphan")
+    applications      = relationship("Application",      back_populates="tenant", cascade="all, delete-orphan")
+    interviews        = relationship("Interview",        back_populates="tenant", cascade="all, delete-orphan")
+    attachment_resumes = relationship("AttachmentResume", back_populates="tenant", cascade="all, delete-orphan")
+    notifications     = relationship("Notification",     back_populates="tenant", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<Tenant slug={self.slug!r} status={self.status!r}>"
 
 
 class User(Base):
@@ -93,12 +130,21 @@ class Job(Base):
     behavioural_repo_set_id = Column(Integer, ForeignKey('question_sets.id', ondelete='SET NULL'), nullable=True)
     duration_minutes = Column(Integer, default=60) # Global interview duration
     hr_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    # Multi-tenancy: tenant_id is stamped by the API layer and enforced by DB RLS.
+    # nullable=True at the ORM level; the DB migration enforces NOT NULL.
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=get_ist_now, server_default=func.now())
     updated_at = Column(DateTime, default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
     closed_at = Column(DateTime, nullable=True)
 
     # Relationships
     hr = relationship("User", back_populates="jobs")
+    tenant = relationship("Tenant", back_populates="jobs")
     applications = relationship("Application", back_populates="job", cascade="all, delete-orphan")
 
 
@@ -120,6 +166,13 @@ class Application(Base):
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(Integer, ForeignKey('jobs.id', ondelete="CASCADE"), nullable=False, index=True)
     hr_id = Column(Integer, ForeignKey('users.id', ondelete="SET NULL"), nullable=True, index=True) # Denormalized for speed
+    # Multi-tenancy
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
     candidate_name = Column(String(255), nullable=False)
     candidate_email = Column(String(255), nullable=False, index=True)
     candidate_phone = Column(EncryptedText)
@@ -167,6 +220,7 @@ class Application(Base):
 
     # Relationships
     job = relationship("Job", back_populates="applications")
+    tenant = relationship("Tenant", back_populates="applications")
     hr = relationship("User", foreign_keys=[hr_id])
     resume_extraction = relationship(
         "ResumeExtraction", 
@@ -465,12 +519,20 @@ class Interview(Base):
     # proctoring auto-termination, or abandon. Report is only generated on
     # successful completion.
     is_demo = Column(Boolean, default=False, nullable=False, server_default='0')
+    # Multi-tenancy
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=get_ist_now, server_default=func.now())
     updated_at = Column(DateTime, default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
 
 
     # Relationships
     application = relationship("Application", back_populates="interview")
+    tenant = relationship("Tenant", back_populates="interviews")
     questions = relationship(
         "InterviewQuestion",
         back_populates="interview",
@@ -636,9 +698,17 @@ class Notification(Base):
     related_interview_id = Column(Integer, ForeignKey('interviews.id', ondelete="CASCADE"))
     created_at = Column(DateTime, default=get_ist_now, server_default=func.now(), index=True)
     read_at = Column(DateTime)
+    # Multi-tenancy
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
 
     # Relationships
     user = relationship("User", back_populates="notifications")
+    tenant = relationship("Tenant", back_populates="notifications")
 
 
 
@@ -875,8 +945,16 @@ class AttachmentResume(Base):
     retry_count = Column(Integer, default=0)
     last_error = Column(Text, nullable=True) # Store error messages for debugging
     hr_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
-    
+    # Multi-tenancy
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
+
     hr = relationship("User", foreign_keys=[hr_id])
+    tenant = relationship("Tenant", back_populates="attachment_resumes")
 
 
 class RevokedToken(Base):

@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { getApiBaseUrl } from '@/lib/config'
 import { clearSession } from '@/lib/session-store'
+import { APIClient, setActiveTenantMeta } from '@/app/dashboard/lib/api-client'
 
 export interface User {
   id: number
@@ -16,12 +17,30 @@ export interface User {
   created_at: string
 }
 
+/**
+ * Tenant metadata stored in AuthContext after successful authentication.
+ * Matches the TenantContext dataclass returned by the FastAPI /api/auth/me endpoint.
+ */
+export interface TenantMeta {
+  id: string
+  name: string
+  slug: string
+  status: string
+  logo_url?: string | null
+  custom_domain?: string | null
+  settings?: Record<string, unknown>
+}
+
 interface AuthContextType {
   user: User | null
   token: string | null
   isLoading: boolean
   isOffline: boolean
   isAuthenticated: boolean
+  /** The active tenant for the current session. */
+  activeTenant: TenantMeta | null
+  /** Update the active tenant (used by TenantSwitcher). */
+  setActiveTenant: (tenant: TenantMeta | null) => void
   register: (email: string, password: string, full_name: string) => Promise<void>
   verify: (email: string, otp: string) => Promise<void>
   login: (email: string, password: string) => Promise<void>
@@ -43,6 +62,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isOffline, setIsOffline] = useState(false)
+  const [activeTenant, setActiveTenantState] = useState<TenantMeta | null>(null)
+
+  /** Update active tenant both in state and in the APIClient header store. */
+  const setActiveTenant = useCallback((tenant: TenantMeta | null) => {
+    setActiveTenantState(tenant)
+    setActiveTenantMeta(tenant ? { id: tenant.id, slug: tenant.slug, name: tenant.name, logo_url: tenant.logo_url } : null)
+    if (typeof window !== 'undefined') {
+      if (tenant) {
+        sessionStorage.setItem('tenant_slug', tenant.slug)
+        sessionStorage.setItem('tenant_id', tenant.id)
+      } else {
+        sessionStorage.removeItem('tenant_slug')
+        sessionStorage.removeItem('tenant_id')
+      }
+    }
+  }, [])
 
   // Effect initialization moved down below dependency definitions
 
@@ -116,6 +151,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken('cookie_managed')
         setIsOffline(false)
         if (typeof window !== 'undefined') localStorage.setItem(SESSION_PRESENT_KEY, '1')
+        // Extract tenant metadata from the /me response if present
+        const tenantData = (result.userData as any)?.tenant as TenantMeta | undefined
+        if (tenantData?.id) {
+          setActiveTenant(tenantData)
+        }
       } else if (result?.status === 401) {
         // Not authenticated — clear state, do NOT redirect.
         setToken(null)
@@ -346,12 +386,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     isOffline,
     isAuthenticated: !!user && !!token,
+    activeTenant,
+    setActiveTenant,
     register,
     verify,
     login,
     logout,
     refreshUser
-  }), [user, token, isLoading, isOffline, register, verify, login, logout, refreshUser])
+  }), [user, token, isLoading, isOffline, activeTenant, setActiveTenant, register, verify, login, logout, refreshUser])
 
   return (
     <AuthContext.Provider value={value}>
