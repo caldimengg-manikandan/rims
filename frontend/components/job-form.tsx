@@ -28,6 +28,9 @@ import { Sparkles, UploadCloud, Loader2, FileText, X, PlusCircle, ArrowLeft, Che
 import { getApiBaseUrl } from '@/lib/config'
 import { toast } from 'sonner'
 import { Slider } from '@/components/ui/slider'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 
 // ── Repository types ──────────────────────────────────────────────────────────
 interface RepoSet {
@@ -191,6 +194,10 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
         aptitude_repo_set_id: initialData?.aptitude_repo_set_id || null,
         technical_repo_set_id: initialData?.technical_repo_set_id || null,
         behavioural_repo_set_id: initialData?.behavioural_repo_set_id || null,
+        coding_round_enabled: initialData?.coding_round_enabled || false,
+        coding_round_duration_minutes: initialData?.coding_round_duration_minutes || 60,
+        coding_repo_set_id: initialData?.coding_repo_set_id || null,
+        coding_allowed_languages: initialData?.coding_allowed_languages || [],
     })
 
     const [isUploadingAptitude, setIsUploadingAptitude] = useState(false)
@@ -201,6 +208,9 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
     const [technicalRepoSetId, setTechnicalRepoSetId] = useState<number | null>(initialData?.technical_repo_set_id || null)
     const [aptitudeRepoSetId, setAptitudeRepoSetId] = useState<number | null>(initialData?.aptitude_repo_set_id || null)
     const [behaviouralRepoSetId, setBehaviouralRepoSetId] = useState<number | null>(initialData?.behavioural_repo_set_id || null)
+    const [codingRepoSetId, setCodingRepoSetId] = useState<number | null>(initialData?.coding_repo_set_id || null)
+    const [codingQuestionSets, setCodingQuestionSets] = useState<any[]>([])
+    const [selectedCodingSet, setSelectedCodingSet] = useState<any>(null)
 
     const [locationSuggestions, setLocationSuggestions] = useState<string[]>([])
     const [showSuggestions, setShowSuggestions] = useState(false)
@@ -230,8 +240,31 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
             setTechnicalRepoSetId(initialData.technical_repo_set_id || null)
             setAptitudeRepoSetId(initialData.aptitude_repo_set_id || null)
             setBehaviouralRepoSetId(initialData.behavioural_repo_set_id || null)
+            setCodingRepoSetId(initialData.coding_repo_set_id || null)
         }
     }, [initialData])
+
+    // Fetch coding question sets
+    useEffect(() => {
+        const fetchCodingSets = async () => {
+            try {
+                const res = await APIClient.get<any[]>('/api/coding/question-sets')
+                setCodingQuestionSets(res || [])
+            } catch (e) {
+                console.error('Failed to load coding question sets', e)
+            }
+        }
+        fetchCodingSets()
+    }, [])
+
+    useEffect(() => {
+        if (codingRepoSetId && codingQuestionSets.length > 0) {
+            const found = codingQuestionSets.find(s => s.id === codingRepoSetId) || null
+            setSelectedCodingSet(found)
+        } else {
+            setSelectedCodingSet(null)
+        }
+    }, [codingRepoSetId, codingQuestionSets])
 
     // Warning for unsaved changes (H020)
     const isFormModified = () => {
@@ -322,8 +355,9 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
             technical_repo_set_id: technicalRepoSetId,
             aptitude_repo_set_id: aptitudeRepoSetId,
             behavioural_repo_set_id: behaviouralRepoSetId,
+            coding_repo_set_id: codingRepoSetId,
         }))
-    }, [technicalRepoSetId, aptitudeRepoSetId, behaviouralRepoSetId])
+    }, [technicalRepoSetId, aptitudeRepoSetId, behaviouralRepoSetId, codingRepoSetId])
 
     const handleAIFill = async (file?: File) => {
         setIsAILoading(true)
@@ -503,13 +537,20 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
         Boolean(formData.first_level_enabled) &&
         (formData.interview_mode === 'upload' || formData.interview_mode === 'mixed')
 
+    const isCodingValid = !formData.coding_round_enabled || (
+        Boolean(codingRepoSetId) &&
+        Array.isArray(formData.coding_allowed_languages) &&
+        formData.coding_allowed_languages.length > 0
+    )
+
     const isFormValid =
         formData.title.trim().length >= 3 &&
         formData.description.trim().length >= 10 &&
         !titleError && !descError && !durationError &&
         (formData.mode_of_work === 'Remote' || formData.location.trim().length > 0) &&
         (!requiresQuestionFile || Boolean(formData.uploaded_question_file) || Boolean(formData.technical_repo_set_id)) &&
-        (!formData.aptitude_enabled || formData.aptitude_mode !== 'upload' || Boolean(formData.aptitude_questions_file) || Boolean(formData.aptitude_repo_set_id))
+        (!formData.aptitude_enabled || formData.aptitude_mode !== 'upload' || Boolean(formData.aptitude_questions_file) || Boolean(formData.aptitude_repo_set_id)) &&
+        isCodingValid
 
     const isJunior = formData.experience_level === 'junior' || formData.experience_level === 'intern'
 
@@ -1170,6 +1211,149 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                                         onSelect={(id) => setBehaviouralRepoSetId(id)}
                                     />
                                 </div>
+                            </div>
+
+                            {/* Coding Round Section */}
+                            <div className="space-y-4 pt-4 border-t border-border">
+                                <div className="flex items-start gap-3">
+                                    <Checkbox
+                                        id="coding_round_enabled"
+                                        checked={Boolean(formData.coding_round_enabled)}
+                                        onCheckedChange={(checked) => {
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                coding_round_enabled: !!checked,
+                                                ...(!checked && { coding_repo_set_id: null, coding_allowed_languages: [] })
+                                            }))
+                                            if (!checked) {
+                                                setCodingRepoSetId(null)
+                                                setSelectedCodingSet(null)
+                                            }
+                                        }}
+                                        className="mt-0.5"
+                                    />
+                                    <div className="space-y-1 leading-none">
+                                        <label htmlFor="coding_round_enabled" className="text-sm font-bold text-foreground cursor-pointer">
+                                            Coding Round (Automated Assessment)
+                                        </label>
+                                        <p className="text-xs text-muted-foreground">
+                                            Assess candidates with sandboxed algorithmic programming challenges.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {formData.coding_round_enabled && (
+                                    <div className="ml-7 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                        {/* Coding Question Set Picker */}
+                                        <div className="space-y-2">
+                                            <Label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                                                Select Coding Question Set *
+                                            </Label>
+                                            {codingQuestionSets.length === 0 ? (
+                                                <p className="text-xs text-amber-600 dark:text-amber-400">
+                                                    No Coding Question Sets found. Create one in the Coding Repository first.
+                                                </p>
+                                            ) : (
+                                                <Select
+                                                    value={codingRepoSetId ? String(codingRepoSetId) : 'none'}
+                                                    onValueChange={(val) => {
+                                                        const id = val === 'none' ? null : parseInt(val)
+                                                        setCodingRepoSetId(id)
+                                                        const found = codingQuestionSets.find(s => s.id === id) || null
+                                                        setSelectedCodingSet(found)
+                                                        // Default allowed languages to all supported languages of this set
+                                                        if (found && found.supported_languages) {
+                                                            setFormData(prev => ({
+                                                                ...prev,
+                                                                coding_allowed_languages: found.supported_languages
+                                                            }))
+                                                        } else {
+                                                            setFormData(prev => ({
+                                                                ...prev,
+                                                                coding_allowed_languages: []
+                                                            }))
+                                                        }
+                                                    }}
+                                                >
+                                                    <SelectTrigger className="w-full h-11 border border-border rounded-xl bg-background/50 text-foreground text-sm">
+                                                        <SelectValue placeholder="— Select a Coding Question Set —" />
+                                                    </SelectTrigger>
+                                                    <SelectContent className="rounded-xl">
+                                                        <SelectItem value="none">— Select a Coding Question Set —</SelectItem>
+                                                        {codingQuestionSets.map(qs => (
+                                                            <SelectItem key={qs.id} value={String(qs.id)}>
+                                                                {qs.title} ({qs.items?.length || 0} problems)
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            )}
+                                        </div>
+
+                                        {/* Languages selection (subset of Question Set supported languages) */}
+                                        {selectedCodingSet && (
+                                            <div className="space-y-2 p-3.5 rounded-xl border border-border bg-card/40">
+                                                <Label className="text-xs font-semibold text-foreground">
+                                                    Job-Allowed Languages (Subset of Question Set) *
+                                                </Label>
+                                                <p className="text-xs text-muted-foreground">
+                                                    Select which languages candidates can choose during this interview.
+                                                </p>
+                                                <div className="flex flex-wrap gap-4 pt-1">
+                                                    {selectedCodingSet.supported_languages?.map((lang: string) => {
+                                                        const isSelected = (formData.coding_allowed_languages || []).includes(lang)
+                                                        const label = lang === 'python3' ? 'Python 3' : lang === 'java21' ? 'Java 21' : lang
+                                                        return (
+                                                            <label
+                                                                key={lang}
+                                                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                                                                    isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border text-foreground hover:border-primary/40'
+                                                                }`}
+                                                            >
+                                                                <Checkbox
+                                                                    checked={isSelected}
+                                                                    onCheckedChange={(checked) => {
+                                                                        const current = formData.coding_allowed_languages || []
+                                                                        const updated = checked
+                                                                            ? [...current, lang]
+                                                                            : current.filter((l: string) => l !== lang)
+                                                                        setFormData(prev => ({
+                                                                            ...prev,
+                                                                            coding_allowed_languages: updated
+                                                                        }))
+                                                                    }}
+                                                                />
+                                                                <span className="text-sm font-medium">{label}</span>
+                                                            </label>
+                                                        )
+                                                    })}
+                                                </div>
+                                                {showValidationErrors && (!formData.coding_allowed_languages || formData.coding_allowed_languages.length === 0) && (
+                                                    <p className="text-xs text-destructive mt-1">At least one programming language must be allowed for the candidate.</p>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Coding Duration */}
+                                        <div className="space-y-1.5">
+                                            <Label htmlFor="coding_duration" className="text-xs font-semibold text-foreground">
+                                                Coding Round Duration (Minutes)
+                                            </Label>
+                                            <Input
+                                                id="coding_duration"
+                                                type="number"
+                                                min={15}
+                                                max={180}
+                                                value={formData.coding_round_duration_minutes || 60}
+                                                onChange={(e) => setFormData(prev => ({
+                                                    ...prev,
+                                                    coding_round_duration_minutes: Number(e.target.value) || 60
+                                                }))}
+                                                className="w-40 h-10 border border-border rounded-xl bg-background/50 text-foreground text-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
 

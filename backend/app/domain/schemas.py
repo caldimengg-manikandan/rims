@@ -73,6 +73,38 @@ class UserLogin(BaseModel):
     def validate_email(cls, v):
         return UserRegister.validate_email_robust(v)
 
+class CompanyRegistrationRequest(BaseModel):
+    company_name: str
+    slug: str
+    logo_url: Optional[str] = None
+    industry: Optional[str] = "Technology"
+    company_size: Optional[str] = "10-50"
+    primary_color: Optional[str] = "#6366f1"
+    admin_name: str
+    admin_email: str
+    admin_password: str
+
+    @field_validator('slug')
+    @classmethod
+    def validate_slug(cls, v):
+        cleaned = re.sub(r'[^a-z0-9-]', '', (v or '').strip().lower())
+        if len(cleaned) < 2:
+            raise ValueError("Subdomain slug must be at least 2 characters.")
+        if cleaned in ("www", "api", "mail", "admin", "static", "default", "auth", "support", "dashboard"):
+            raise ValueError("This subdomain name is reserved.")
+        return cleaned
+
+    @field_validator('admin_email')
+    @classmethod
+    def validate_admin_email(cls, v):
+        return UserRegister.validate_email_robust(v)
+
+    @field_validator('admin_password')
+    @classmethod
+    def validate_password(cls, v):
+        return UserRegister.validate_password_robust(v)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -86,6 +118,7 @@ class UserResponse(BaseModel):
     is_verified: bool
     approval_status: str
     profile_image_url: Optional[str] = None
+    is_platform_super_admin: bool = False
     created_at: datetime
     
     # Pydantic v2 compatibility for naive vs aware datetimes
@@ -198,6 +231,10 @@ class JobCreate(BaseModel):
     aptitude_repo_set_id: Optional[int] = None
     technical_repo_set_id: Optional[int] = None
     behavioural_repo_set_id: Optional[int] = None
+    coding_round_enabled: Optional[bool] = False
+    coding_round_duration_minutes: Optional[int] = 60
+    coding_repo_set_id: Optional[int] = None
+    coding_allowed_languages: Optional[List[str]] = None
 
     @field_validator('title')
     def validate_title(cls, v):
@@ -277,6 +314,10 @@ class JobUpdate(BaseModel):
     behavioural_repo_set_id: Optional[int] = None
     behavioral_role: Optional[str] = None
     aptitude_mode: Optional[str] = None
+    coding_round_enabled: Optional[bool] = None
+    coding_round_duration_minutes: Optional[int] = None
+    coding_repo_set_id: Optional[int] = None
+    coding_allowed_languages: Optional[List[str]] = None
 
     @field_validator('title')
     def validate_title(cls, v):
@@ -347,6 +388,10 @@ class JobResponse(BaseModel):
     aptitude_repo_set_id: Optional[int] = None
     technical_repo_set_id: Optional[int] = None
     behavioural_repo_set_id: Optional[int] = None
+    coding_round_enabled: Optional[bool] = False
+    coding_round_duration_minutes: Optional[int] = 60
+    coding_repo_set_id: Optional[int] = None
+    coding_allowed_languages: Optional[List[str]] = None
     is_applied: bool = False
     hr_id: int
     created_at: datetime
@@ -1101,4 +1146,177 @@ class BulkDeleteEmailsRequest(BaseModel):
 
 # Rebuild model to resolve forward references
 ApplicationDetailResponse.model_rebuild()
+
+
+# ============================================================================
+# Coding Assessment Schemas
+# ============================================================================
+
+class CodingTestCaseCreate(BaseModel):
+    input: str
+    expected_output: str
+    weight: float = Field(default=1.0, ge=0.1)
+    is_hidden: bool = False
+    display_order: int = 0
+
+
+class CodingTestCaseResponse(BaseModel):
+    id: int
+    problem_id: int
+    input: str
+    expected_output: Optional[str] = None  # None for hidden test cases if requested by candidate
+    weight: float
+    is_hidden: bool
+    display_order: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CodingProblemCreate(BaseModel):
+    title: str = Field(..., min_length=3, max_length=255)
+    description: str = Field(..., min_length=10)
+    input_format: Optional[str] = None
+    output_format: Optional[str] = None
+    constraints: Optional[str] = None
+    starter_code: Optional[dict] = None  # e.g. {"python3": "...", "java21": "..."}
+    solution_code: str = Field(..., min_length=5)  # Reference solution (server-side only)
+    difficulty: Optional[str] = "medium"
+    time_limit_ms: Optional[int] = Field(default=2000, ge=500, le=10000)
+    memory_limit_mb: Optional[int] = Field(default=256, ge=64, le=1024)
+    test_cases: Optional[List[CodingTestCaseCreate]] = None
+
+    @field_validator('difficulty')
+    def validate_difficulty(cls, v):
+        if v and v.lower() not in {"easy", "medium", "hard"}:
+            raise ValueError("Difficulty must be 'easy', 'medium', or 'hard'")
+        return v.lower() if v else "medium"
+
+
+class CodingProblemUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    input_format: Optional[str] = None
+    output_format: Optional[str] = None
+    constraints: Optional[str] = None
+    starter_code: Optional[dict] = None
+    solution_code: Optional[str] = None
+    difficulty: Optional[str] = None
+    time_limit_ms: Optional[int] = None
+    memory_limit_mb: Optional[int] = None
+    test_cases: Optional[List[CodingTestCaseCreate]] = None
+
+
+class CodingProblemResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    input_format: Optional[str] = None
+    output_format: Optional[str] = None
+    constraints: Optional[str] = None
+    starter_code: Optional[dict] = None
+    difficulty: str
+    time_limit_ms: int
+    memory_limit_mb: int
+    test_cases: List[CodingTestCaseResponse] = []
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CodingProblemHRDetail(CodingProblemResponse):
+    """HR view containing the reference solution code."""
+    solution_code: str
+
+
+class CodingQuestionSetCreate(BaseModel):
+    title: str = Field(..., min_length=3, max_length=255)
+    description: Optional[str] = None
+    supported_languages: List[str] = Field(..., min_length=1)
+    problem_ids: List[int] = []
+
+    @field_validator('supported_languages')
+    def validate_languages(cls, v):
+        from app.core.language_registry import validate_supported_languages
+        return validate_supported_languages(v)
+
+
+class CodingQuestionSetUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    supported_languages: Optional[List[str]] = None
+    problem_ids: Optional[List[int]] = None
+
+    @field_validator('supported_languages')
+    def validate_languages(cls, v):
+        if v is not None:
+            from app.core.language_registry import validate_supported_languages
+            return validate_supported_languages(v)
+        return v
+
+
+class CodingQuestionSetItemResponse(BaseModel):
+    problem_id: int
+    display_order: int
+    problem: Optional[CodingProblemResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CodingQuestionSetResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    supported_languages: List[str]
+    items: List[CodingQuestionSetItemResponse] = []
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CodeRunRequest(BaseModel):
+    problem_id: int
+    language: str
+    source_code: str
+    custom_stdin: Optional[str] = None
+
+
+class CodeRunResponse(BaseModel):
+    is_custom_input: bool
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    exit_code: Optional[int] = None
+    time_ms: Optional[int] = None
+    timed_out: Optional[bool] = None
+    compilation_failed: Optional[bool] = None
+    compilation_error: Optional[str] = None
+    verdict: Optional[str] = None
+    passed_tests: Optional[int] = None
+    total_tests: Optional[int] = None
+    test_results: Optional[List[dict]] = None
+
+
+class CodeSubmitRequest(BaseModel):
+    problem_id: int
+    language: str
+    source_code: str
+
+
+class CodeSubmitResponse(BaseModel):
+    submission_id: int
+    verdict: str
+    score: float
+    passed_tests: int
+    total_tests: int
+    execution_time_ms: Optional[int] = None
+    test_results: List[dict] = []
+
+
+class CodingSessionResponse(BaseModel):
+    allowed_languages: List[str]
+    duration_minutes: int
+    coding_score: Optional[float] = None
+    coding_completed: bool = False
+    problems: List[CodingProblemResponse] = []
+    submissions_summary: List[dict] = []
+
 

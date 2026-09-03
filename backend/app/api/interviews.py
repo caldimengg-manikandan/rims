@@ -82,7 +82,32 @@ def _interview_has_answers(db: Session, interview_id: int) -> bool:
 
 STAGE_APTITUDE = "aptitude"
 STAGE_FIRST_LEVEL = "first_level"
+STAGE_CODING = "coding"
 STAGE_COMPLETED = "completed"
+
+def get_next_interview_stage(job: Optional[Job], current_stage: Optional[str]) -> Optional[str]:
+    """
+    Dynamically computes the enabled interview stages in order:
+    aptitude (if enabled) -> first_level (if enabled) -> coding (if enabled).
+    Returns the next stage or None if all enabled stages are complete.
+    """
+    if not job:
+        return None
+    stages = []
+    if job.aptitude_enabled:
+        stages.append(STAGE_APTITUDE)
+    if job.first_level_enabled:
+        stages.append(STAGE_FIRST_LEVEL)
+    if getattr(job, "coding_round_enabled", False):
+        stages.append(STAGE_CODING)
+
+    if not current_stage:
+        return stages[0] if stages else None
+    if current_stage in stages:
+        idx = stages.index(current_stage)
+        if idx + 1 < len(stages):
+            return stages[idx + 1]
+    return None
 
 # --- Imported Refactored Services ---
 
@@ -784,8 +809,11 @@ def get_interview_stage(
             "total_questions": interview.total_questions or 0,
             "aptitude_enabled": getattr(job, 'aptitude_enabled', False) if job else False,
             "first_level_enabled": getattr(job, 'first_level_enabled', True) if job else True,
+            "coding_round_enabled": getattr(job, 'coding_round_enabled', False) if job else False,
             "aptitude_score": getattr(interview, 'aptitude_score', None),
             "aptitude_completed_at": getattr(interview, 'aptitude_completed_at', None),
+            "coding_score": getattr(interview, 'coding_score', None),
+            "coding_completed": getattr(interview, 'coding_completed', False),
             "started_at": getattr(interview, 'started_at', None),
             "duration_minutes": getattr(interview, 'duration_minutes', 60) or 60,
             "questions_ready": questions_ready,
@@ -1410,8 +1438,9 @@ def complete_aptitude(
         )
     job = interview.application.job
 
-    # Check if first_level is enabled
-    if job.first_level_enabled:
+    # Check if a next stage is enabled dynamically
+    next_stage = get_next_interview_stage(job, STAGE_APTITUDE)
+    if next_stage == STAGE_FIRST_LEVEL:
         try:
             # Transition to first-level interview
             # Questions were PRE-GENERATED during access_interview — no AI delay here
@@ -1438,6 +1467,16 @@ def complete_aptitude(
                 "question_text": first_q.question_text,
                 "question_type": first_q.question_type,
             } if first_q else None,
+        }
+    elif next_stage == STAGE_CODING:
+        interview.interview_stage = STAGE_CODING
+        db.commit()
+        return {
+            "success": True,
+            "aptitude_score": interview.aptitude_score,
+            "new_stage": STAGE_CODING,
+            "message": "Aptitude round completed. Transitioning to coding round.",
+            "first_question": None,
         }
     else:
         try:
@@ -1814,7 +1853,22 @@ def end_interview(
         )
         db.commit()
 
-    # 2. Mark state immediately so the frontend sees a finished interview right away.
+    # 2. Check if a coding stage follows first_level interview
+    job = interview.application.job if interview.application else None
+    next_stage = get_next_interview_stage(job, STAGE_FIRST_LEVEL) if job else None
+    if next_stage == STAGE_CODING and not (ended_early or is_forced):
+        interview.interview_stage = STAGE_CODING
+        interview.first_level_completed = True
+        db.commit()
+        return {
+            "success": True,
+            "interview_id": interview_id,
+            "status": interview.status,
+            "new_stage": STAGE_CODING,
+            "message": "First-level interview completed. Transitioning to coding round.",
+        }
+
+    # 3. Mark state immediately so the frontend sees a finished interview right away.
     if interview.status == "in_progress":
         _set_interview_status(interview, "completed")
     interview.interview_stage = STAGE_COMPLETED
@@ -1822,7 +1876,7 @@ def end_interview(
         interview.ended_at = get_ist_now()
     db.commit()
 
-    # 3. Run the heavy AI report generation in the background so this response
+    # 4. Run the heavy AI report generation in the background so this response
     #    returns in milliseconds instead of blocking for 20-60 seconds.
     background_tasks.add_task(_finalize_interview_and_report, interview_id)
     logger.info(f"Interview {interview_id} ended — report generation queued as background task.")

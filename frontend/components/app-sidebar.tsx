@@ -28,6 +28,7 @@ import {
     Settings,
     Activity,
     Database,
+    Code2,
     Mail,
 } from 'lucide-react'
 import {
@@ -104,6 +105,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 { href: '/dashboard/hr', label: 'Dashboard', icon: LayoutDashboard },
                 { href: '/dashboard/onboarding', label: 'Onboarding', icon: CheckCircle2 },
                 { href: '/dashboard/repository', label: 'Repository', icon: Database },
+                { href: '/dashboard/coding-repository', label: 'Coding Repository', icon: Code2 },
             ]
         },
         {

@@ -128,6 +128,10 @@ class Job(Base):
     aptitude_repo_set_id = Column(Integer, ForeignKey('question_sets.id', ondelete='SET NULL'), nullable=True)
     technical_repo_set_id = Column(Integer, ForeignKey('question_sets.id', ondelete='SET NULL'), nullable=True)
     behavioural_repo_set_id = Column(Integer, ForeignKey('question_sets.id', ondelete='SET NULL'), nullable=True)
+    coding_round_enabled = Column(Boolean, default=False)
+    coding_round_duration_minutes = Column(Integer, default=60)
+    coding_repo_set_id = Column(Integer, ForeignKey('coding_question_sets.id', ondelete='SET NULL'), nullable=True)
+    coding_allowed_languages = Column(JSON, nullable=True)  # e.g. ["python3", "java21"]
     duration_minutes = Column(Integer, default=60) # Global interview duration
     hr_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     # Multi-tenancy: tenant_id is stamped by the API layer and enforced by DB RLS.
@@ -146,6 +150,7 @@ class Job(Base):
     hr = relationship("User", back_populates="jobs")
     tenant = relationship("Tenant", back_populates="jobs")
     applications = relationship("Application", back_populates="job", cascade="all, delete-orphan")
+    coding_question_set = relationship("CodingQuestionSet", foreign_keys=[coding_repo_set_id])
 
 
 class Application(Base):
@@ -510,6 +515,9 @@ class Interview(Base):
     aptitude_completed = Column(Boolean, default=False)
     first_level_completed = Column(Boolean, default=False)
     first_level_score = Column(Float, nullable=True)
+    coding_completed = Column(Boolean, default=False)
+    coding_score = Column(Float, nullable=True)
+    coding_completed_at = Column(DateTime, nullable=True)
     video_recording_path = Column(String(500), nullable=True)
     risk_score = Column(Float, default=0.0, nullable=False, server_default='0.0')
     is_terminated_by_violations = Column(Boolean, default=False, nullable=False, server_default='0')
@@ -533,6 +541,7 @@ class Interview(Base):
     # Relationships
     application = relationship("Application", back_populates="interview")
     tenant = relationship("Tenant", back_populates="interviews")
+    coding_submissions = relationship("CodingSubmission", back_populates="interview", cascade="all, delete-orphan")
     questions = relationship(
         "InterviewQuestion",
         back_populates="interview",
@@ -964,5 +973,127 @@ class RevokedToken(Base):
     jti = Column(String(255), unique=True, index=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)  # Naive UTC datetime (db constraint). Future cleanups should compare using datetime.now(timezone.utc).replace(tzinfo=None)
     created_at = Column(DateTime, default=get_ist_now)
+
+
+# ---------------------------------------------------------------------------
+# Coding Assessment Models
+# ---------------------------------------------------------------------------
+
+class CodingProblem(Base):
+    """Represents a coding problem statement, test cases, starter templates, and reference solution."""
+    __tablename__ = "coding_problems"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    input_format = Column(Text, nullable=True)
+    output_format = Column(Text, nullable=True)
+    constraints = Column(Text, nullable=True)
+    starter_code = Column(JSON, nullable=True)  # {"python3": "...", "java21": "..."}
+    solution_code = Column(EncryptedText, nullable=False)  # Reference solution (server-side only)
+    difficulty = Column(String(50), default="medium", index=True)  # easy, medium, hard
+    time_limit_ms = Column(Integer, default=2000)
+    memory_limit_mb = Column(Integer, default=256)
+    hr_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
+
+    # Relationships
+    test_cases = relationship("CodingTestCase", back_populates="problem", cascade="all, delete-orphan", order_by="CodingTestCase.display_order")
+    set_items = relationship("CodingQuestionSetItem", back_populates="problem", cascade="all, delete-orphan")
+    submissions = relationship("CodingSubmission", back_populates="problem", cascade="all, delete-orphan")
+
+
+class CodingTestCase(Base):
+    """Test case for a coding problem with input, expected output, and weight for scoring."""
+    __tablename__ = "coding_test_cases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    problem_id = Column(Integer, ForeignKey('coding_problems.id', ondelete='CASCADE'), nullable=False, index=True)
+    input = Column(Text, nullable=False)
+    expected_output = Column(Text, nullable=False)
+    weight = Column(Float, default=1.0, nullable=False)
+    is_hidden = Column(Boolean, default=False)
+    display_order = Column(Integer, default=0)
+
+    # Relationships
+    problem = relationship("CodingProblem", back_populates="test_cases")
+
+
+class CodingQuestionSet(Base):
+    """Reusable collection of coding problems defining the supported programming languages."""
+    __tablename__ = "coding_question_sets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    supported_languages = Column(JSON, nullable=False)  # e.g. ["python3", "java21"]
+    hr_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
+
+    # Relationships
+    items = relationship("CodingQuestionSetItem", back_populates="question_set", order_by="CodingQuestionSetItem.display_order", cascade="all, delete-orphan")
+
+
+class CodingQuestionSetItem(Base):
+    """Join table between CodingQuestionSet and CodingProblem preserving problem ordering."""
+    __tablename__ = "coding_question_set_items"
+    __table_args__ = (
+        UniqueConstraint('question_set_id', 'problem_id', name='uq_coding_set_problem'),
+        Index('ix_coding_set_items_order', 'question_set_id', 'display_order'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    question_set_id = Column(Integer, ForeignKey('coding_question_sets.id', ondelete='CASCADE'), nullable=False, index=True)
+    problem_id = Column(Integer, ForeignKey('coding_problems.id', ondelete='CASCADE'), nullable=False, index=True)
+    display_order = Column(Integer, nullable=False, default=1)
+
+    # Relationships
+    question_set = relationship("CodingQuestionSet", back_populates="items")
+    problem = relationship("CodingProblem", back_populates="set_items")
+
+
+class CodingSubmission(Base):
+    """Submission record for a candidate's solution to a coding problem."""
+    __tablename__ = "coding_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
+    interview_id = Column(Integer, ForeignKey('interviews.id', ondelete='CASCADE'), nullable=False, index=True)
+    problem_id = Column(Integer, ForeignKey('coding_problems.id', ondelete='CASCADE'), nullable=False, index=True)
+    language = Column(String(50), nullable=False)
+    source_code = Column(EncryptedText, nullable=False)
+    status = Column(String(50), default="running")  # running, completed, error
+    verdict = Column(String(50))  # accepted, wrong_answer, time_limit_exceeded, runtime_error, compilation_error
+    passed_tests = Column(Integer, default=0)
+    total_tests = Column(Integer, default=0)
+    score = Column(Float, default=0.0)  # 0.0 - 100.0
+    execution_time_ms = Column(Integer, nullable=True)
+    memory_used_kb = Column(Integer, nullable=True)
+    error_output = Column(Text, nullable=True)
+    submitted_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now())
+
+    # Relationships
+    interview = relationship("Interview", back_populates="coding_submissions")
+    problem = relationship("CodingProblem", back_populates="submissions")
+
 
 

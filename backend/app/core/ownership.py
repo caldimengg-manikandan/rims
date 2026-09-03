@@ -116,3 +116,15 @@ def get_tenant_id(request: Request) -> uuid.UUID:
 # Convenience alias for Depends() — allows:
 #   tenant: TenantContext = Depends(RequireTenant)
 RequireTenant = get_tenant_context
+
+
+def validate_tenant_ownership(resource, tenant_ctx: Optional[TenantContext], *, resource_name: str = "resource") -> None:
+    """Ensure the requested resource belongs to the currently active tenant."""
+    if resource is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{resource_name.capitalize()} not found")
+    if tenant_ctx is None:
+        return
+    res_tenant_id = getattr(resource, "tenant_id", None)
+    if res_tenant_id is not None and str(res_tenant_id) != str(tenant_ctx.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{resource_name.capitalize()} not found")
+

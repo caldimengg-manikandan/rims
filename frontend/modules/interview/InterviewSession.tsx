@@ -20,6 +20,7 @@ import {
   UserCheck, Eye, BrainCircuit, CheckCircle2, Trophy, LogOut, CameraOff, AlertTriangle
 } from 'lucide-react';
 import InterviewSidebar from './InterviewSidebar';
+import CodingWorkspace from './CodingWorkspace';
 import { FeedbackDialog, IssueReportDialog } from '@/components/interview-support';
 
 // TF Hub default URL redirects to Kaggle (404) — serve the model from our own origin instead.
@@ -351,6 +352,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   useEffect(() => { isStartedRef.current = isStarted; }, [isStarted]);
   const isFinishedRef = useRef(false);
   useEffect(() => { isFinishedRef.current = isFinished; }, [isFinished]);
+  const [currentStage, setCurrentStage] = useState<string>('first_level');
 
   // ── fullscreen state ──
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -649,6 +651,12 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
         }
         if (stage.status === 'completed' || stage.interview_stage === 'completed') {
           setIsFinished(true);
+          setIsLoading(false);
+          return;
+        }
+        setCurrentStage(stage.interview_stage || 'first_level');
+        if (stage.interview_stage === 'coding') {
+          setIsReady(true);
           setIsLoading(false);
           return;
         }
@@ -1944,6 +1952,20 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           open={showFeedbackPanel}
           onOpenChange={setShowFeedbackPanel}
           interviewId={interviewId}
+        />
+      </div>
+    );
+  }
+
+  if (currentStage === 'coding') {
+    return (
+      <div className="w-full">
+        <CodingWorkspace
+          sessionId={sessionId}
+          token={token}
+          onCompleted={() => {
+            setIsFinished(true);
+          }}
         />
       </div>
     );

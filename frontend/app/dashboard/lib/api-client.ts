@@ -91,6 +91,11 @@ export class APIClient {
         if (interviewToken) {
           headers['Authorization'] = `Bearer ${interviewToken}`
         }
+      } else {
+        const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
+        if (authToken && authToken !== 'cookie_managed') {
+          headers['Authorization'] = `Bearer ${authToken}`
+        }
       }
 
       // ── Multi-tenancy: attach tenant headers to every authenticated call ──
@@ -103,10 +108,16 @@ export class APIClient {
           headers['X-Tenant-ID'] = tenant.id
         }
       } else {
-        // Edge middleware injects x-tenant-slug as a response header that the
-        // browser exposes via document.cookie or a <meta> tag; alternatively we
-        // read it from sessionStorage if the auth-context wrote it on login.
+        let subdomainSlug: string | null = null
+        if (typeof window !== 'undefined') {
+          const host = window.location.hostname.toLowerCase()
+          if (host.endsWith('.localhost')) {
+            const sub = host.replace('.localhost', '')
+            if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') subdomainSlug = sub
+          }
+        }
         const storedSlug =
+          subdomainSlug ||
           (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tenant_slug')) || ''
         if (storedSlug) {
           headers['X-Tenant-Slug'] = storedSlug
@@ -115,7 +126,9 @@ export class APIClient {
     }
     headers['X-Request-Source'] = 'rims-frontend'
     return headers
+
   }
+
 
 
   private static async fetchWithRetry(url: string, options: RequestInit, retries = 0, customTimeoutMs?: number): Promise<Response> {

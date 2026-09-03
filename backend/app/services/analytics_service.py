@@ -8,19 +8,20 @@ class AnalyticsService:
         self.db = db
 
     @classmethod
-    def get_dashboard(cls, db: Session, hr_id: int = None, job_id: int = None, from_date: str = None, to_date: str = None) -> Dict[str, Any]:
+    def get_dashboard(cls, db: Session, hr_id: int = None, job_id: int = None, from_date: str = None, to_date: str = None, tenant_id = None) -> Dict[str, Any]:
         """
         Get consistent dashboard metrics with null safety and zero defaults.
+        Multi-tenant: strictly scoped to tenant_id.
         """
         import logging
         from datetime import datetime
         logger = logging.getLogger(__name__)
 
         try:
-
-            
             # Helper to apply shared filters — timestamps are stored as IST, compare directly
             def apply_filters(q, model_for_date=Application):
+                if tenant_id:
+                    q = q.filter(Application.tenant_id == tenant_id)
                 if hr_id:
                     q = q.outerjoin(Job, Application.job_id == Job.id).filter(
                         or_(Job.hr_id == hr_id, Application.hr_id == hr_id)
@@ -99,12 +100,15 @@ class AnalyticsService:
                 Application.status, 
                 func.count(Application.id)
             )
+            if tenant_id:
+                pipeline_query = pipeline_query.filter(Application.tenant_id == tenant_id)
             if hr_id:
                 pipeline_query = pipeline_query.outerjoin(Job, Application.job_id == Job.id).filter(
                     or_(Job.hr_id == hr_id, Application.hr_id == hr_id)
                 )
             
             pipeline_results = pipeline_query.group_by(Application.status).all()
+
             
             # Map of internal status -> visible chart bucket name.
             # offer_sent / accepted / hired / onboarded all roll up into 'Hired'

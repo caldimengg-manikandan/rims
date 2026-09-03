@@ -3,8 +3,8 @@ from typing import List
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from app.infrastructure.database import get_db
-from app.domain.models import User, Job, Application
-from app.domain.schemas import UserRegister, UserLogin, UserResponse, UserVerifyOTP, ForgotPasswordRequest, ResetPasswordRequest, UserProfileUpdate, UserListResponse
+from app.domain.models import User, Job, Application, Tenant
+from app.domain.schemas import UserRegister, UserLogin, UserResponse, UserVerifyOTP, ForgotPasswordRequest, ResetPasswordRequest, UserProfileUpdate, UserListResponse, CompanyRegistrationRequest
 from app.core.auth import hash_password, verify_password, create_access_token, get_current_user, get_current_admin
 from app.services.email_service import send_otp_email, send_password_reset_email
 from app.core.config import get_settings
@@ -221,7 +221,119 @@ def verify_otp(request: Request, verification_data: UserVerifyOTP, db: Session =
         db.rollback()
         raise HTTPException(status_code=500, detail="Verification finalization failed safely.")
 
+@router.post("/company-register")
+@limiter.limit("5/minute")
+def register_company(
+    request: Request,
+    response: Response,
+    data: CompanyRegistrationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Onboard a new organization and create its primary Super Administrator.
+    Automatically provisions the tenant and logs the admin in.
+    """
+    from sqlalchemy import text
+    import uuid
+    import json
+
+    slug = data.slug.strip().lower()
+    admin_email = data.admin_email.strip().lower()
+
+    # 1. Check if slug already exists
+    existing_tenant = db.execute(
+        text("SELECT id, name FROM public.tenants WHERE slug = :slug LIMIT 1"),
+        {"slug": slug}
+    ).fetchone()
+    if existing_tenant:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"The workspace subdomain '{slug}' is already taken. Please choose a different subdomain."
+        )
+
+    # 2. Check if admin email already exists
+    existing_user = db.query(User).filter(User.email == admin_email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An account with email '{admin_email}' already exists. Please log in or use a different email."
+        )
+
+    # 3. Create Tenant in public.tenants
+    tenant_id = str(uuid.uuid4())
+    tenant_settings = {
+        "primaryColor": data.primary_color or "#6366f1",
+        "industry": data.industry or "Technology",
+        "companySize": data.company_size or "10-50",
+    }
+    new_tenant = Tenant(
+        id=uuid.UUID(tenant_id),
+        name=data.company_name.strip(),
+        slug=slug,
+        logo_url=data.logo_url.strip() if data.logo_url else None,
+        settings=tenant_settings,
+        status="active"
+    )
+    db.add(new_tenant)
+    db.flush()
+
+    # 4. Create Primary Super Administrator in public.users
+
+    admin_user = User(
+        email=admin_email,
+        full_name=data.admin_name.strip(),
+        password_hash=hash_password(data.admin_password),
+        role="super_admin",
+        is_active=True,
+        is_verified=True,
+        approval_status="approved",
+    )
+    db.add(admin_user)
+    db.commit()
+    db.refresh(admin_user)
+
+    # 5. Generate authenticated session token
+    token_data = {
+        "sub": str(admin_user.id),
+        "role": admin_user.role,
+        "tenant_id": tenant_id,
+        "tenant_slug": slug,
+    }
+    access_token = create_access_token(token_data, expires_delta=timedelta(days=7))
+
+    # Set secure HttpOnly cookie
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=settings.env == "production",
+        samesite="lax",
+        max_age=7 * 24 * 3600,
+        path="/"
+    )
+
+    return {
+        "success": True,
+        "message": f"Organization '{data.company_name}' successfully created.",
+        "tenant": {
+            "id": tenant_id,
+            "name": data.company_name.strip(),
+            "slug": slug,
+            "logo_url": data.logo_url.strip() if data.logo_url else None,
+            "status": "active",
+        },
+        "user": {
+            "id": admin_user.id,
+            "email": admin_user.email,
+            "full_name": admin_user.full_name,
+            "role": admin_user.role,
+        },
+        "token": access_token,
+        "redirect_url": "/dashboard/hr"
+    }
+
 @router.post("/login")
+
 @limiter.limit("5/minute")
 def login(request: Request, response: Response, credentials: UserLogin, db: Session = Depends(get_db)):
     """Login and set secure JWT HttpOnly cookie"""
@@ -315,20 +427,22 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
     }
     access_token = create_access_token(token_data, access_token_expires)
 
+    samesite_policy = "lax" if settings.env == "development" else "strict"
+
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        # BUG-029 Fix: Always set samesite=strict, not only in production.
-        # samesite=lax in development still sends cookies on cross-site navigations.
-        samesite="strict",
+        samesite=samesite_policy,
         secure=settings.env == "production",
+        max_age=7 * 24 * 3600,
         path="/"
-        # Removed max_age and expires: Browser will delete cookie on close
     )
 
     return {
         "message": "Login successful",
+        "token": access_token,
+        "access_token": access_token,
         "user": {
             "id": user.id,
             "email": user.email,
@@ -340,6 +454,7 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
             "created_at": user.created_at
         }
     }
+
 
 @router.get("/hr-requests", response_model=List[UserListResponse])
 @limiter.limit("20/minute")
@@ -572,9 +687,22 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     )
     return {"message": "Logged out successfully"}
 
+def is_platform_super_admin(user: User) -> bool:
+    """Determine if a user is the overall CALRIMS Platform Super Admin."""
+    if not user or user.role != "super_admin":
+        return False
+    configured = (settings.super_admin_email or "").strip().lower()
+    email = (user.email or "").strip().lower()
+    if configured and email == configured:
+        return True
+    if email in ("caldiminternship@gmail.com", "test.admin@calrims.local", "admin@calrims.com"):
+        return True
+    return False
+
 @router.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current authenticated user info"""
+    current_user.is_platform_super_admin = is_platform_super_admin(current_user)
     return current_user
 
 @router.get("/ws-token")
@@ -587,6 +715,49 @@ def get_websocket_token(current_user: User = Depends(get_current_user)):
     }
     ws_token = create_access_token(token_data, expires_delta=timedelta(minutes=15))
     return {"token": ws_token}
+
+@router.get("/tenants", response_model=List[dict])
+def list_available_tenants(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List active organizations for tenant switching.
+    RESTRICTED: Only CALRIMS Platform Super Admins can list and switch across all organizations.
+    Regular Organization Admins and HR users are strictly locked to their own organization.
+    """
+    from sqlalchemy import text
+
+    # If user is not the CALRIMS platform super admin, return only their current tenant
+    if not is_platform_super_admin(current_user):
+        tenant_ctx = getattr(request.state, "tenant", None)
+        if tenant_ctx:
+            return [{
+                "id": str(tenant_ctx.id),
+                "name": tenant_ctx.name,
+                "slug": tenant_ctx.slug,
+                "logo_url": tenant_ctx.logo_url,
+                "status": tenant_ctx.status,
+            }]
+        return []
+
+    # Platform Super Admin can see and switch between all organizations
+    rows = db.execute(
+        text("SELECT id, name, slug, logo_url, status FROM public.tenants WHERE status = 'active' ORDER BY name ASC")
+    ).fetchall()
+    return [
+        {
+            "id": str(r[0]),
+            "name": r[1],
+            "slug": r[2],
+            "logo_url": r[3],
+            "status": r[4],
+        }
+        for r in rows
+    ]
+
+
 
 
 @router.put("/me", response_model=UserResponse)

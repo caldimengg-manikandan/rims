@@ -87,3 +87,4 @@ colorama==0.4.6
 nh3>=0.2.14
 sentry-sdk==2.5.1
 websockets==15.0.1
+docker>=7.0.0

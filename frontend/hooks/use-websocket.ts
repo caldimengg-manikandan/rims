@@ -20,25 +20,36 @@ export function useWebSocket(user: { id: number; role: string } | null) {
 
       // 1. Fetch short-lived WS authentication ticket using session credentials
       try {
+        const headers: Record<string, string> = {}
+        if (typeof window !== 'undefined') {
+          const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
+          if (authToken && authToken !== 'cookie_managed') {
+            headers['Authorization'] = `Bearer ${authToken}`
+          }
+        }
+
         const tokenRes = await fetch(`${apiBase}/api/auth/ws-token`, {
           credentials: 'include',
+          headers,
           cache: 'no-store',
         });
         if (tokenRes.ok) {
           const tokenData = await tokenRes.json();
           wsToken = tokenData.token || tokenData?.data?.token || null;
+        } else if (tokenRes.status === 401) {
+          // Unauthenticated: do not connect or spam reconnect
+          return;
         }
       } catch (err) {
         // Backend or network error fetching token
       }
 
-      if (!isMountedRef.current || !user) return;
+      if (!isMountedRef.current || !user || !wsToken) return;
 
       // 2. Build the WebSocket URL with token query parameter
       const wsBase = apiBase.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
-      const wsUrl = wsToken
-        ? `${wsBase}/ws/notifications?token=${encodeURIComponent(wsToken)}`
-        : `${wsBase}/ws/notifications`;
+      const wsUrl = `${wsBase}/ws/notifications?token=${encodeURIComponent(wsToken)}`;
+
 
       // Close previous connection if exists
       if (wsRef.current) {

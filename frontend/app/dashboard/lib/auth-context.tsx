@@ -105,8 +105,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 15000)
           try {
+            const headers: Record<string, string> = {}
+            if (typeof window !== 'undefined') {
+              const storedToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
+              if (storedToken && storedToken !== 'cookie_managed') {
+                headers['Authorization'] = `Bearer ${storedToken}`
+              }
+            }
+
             const response = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
               credentials: 'include',
+              headers,
               signal: controller.signal,
               cache: 'no-store',
             })
@@ -126,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             return { userData: null, status: response.status, isOffline: false }
           } catch (error: any) {
+
             if (error?.name === 'AbortError') {
               console.warn('Request timeout fetching user info. Server might be cold starting.')
               return { userData: null, status: 0, isOffline: true }
@@ -303,24 +313,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Backend wraps JSON in FastAPI StandardizedAPIRoute: { success, data, error }
       const payload = data && typeof data === 'object' && 'data' in data && data.success !== undefined
-        ? (data as { data?: { user?: unknown; message?: string } }).data
+        ? (data as { data?: { user?: unknown; message?: string; token?: string; access_token?: string } }).data
         : data
       const userFromPayload = payload && typeof payload === 'object' && 'user' in payload
         ? (payload as { user?: unknown }).user
         : undefined
+      const tokenFromPayload = payload && typeof payload === 'object' && ('token' in payload || 'access_token' in payload)
+        ? (payload as any).token || (payload as any).access_token
+        : undefined
 
-      setToken("cookie_managed")
+      if (tokenFromPayload) {
+        setToken(tokenFromPayload)
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('auth_token', tokenFromPayload)
+          sessionStorage.setItem('auth_token', tokenFromPayload)
+          // Set cookie on current domain and root .localhost so Next.js middleware and SSR receives it
+          document.cookie = `access_token=${tokenFromPayload}; path=/; max-age=604800; SameSite=Lax`
+          try {
+            document.cookie = `access_token=${tokenFromPayload}; path=/; domain=.localhost; max-age=604800; SameSite=Lax`
+          } catch (_) {}
+        }
+      } else {
+        setToken("cookie_managed")
+      }
+
       if (typeof window !== 'undefined') localStorage.setItem(SESSION_PRESENT_KEY, '1')
       if (userFromPayload) {
         setUser(userFromPayload as User)
       } else {
-        // Fallback for older backend versions (though we just updated it)
         await fetchCurrentUser()
       }
 
       // Force a post-login refresh so protected routes/SWR don't race the cookie setup.
       await fetchCurrentUser({ silent: true })
     } catch (error) {
+
       // Don't log expected authentication errors to console (wrong password, etc.)
       // as they're handled by the UI and would trigger Next.js error overlay
       if (error instanceof TypeError && error.message.includes('fetch')) {

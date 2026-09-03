@@ -9,12 +9,12 @@ if __name__ == "__main__":
     # Pre-create a socket with SO_REUSEADDR so Windows releases TIME_WAIT sockets.
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", 10000))
+    sock.bind(("0.0.0.0", 10000))
     sock.set_inheritable(True)
 
     config = uvicorn.Config(
         "app.main:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=10000,
         workers=1,          # workers > 1 requires CLI; use 1 with pre-bound socket
         log_level="info",

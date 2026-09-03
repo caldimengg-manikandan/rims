@@ -5,7 +5,7 @@ from app.infrastructure.database import get_db
 from app.domain.models import User, Job, Application, JobVersion
 from app.domain.schemas import JobCreate, JobUpdate, JobResponse, JobExtractionResponse, JobPublicResponse
 from app.core.auth import get_current_hr
-from app.core.ownership import validate_hr_ownership, get_tenant_context
+from app.core.ownership import validate_hr_ownership, get_tenant_context, validate_tenant_ownership
 from app.core.tenant_context import TenantContext
 from app.core.rate_limiter import limiter
 from app.services.ai_service import extract_job_details
@@ -107,7 +107,7 @@ def _validate_job_content(title: str, description: str, db: Session = None, curr
         raise HTTPException(status_code=400, detail="Description must contain meaningful text")
 
 
-def _validate_interview_pipeline(job_data, experience_level: str):
+def _validate_interview_pipeline(job_data, experience_level: str, db: Session = None):
     """
     Validate interview pipeline fields and return sanitized values.
     Raises HTTPException(400) on invalid combinations.
@@ -159,6 +159,40 @@ def _validate_interview_pipeline(job_data, experience_level: str):
                 detail=f"When interview mode is '{interview_mode}', either upload a question file or select a repository set."
             )
 
+    # Rule 6: Coding Round validation
+    coding_round_enabled = getattr(job_data, 'coding_round_enabled', False) or False
+    coding_round_duration_minutes = getattr(job_data, 'coding_round_duration_minutes', 60) or 60
+    coding_repo_set_id = getattr(job_data, 'coding_repo_set_id', None)
+    coding_allowed_languages = getattr(job_data, 'coding_allowed_languages', None)
+
+    if coding_round_enabled:
+        if not coding_repo_set_id:
+            raise HTTPException(
+                status_code=400,
+                detail="When Coding Round is enabled, a Coding Question Set must be selected."
+            )
+        if not coding_allowed_languages or len(coding_allowed_languages) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="When Coding Round is enabled, at least one allowed programming language must be selected."
+            )
+        if db is not None and coding_repo_set_id:
+            from app.domain.models import CodingQuestionSet
+            q_set = db.query(CodingQuestionSet).filter(CodingQuestionSet.id == coding_repo_set_id).first()
+            if not q_set:
+                raise HTTPException(status_code=400, detail="The selected Coding Question Set was not found.")
+            set_langs = set(q_set.supported_languages or [])
+            job_langs = set(coding_allowed_languages)
+            if not job_langs.issubset(set_langs):
+                diff = job_langs - set_langs
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Job allowed languages ({', '.join(sorted(job_langs))}) must be a subset of the selected "
+                        f"Question Set supported languages ({', '.join(sorted(set_langs))}). Disallowed: {', '.join(sorted(diff))}."
+                    )
+                )
+
     return {
         "aptitude_enabled": aptitude_enabled,
         "first_level_enabled": first_level_enabled,
@@ -172,6 +206,10 @@ def _validate_interview_pipeline(job_data, experience_level: str):
         "aptitude_repo_set_id": getattr(job_data, 'aptitude_repo_set_id', None),
         "technical_repo_set_id": getattr(job_data, 'technical_repo_set_id', None),
         "behavioural_repo_set_id": getattr(job_data, 'behavioural_repo_set_id', None),
+        "coding_round_enabled": coding_round_enabled,
+        "coding_round_duration_minutes": coding_round_duration_minutes,
+        "coding_repo_set_id": coding_repo_set_id,
+        "coding_allowed_languages": coding_allowed_languages,
     }
 
 
@@ -397,7 +435,7 @@ def create_job(
 
     # Use centralized validation
     _validate_job_content(job_data.title, job_data.description, db)
-    pipeline = _validate_interview_pipeline(job_data, job_data.experience_level)
+    pipeline = _validate_interview_pipeline(job_data, job_data.experience_level, db=db)
 
     description = job_data.description
     if getattr(job_data, "requirements", None):
@@ -466,6 +504,11 @@ def create_job(
         aptitude_repo_set_id=pipeline.get("aptitude_repo_set_id"),
         technical_repo_set_id=pipeline.get("technical_repo_set_id"),
         behavioural_repo_set_id=pipeline.get("behavioural_repo_set_id"),
+        # Coding Round
+        coding_round_enabled=pipeline.get("coding_round_enabled", False),
+        coding_round_duration_minutes=pipeline.get("coding_round_duration_minutes", 60),
+        coding_repo_set_id=pipeline.get("coding_repo_set_id"),
+        coding_allowed_languages=pipeline.get("coding_allowed_languages"),
     )
     
     try:
@@ -616,7 +659,8 @@ def get_public_job(
 def get_job(
     job_id: str,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get job details (HR only). Supports numeric ID or JOB- identifier."""
     job = None
@@ -631,6 +675,7 @@ def get_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found"
         )
+    validate_tenant_ownership(job, tenant_ctx, resource_name="job")
     validate_hr_ownership(job, current_user, resource_name="job")
     return job
 
@@ -639,7 +684,8 @@ def update_job(
     job_id: int,
     job_data: JobUpdate,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Update job (HR only)"""
     job = db.query(Job).filter(Job.id == job_id).first()
@@ -649,6 +695,7 @@ def update_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found"
         )
+    validate_tenant_ownership(job, tenant_ctx, resource_name="job")
     validate_hr_ownership(job, current_user, resource_name="job")
     
     _validate_job_content(
@@ -720,6 +767,10 @@ def update_job(
         job_data.behavioural_repo_set_id is not None,
         job_data.behavioral_role is not None,
         job_data.aptitude_mode is not None,
+        job_data.coding_round_enabled is not None,
+        job_data.coding_round_duration_minutes is not None,
+        job_data.coding_repo_set_id is not None,
+        job_data.coding_allowed_languages is not None,
     ])
 
     if pipeline_fields_sent:
@@ -740,8 +791,12 @@ def update_job(
             behavioral_role = job_data.behavioral_role if job_data.behavioral_role is not None else job.behavioral_role
             aptitude_mode = job_data.aptitude_mode if getattr(job_data, "aptitude_mode", None) is not None else job.aptitude_mode
             aptitude_questions_file = job_data.aptitude_questions_file if job_data.aptitude_questions_file is not None else job.aptitude_questions_file
+            coding_round_enabled = job_data.coding_round_enabled if job_data.coding_round_enabled is not None else job.coding_round_enabled
+            coding_round_duration_minutes = job_data.coding_round_duration_minutes if job_data.coding_round_duration_minutes is not None else job.coding_round_duration_minutes
+            coding_repo_set_id = job_data.coding_repo_set_id if job_data.coding_repo_set_id is not None else job.coding_repo_set_id
+            coding_allowed_languages = job_data.coding_allowed_languages if job_data.coding_allowed_languages is not None else job.coding_allowed_languages
 
-        pipeline = _validate_interview_pipeline(_Combined(), effective_exp)
+        pipeline = _validate_interview_pipeline(_Combined(), effective_exp, db=db)
         job.aptitude_enabled = pipeline["aptitude_enabled"]
         job.first_level_enabled = pipeline["first_level_enabled"]
         job.interview_mode = pipeline["interview_mode"]
@@ -751,6 +806,10 @@ def update_job(
         job.behavioural_repo_set_id = pipeline.get("behavioural_repo_set_id")
         job.behavioral_role = pipeline.get("behavioral_role") or "general"
         job.aptitude_mode = pipeline.get("aptitude_mode") or "ai"
+        job.coding_round_enabled = pipeline.get("coding_round_enabled", False)
+        job.coding_round_duration_minutes = pipeline.get("coding_round_duration_minutes", 60)
+        job.coding_repo_set_id = pipeline.get("coding_repo_set_id")
+        job.coding_allowed_languages = pipeline.get("coding_allowed_languages")
         
         if pipeline["aptitude_config"] is not None:
             job.aptitude_config = pipeline["aptitude_config"]
@@ -774,7 +833,8 @@ def update_job(
 def delete_job(
     job_id: int,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Delete/Close job (HR only)"""
     job = db.query(Job).filter(Job.id == job_id).first()
@@ -784,6 +844,7 @@ def delete_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found"
         )
+    validate_tenant_ownership(job, tenant_ctx, resource_name="job")
     validate_hr_ownership(job, current_user, resource_name="job")
     
     try:

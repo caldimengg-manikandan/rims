@@ -42,6 +42,7 @@ def _build_reports_query(
     score_min: Optional[float] = None,
     score_max: Optional[float] = None,
     search: Optional[str] = None,
+    tenant_id: Optional[Any] = None,
 ):
     """Shared filtered query for reports list, heatmap, and CSV export."""
     from app.domain.models import ResumeExtraction
@@ -59,7 +60,11 @@ def _build_reports_query(
         )
     )
 
+    if tenant_id:
+        query = query.filter(Application.tenant_id == tenant_id)
+
     hr_scope = _hr_can_see_application(current_user)
+
     if hr_scope is not None:
         query = query.filter(hr_scope)
 
@@ -229,14 +234,20 @@ def get_dashboard_analytics(
                         "error": None
                     }
 
+        # Resolve tenant context for multi-tenant data isolation
+        tenant_ctx = getattr(request.state, "tenant", None)
+        tenant_id = tenant_ctx.id if tenant_ctx else None
+
         # Call service with filters
         metadata = AnalyticsService.get_dashboard(
             db, 
             hr_id=hr_id, 
             job_id=resolved_job_id,
             from_date=from_date,
-            to_date=to_date
+            to_date=to_date,
+            tenant_id=tenant_id
         )
+
 
         # Standard Success Format
         return {
@@ -278,6 +289,9 @@ def get_reports_heatmap(
 ):
     """Lightweight date histogram for the reports calendar (no Q&A payloads)."""
     try:
+        tenant_ctx = getattr(request.state, "tenant", None)
+        tenant_id = tenant_ctx.id if tenant_ctx else None
+
         query = _build_reports_query(
             db,
             current_user,
@@ -290,7 +304,9 @@ def get_reports_heatmap(
             score_min=score_min,
             score_max=score_max,
             search=search,
+            tenant_id=tenant_id,
         )
+
         report_date = func.coalesce(
             InterviewReport.created_at,
             Interview.created_at,
@@ -338,6 +354,9 @@ def export_interview_reports_csv(
     import io
 
     try:
+        tenant_ctx = getattr(request.state, "tenant", None)
+        tenant_id = tenant_ctx.id if tenant_ctx else None
+
         query = _build_reports_query(
             db,
             current_user,
@@ -350,7 +369,9 @@ def export_interview_reports_csv(
             score_min=score_min,
             score_max=score_max,
             search=search,
+            tenant_id=tenant_id,
         )
+
         report_date = func.coalesce(
             InterviewReport.created_at,
             Interview.created_at,
@@ -478,6 +499,9 @@ def get_interview_reports(
     OR Applications that are in 'review_later'.
     """
     try:
+        tenant_ctx = getattr(request.state, "tenant", None)
+        tenant_id = tenant_ctx.id if tenant_ctx else None
+
         logger.info(f"[REPORTS] Fetching reports: job_id={job_id}, status={status}, exp={experience}, skill={skill}, from={from_date}, to={to_date}, search={search}")
         query = _build_reports_query(
             db,
@@ -491,6 +515,7 @@ def get_interview_reports(
             score_min=score_min,
             score_max=score_max,
             search=search,
+            tenant_id=tenant_id,
         )
         hr_scope = _hr_can_see_application(current_user)
 
@@ -500,8 +525,11 @@ def get_interview_reports(
         # ── Compute global metrics for Applied and Attended ──
         try:
             base_app_query = db.query(Application).outerjoin(Job, Application.job_id == Job.id)
+            if tenant_id:
+                base_app_query = base_app_query.filter(Application.tenant_id == tenant_id)
             if hr_scope is not None:
                 base_app_query = base_app_query.filter(hr_scope)
+
             if job_id and str(job_id).lower() != "all":
                 job_id_str = str(job_id).strip()
                 if job_id_str.isdigit():

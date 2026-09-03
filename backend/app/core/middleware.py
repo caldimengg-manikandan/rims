@@ -310,13 +310,19 @@ def _resolve_slug_from_host(host: str) -> Optional[str]:
     # Ignore localhost
     if host in ("localhost", "127.0.0.1", "0.0.0.0"):
         return None
+    # Support *.localhost (RFC 6761)
+    if host.endswith(".localhost"):
+        sub = host[:-len(".localhost")]
+        if sub and sub not in ("www", "api", "mail", "admin", "static"):
+            return sub
     parts = host.split(".")
-    if len(parts) >= 3:
+    if len(parts) >= 2:
         candidate = parts[0]
         # Reject obviously generic subdomains
         if candidate not in ("www", "api", "mail", "admin", "static"):
             return candidate
     return None
+
 
 
 def _resolve_slug_from_jwt(authorization: str) -> Optional[str]:

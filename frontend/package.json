@@ -18,6 +18,7 @@
     "@floating-ui/react": "^0.27.17",
     "@hookform/resolvers": "^3.10.0",
     "@mediapipe/face_mesh": "^0.4.1633559619",
+    "@monaco-editor/react": "^4.7.0",
     "@mui/material": "^9.0.0",
     "@mui/x-date-pickers": "^9.0.4",
     "@radix-ui/react-accordion": "1.2.2",
@@ -108,47 +109,3 @@
     "typescript": "^5"
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

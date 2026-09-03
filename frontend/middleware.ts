@@ -24,8 +24,14 @@ function extractSlugFromHost(host: string): string | null {
     return null;
   }
 
+  // Support *.localhost out of the box (e.g., acme.localhost, nexus.localhost)
+  if (hostname.endsWith('.localhost')) {
+    const sub = hostname.slice(0, -'.localhost'.length);
+    if (sub && !RESERVED_SUBDOMAINS.has(sub)) return sub;
+  }
+
   const parts = hostname.split('.');
-  if (parts.length < 3) return null;
+  if (parts.length < 2) return null;
 
   const candidate = parts[0];
   if (RESERVED_SUBDOMAINS.has(candidate)) return null;
@@ -55,19 +61,6 @@ export async function middleware(request: NextRequest) {
     tenantSlug = 'default';
   }
 
-  // 2. Tenant-branded public route rewriting (e.g. acme.rims.app/jobs)
-  const slugFromSubdomain = extractSlugFromHost(host);
-  if (slugFromSubdomain) {
-    const publicPaths = ['/jobs', '/careers', '/apply'];
-    const matchedPublic = publicPaths.find((p) => pathname === p || pathname.startsWith(p + '/'));
-    if (matchedPublic) {
-      const rewriteUrl = request.nextUrl.clone();
-      rewriteUrl.pathname = `/_tenants/${encodeURIComponent(slugFromSubdomain)}${pathname}`;
-      const response = NextResponse.rewrite(rewriteUrl);
-      response.headers.set('x-tenant-slug', tenantSlug);
-      return response;
-    }
-  }
 
   const token = request.cookies.get('access_token')?.value || request.cookies.get('token')?.value;
 

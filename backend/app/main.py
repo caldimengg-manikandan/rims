@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager
 from app.core.auth import hash_password
 from app.core.config import get_settings
 from app.infrastructure.database import Base, engine
-from app.api import auth, jobs, applications, interviews, decisions, notifications, analytics, tickets, support, hr_tickets, ops_email, settings as hr_settings, onboarding, repository, websocket
+from app.api import auth, jobs, applications, interviews, decisions, notifications, analytics, tickets, support, hr_tickets, ops_email, settings as hr_settings, onboarding, repository, websocket, coding as coding_api
 from app.domain.models import (
     User, Job, Application, ResumeExtraction, 
     Interview, InterviewQuestion, InterviewAnswer,
@@ -460,20 +460,22 @@ app.add_middleware(TenantResolutionMiddleware)
 
 allowed_origins = list(set(settings.get_allowed_origins()))
 if settings.env == "development":
-    allowed_origins = list(set(allowed_origins + ["http://localhost:3000", "http://127.0.0.1:3000"]))
+    allowed_origins = list(set(allowed_origins + [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:10000",
+        "http://127.0.0.1:10000"
+    ]))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"^https?://([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=[
-        "Content-Type", "Authorization", "X-Request-ID", "X-Requested-With",
-        "TEST_ADMIN_SECRET", "X-Request-Source",
-        # Multi-tenancy headers
-        "X-Tenant-ID", "X-Tenant-Slug",
-    ],
+    allow_headers=["*"],
 )
+
 
 def check_tcp_connection(host: str, port: int, timeout: float = 2.0) -> str:
     """Helper to check TCP connection to a host and port.
@@ -699,6 +701,7 @@ app.include_router(hr_settings.router)
 app.include_router(onboarding.router)
 app.include_router(repository.router)
 app.include_router(websocket.router)
+app.include_router(coding_api.router)
 
 
 @app.exception_handler(RequestValidationError)
