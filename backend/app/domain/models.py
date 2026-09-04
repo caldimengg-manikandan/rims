@@ -23,7 +23,7 @@ class Tenant(Base):
     """Represents a tenant (organisation) in the shared-database multi-tenant architecture."""
     __tablename__ = "tenants"
     __table_args__ = (
-        CheckConstraint("status IN ('active', 'suspended', 'trial')", name="check_tenants_status"),
+        CheckConstraint("status IN ('pending', 'active', 'rejected', 'suspended', 'trial', 'deactivated')", name="check_tenants_status"),
         Index("idx_tenants_slug", "slug"),
         Index("idx_tenants_custom_domain", "custom_domain"),
     )
@@ -44,6 +44,8 @@ class Tenant(Base):
     interviews        = relationship("Interview",        back_populates="tenant", cascade="all, delete-orphan")
     attachment_resumes = relationship("AttachmentResume", back_populates="tenant", cascade="all, delete-orphan")
     notifications     = relationship("Notification",     back_populates="tenant", cascade="all, delete-orphan")
+    users             = relationship("User",             back_populates="tenant")
+    question_sets     = relationship("QuestionSet",     back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Tenant slug={self.slug!r} status={self.status!r}>"
@@ -53,7 +55,7 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint(
-            "role IN ('super_admin', 'hr', 'pending_hr', 'candidate')",
+            "role IN ('root-admin', 'root_admin', 'super_admin', 'hr', 'pending_hr', 'candidate')",
             name='check_users_role',
         ),
         CheckConstraint("approval_status IN ('pending', 'approved', 'rejected')", name='check_users_approval_status'),
@@ -84,7 +86,16 @@ class User(Base):
     imap_password = Column(EncryptedText, nullable=True)
     auto_sync_enabled = Column(Boolean, default=False)
 
+    # Multi-tenancy: organization this user belongs to
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
+    tenant = relationship("Tenant", back_populates="users")
     jobs = relationship("Job", back_populates="hr")
     hiring_decisions = relationship("HiringDecision", back_populates="hr")
     notifications = relationship("Notification", back_populates="user")
@@ -853,8 +864,18 @@ class QuestionSet(Base):
     questions = Column(Text, nullable=False)   # JSON array of question objects
     topic_tags = Column(Text, nullable=True)   # JSON array of topic strings for display
     hr_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    # Multi-tenancy: question sets scoped to organization
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now(), onupdate=get_ist_now)
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="question_sets")
 
 
 class CandidateSkill(Base):

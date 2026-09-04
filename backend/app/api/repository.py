@@ -14,6 +14,8 @@ import logging
 from app.infrastructure.database import get_db
 from app.domain.models import QuestionSet
 from app.core.auth import get_current_hr
+from app.core.ownership import get_tenant_context, validate_tenant_ownership
+from app.core.tenant_context import TenantContext
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/repository", tags=["Repository"])
@@ -131,13 +133,16 @@ def list_question_sets(
     job_role: Optional[str] = Query(None, description="Fuzzy-match against job_roles tags"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """List all question sets, optionally filtered by round_type and/or job_role."""
+    """List all question sets, optionally filtered by round_type and/or job_role, scoped to active tenant."""
     try:
         _ensure_question_sets_table(db)
         
-        # Initialize the query object
-        qs = db.query(QuestionSet)
+        # Initialize the query object scoped to active tenant or shared system sets
+        qs = db.query(QuestionSet).filter(
+            or_(QuestionSet.tenant_id == tenant_ctx.id, QuestionSet.tenant_id == None)
+        )
         
         if round_type:
             qs = qs.filter(QuestionSet.round_type == round_type)
@@ -191,30 +196,31 @@ def get_question_set(
     request: Request, set_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     _ensure_question_sets_table(db)
-    query = db.query(QuestionSet).filter(QuestionSet.id == set_id)
-    s = query.first()
+    s = db.query(QuestionSet).filter(QuestionSet.id == set_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Question set not found.")
-    questions = _parse_json_field(s.questions, [])
+    validate_tenant_ownership(s, tenant_ctx, resource_name="question set")
     return QuestionSetDetail(
         id=s.id,
         title=s.title,
         round_type=s.round_type,
         job_roles=_parse_json_field(s.job_roles, []),
-        question_count=len(questions),
+        question_count=len(_parse_json_field(s.questions, [])),
         topic_tags=_parse_json_field(s.topic_tags, []),
-        questions=questions,
+        questions=_parse_json_field(s.questions, []),
     )
 
 
 @router.post("/sets", response_model=QuestionSetResponse, status_code=201)
-@limiter.limit("60/minute")
+@limiter.limit("30/minute")
 def create_question_set(
     request: Request, payload: QuestionSetCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     if payload.round_type not in ("aptitude", "technical", "behavioural"):
         raise HTTPException(status_code=400, detail="round_type must be aptitude, technical, or behavioural.")
@@ -227,9 +233,10 @@ def create_question_set(
 
     from sqlalchemy import func
     
-    # Check for duplicate title (Global Uniqueness - R017) case-insensitive
+    # Check for duplicate title within the active tenant
     existing = db.query(QuestionSet).filter(
-        func.lower(QuestionSet.title) == payload.title.strip().lower()
+        func.lower(QuestionSet.title) == payload.title.strip().lower(),
+        QuestionSet.tenant_id == tenant_ctx.id
     ).first()
     if existing:
         raise HTTPException(
@@ -245,6 +252,7 @@ def create_question_set(
         questions=json.dumps(payload.questions),
         topic_tags=json.dumps(payload.topic_tags),
         hr_id=current_user.id,
+        tenant_id=tenant_ctx.id,
     )
     db.add(s)
     db.commit()
@@ -266,11 +274,13 @@ def update_question_set(
     payload: QuestionSetCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     query = db.query(QuestionSet).filter(QuestionSet.id == set_id)
     s = query.first()
     if not s:
         raise HTTPException(status_code=404, detail="Question set not found.")
+    validate_tenant_ownership(s, tenant_ctx, resource_name="question set")
     if payload.round_type not in ("aptitude", "technical", "behavioural"):
         raise HTTPException(status_code=400, detail="round_type must be aptitude, technical, or behavioural.")
 
@@ -278,9 +288,10 @@ def update_question_set(
     
     from sqlalchemy import func
 
-    # Check for duplicate title (Global Uniqueness - R017) case-insensitive
+    # Check for duplicate title within the active tenant
     existing = db.query(QuestionSet).filter(
         func.lower(QuestionSet.title) == payload.title.strip().lower(),
+        QuestionSet.tenant_id == tenant_ctx.id,
         QuestionSet.id != set_id
     ).first()
     if existing:
@@ -313,10 +324,12 @@ def delete_question_set(
     request: Request, set_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     query = db.query(QuestionSet).filter(QuestionSet.id == set_id)
     s = query.first()
     if not s:
         raise HTTPException(status_code=404, detail="Question set not found.")
+    validate_tenant_ownership(s, tenant_ctx, resource_name="question set")
     db.delete(s)
     db.commit()

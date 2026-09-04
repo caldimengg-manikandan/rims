@@ -19,8 +19,8 @@ export default function SettingsPage() {
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
 
-    // Role check: Only super_admin (Organization Admin) can access company-wide configs
-    const isOrgAdmin = user?.role === 'super_admin'
+    // Role check: super_admin (Organization Admin) and root-admin can access company-wide configs
+    const isOrgAdmin = ['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '')
 
     const [settings, setSettings] = useState({
         company_logo_url: '',

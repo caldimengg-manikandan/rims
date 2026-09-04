@@ -34,6 +34,8 @@ function LoginContent() {
   useEffect(() => {
     if (searchParams.get('expired') === 'true') {
       setError('Session expired. Please login again.')
+    } else if (searchParams.get('error') === 'tenant_mismatch') {
+      setError('Invalid credentials')
     }
   }, [searchParams])
 
@@ -81,7 +83,11 @@ function LoginContent() {
       router.push(restoreUrl)
     } catch (err) {
       hasSubmitted.current = false
-      setError(err instanceof Error ? err.message : 'Login failed')
+      if (err instanceof Error && err.message.toLowerCase().includes('connect')) {
+        setError(err.message)
+      } else {
+        setError('Invalid credentials')
+      }
     } finally {
       setIsSubmitting(false)
     }

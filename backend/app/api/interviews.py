@@ -26,7 +26,7 @@ from app.domain.schemas import (
 
 
 from app.core.auth import get_current_user, get_current_hr, get_current_interview, get_current_interview_any_status, pwd_context, create_access_token
-from app.core.ownership import validate_hr_ownership, validate_hr_ownership_for_interview, get_tenant_context, get_optional_tenant_context
+from app.core.ownership import validate_hr_ownership, validate_hr_ownership_for_interview, validate_tenant_ownership, get_tenant_context, get_optional_tenant_context
 from app.core.tenant_context import TenantContext
 from app.services.ai_service import (
     generate_adaptive_interview_question,
@@ -484,8 +484,12 @@ def access_interview(
         token_expiry_delta = max(timedelta(hours=4), timedelta(minutes=duration_mins + 30))
         # Use the same isolated interview secret expected by middleware/API auth.
         interview_secret = _get_interview_jwt_secret()
+        token_data = {"sub": str(interview.id), "role": "interview"}
+        if interview.tenant_id:
+            token_data["app_metadata"] = {"tenant_id": str(interview.tenant_id)}
+            token_data["tenant_id"] = str(interview.tenant_id)
         token = create_access_token(
-            data={"sub": str(interview.id), "role": "interview"},
+            data=token_data,
             expires_delta=token_expiry_delta,
             secret=interview_secret
         )
@@ -601,6 +605,7 @@ def generate_test_token(
     interview_id: int,
     interview_requester: User = Depends(get_current_hr),
     db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """
     TEST-ONLY endpoint: generate a raw access key for an interview.
@@ -616,6 +621,7 @@ def generate_test_token(
     interview = db.query(Interview).filter(Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
+    validate_tenant_ownership(interview, tenant_ctx, resource_name="interview")
     if interview.application:
         validate_hr_ownership(interview.application, interview_requester, resource_name="interview")
 
@@ -1974,7 +1980,8 @@ def abandon_interview(
 def get_interview(
     interview_id: int,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get interview details (HR/super_admin only; prevents IDOR for dashboard users)."""
     interview = (
@@ -1990,6 +1997,7 @@ def get_interview(
             detail="Interview not found"
         )
 
+    validate_tenant_ownership(interview, tenant_ctx, resource_name="interview")
     validate_hr_ownership_for_interview(interview, current_user, resource_name="interview")
     return interview
 
@@ -1999,7 +2007,8 @@ async def get_interview_report(
     request: Request,
     interview_id: int,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get interview report (HR only)"""
     interview = await asyncio.to_thread(lambda: db.query(Interview).filter(Interview.id == interview_id).first())
@@ -2009,6 +2018,7 @@ async def get_interview_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Interview not found"
         )
+    validate_tenant_ownership(interview, tenant_ctx, resource_name="interview")
     validate_hr_ownership_for_interview(interview, current_user, resource_name="interview")
     
     report = await asyncio.to_thread(lambda: db.query(InterviewReport).filter(

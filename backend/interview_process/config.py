@@ -10,18 +10,15 @@ if not os.path.exists(env_path):
 
 load_dotenv(env_path, override=True)
 
-OPENROUTER_API_KEY = os.getenv("GROQ_API_KEY")
+AI_PROVIDER = (os.getenv("AI_PROVIDER") or "groq").lower().strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
-# Fallback or Error
-if not OPENROUTER_API_KEY:
-    print(f"WARNING: GROQ_API_KEY not found in {env_path}. Checking system env...")
-    OPENROUTER_API_KEY = os.getenv("GROQ_API_KEY")
-
-if not OPENROUTER_API_KEY:
-    print("CRITICAL WARNING: GROQ_API_KEY is missing. AI features will fail.")
-
-OPENROUTER_BASE_URL = "https://api.groq.com/openai/v1"
-MODEL_NAME = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+if AI_PROVIDER == "openrouter":
+    MODEL_NAME = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct")
+else:
+    MODEL_NAME = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # Interview settings
 MAX_QUESTIONS = 20

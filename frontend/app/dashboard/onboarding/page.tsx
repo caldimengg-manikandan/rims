@@ -97,7 +97,7 @@ export default function OnboardingPage() {
                               msg.toLowerCase().includes('template') || 
                               msg.toLowerCase().includes('configured') ||
                               msg.toLowerCase().includes('missing')
-        if (user?.role === 'super_admin' && isConfigError) {
+        if (['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '') && isConfigError) {
             toast.error(msg, {
                 action: {
                     label: 'Go to Settings',
@@ -199,7 +199,7 @@ export default function OnboardingPage() {
     const [previewHtml, setPreviewHtml] = useState<string | null>(null)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
 
-    if (user && user.role !== 'hr' && user.role !== 'super_admin') {
+    if (user && !['hr', 'super_admin', 'root-admin', 'root_admin'].includes(user.role)) {
         return (
             <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
                 <ShieldAlert className="h-16 w-16 text-destructive opacity-20" />

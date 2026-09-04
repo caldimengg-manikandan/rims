@@ -28,8 +28,8 @@ def validate_hr_ownership_for_interview(interview, current_user, *, resource_nam
     if interview is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview not found")
 
-    # Super admins can bypass
-    if current_user.role.lower() == "super_admin":
+    # Admins (root-admin and tenant super_admin) can bypass
+    if current_user.role.lower() in ("root-admin", "root_admin", "super_admin"):
         return
 
     application = getattr(interview, "application", None)
@@ -45,7 +45,7 @@ def validate_hr_ownership(resource, current_user, *, resource_name: str = "resou
     Centralized ownership guard for all non-admin users.
     Checks both direct assignment (hr_id) and job-level ownership.
     """
-    if current_user.role.lower() == "super_admin":
+    if current_user.role.lower() in ("root-admin", "root_admin", "super_admin"):
         return
 
     # Check Direct Ownership (Resource assigned to this HR)

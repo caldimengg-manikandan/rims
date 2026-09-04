@@ -1,17 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Response, Request
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 from app.infrastructure.database import get_db
 from app.domain.models import User, Job, Application, Tenant
 from app.domain.schemas import UserRegister, UserLogin, UserResponse, UserVerifyOTP, ForgotPasswordRequest, ResetPasswordRequest, UserProfileUpdate, UserListResponse, CompanyRegistrationRequest
-from app.core.auth import hash_password, verify_password, create_access_token, get_current_user, get_current_admin
+from app.core.auth import hash_password, verify_password, create_access_token, get_current_user, get_current_admin, is_root_admin, is_any_admin
 from app.services.email_service import send_otp_email, send_password_reset_email
 from app.core.config import get_settings
 import secrets
 import string
 import logging
 from app.core.timezone import get_ist_now, to_naive_ist
+from app.core.ownership import validate_tenant_ownership, get_tenant_context, get_optional_tenant_context
+from app.core.tenant_context import TenantContext
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +117,9 @@ def register(request: Request, user_data: UserRegister, background_tasks: Backgr
     hashed_otp = hash_password(raw_otp)
     hashed_password = hash_password(user_data.password)
 
+    tenant_ctx = getattr(request.state, "tenant", None)
+    tenant_id = tenant_ctx.id if tenant_ctx else None
+
     new_user = User(
         email=user_data.email,
         password_hash=hashed_password,
@@ -124,7 +129,8 @@ def register(request: Request, user_data: UserRegister, background_tasks: Backgr
         is_verified=False,
         approval_status="pending",
         otp_code=hashed_otp,
-        otp_expiry=get_ist_now() + timedelta(minutes=30)
+        otp_expiry=get_ist_now() + timedelta(minutes=30),
+        tenant_id=tenant_id
     )
 
     try:
@@ -272,64 +278,36 @@ def register_company(
         slug=slug,
         logo_url=data.logo_url.strip() if data.logo_url else None,
         settings=tenant_settings,
-        status="active"
+        status="pending"
     )
     db.add(new_tenant)
     db.flush()
 
-    # 4. Create Primary Super Administrator in public.users
-
+    # 4. Create Primary Super Administrator in public.users (Pending approval)
     admin_user = User(
         email=admin_email,
         full_name=data.admin_name.strip(),
         password_hash=hash_password(data.admin_password),
         role="super_admin",
-        is_active=True,
+        tenant_id=uuid.UUID(tenant_id),
+        is_active=False,
         is_verified=True,
-        approval_status="approved",
+        approval_status="pending",
     )
     db.add(admin_user)
     db.commit()
     db.refresh(admin_user)
 
-    # 5. Generate authenticated session token
-    token_data = {
-        "sub": str(admin_user.id),
-        "role": admin_user.role,
-        "tenant_id": tenant_id,
-        "tenant_slug": slug,
-    }
-    access_token = create_access_token(token_data, expires_delta=timedelta(days=7))
-
-    # Set secure HttpOnly cookie
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=settings.env == "production",
-        samesite="lax",
-        max_age=7 * 24 * 3600,
-        path="/"
-    )
-
+    # 5. Do NOT log the tenant admin in; tenant requires Root Admin approval
     return {
         "success": True,
-        "message": f"Organization '{data.company_name}' successfully created.",
+        "message": "Thank you for registering. Please wait while we set things up for you. We’ll contact you soon.",
         "tenant": {
             "id": tenant_id,
             "name": data.company_name.strip(),
             "slug": slug,
-            "logo_url": data.logo_url.strip() if data.logo_url else None,
-            "status": "active",
-        },
-        "user": {
-            "id": admin_user.id,
-            "email": admin_user.email,
-            "full_name": admin_user.full_name,
-            "role": admin_user.role,
-        },
-        "token": access_token,
-        "redirect_url": "/dashboard/hr"
+            "status": "pending",
+        }
     }
 
 @router.post("/login")
@@ -339,10 +317,11 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
     """Login and set secure JWT HttpOnly cookie"""
     from sqlalchemy import update as sa_update
     credentials.email = credentials.email.lower().strip()
+    logger.info(f"[LOGIN-ATTEMPT] email={credentials.email}, host={request.headers.get('host')}, x-tenant-slug={request.headers.get('x-tenant-slug')}")
     user = db.query(User).filter(User.email == credentials.email).first()
 
     if not user:
-        logger.warning("Login failed: User not found (email redacted)")
+        logger.warning(f"[LOGIN-FAILED] User not found: {credentials.email}")
         verify_password("dummy_password", "$2b$12$XzQyJkG9aBcDeFgHiJkLmOpQrStUvWxYz0123456789abcdefghij")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -371,6 +350,7 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
 
     logger.debug("Login attempt for user (email redacted)")
     if not verify_password(credentials.password, user.password_hash):
+        logger.warning(f"[LOGIN-FAILED] Password mismatch for {credentials.email}")
         # BUG-012: Atomically increment failure counter, lock after 10 failures
         new_count = (user.login_attempt_count or 0) + 1
         lock_until = None
@@ -397,34 +377,82 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
         )
         db.commit()
 
-    if not user.is_verified:
+    # ── Complete Organization / Tenant Authentication Isolation ───────────────
+    tenant_ctx = getattr(request.state, "tenant", None)
+    if tenant_ctx is None:
+        slug_hdr = (request.headers.get("x-tenant-slug") or request.headers.get("X-Tenant-Slug") or "").strip()
+        if slug_hdr:
+            from app.core.middleware import _lookup_tenant_by_slug
+            t_data = _lookup_tenant_by_slug(slug_hdr)
+            if t_data:
+                import uuid
+                from app.core.tenant_context import TenantContext
+                tenant_ctx = TenantContext(
+                    id=uuid.UUID(t_data["id"]),
+                    name=t_data["name"],
+                    slug=t_data["slug"],
+                    status=t_data.get("status", "active"),
+                    logo_url=t_data.get("logo_url"),
+                    custom_domain=t_data.get("custom_domain"),
+                    settings=t_data.get("settings") or {},
+                )
+
+    # Non-active organization check
+    if user.tenant and getattr(user.tenant, "status", "active") in ("suspended", "pending", "rejected", "deactivated"):
+        logger.warning(f"[Auth] Login failed: Organization {user.tenant_id} is {user.tenant.status}")
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is not verified. Please verify your email first."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
         )
 
-    if user.approval_status == "rejected":
+    if not user.is_verified or user.approval_status != "approved" or not user.is_active:
+        logger.warning(f"[Auth] Login failed: User {user.email} is_verified={user.is_verified}, approval_status={user.approval_status}, is_active={user.is_active}")
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account has been rejected and is permanently blocked."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
         )
-    
-    if user.role == "pending_hr" or user.approval_status != "approved" or not user.is_active:
-        if user.approval_status == "approved" and not user.is_active:
+
+    # 2. Root Admin check ('root-admin' or platform super_admin with tenant_id is None)
+    # Root Admin can only sign in through the central platform portal, never through tenant subdomains
+    if is_root_admin(user) or (user.role == "super_admin" and not user.tenant_id):
+        if tenant_ctx and tenant_ctx.slug != "default":
+            logger.warning(f"[Auth] Login failed: Root Admin attempted login on tenant subdomain '{tenant_ctx.slug}'")
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This account has been deactivated. Please contact your administrator."
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
             )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is pending approval by the Super Admin."
-        )
+
+    # 3. Tenant-scoped users check (including tenant super_admin and hr)
+    if user.tenant_id and not is_root_admin(user):
+        # If request is targeting a specific tenant context
+        if tenant_ctx:
+            if str(user.tenant_id) != str(tenant_ctx.id):
+                logger.warning(f"[Auth] Login failed: User {user.id} (tenant {user.tenant_id}, role {user.role}) attempted login on tenant {tenant_ctx.id} ('{tenant_ctx.slug}')")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
+        else:
+            # Request is at root/unscoped, but user belongs to a specific tenant other than default
+            if user.tenant and user.tenant.slug != "default":
+                logger.warning(f"[Auth] Login failed: Tenant user {user.id} attempted login on root/default portal")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
 
     access_token_expires = timedelta(minutes=settings.jwt_expiration_minutes)
     token_data = {
         "sub": str(user.id),
-        "role": user.role
+        "role": user.role,
+        "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+        "tenant_slug": user.tenant.slug if user.tenant else None,
+        "app_metadata": {
+            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+            "tenant_slug": user.tenant.slug if user.tenant else None,
+        }
     }
+
     access_token = create_access_token(token_data, access_token_expires)
 
     samesite_policy = "lax" if settings.env == "development" else "strict"
@@ -438,6 +466,16 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
         max_age=7 * 24 * 3600,
         path="/"
     )
+    if user.tenant:
+        response.set_cookie(
+            key="x-tenant-slug",
+            value=user.tenant.slug,
+            httponly=False,
+            samesite=samesite_policy,
+            secure=settings.env == "production",
+            max_age=7 * 24 * 3600,
+            path="/"
+        )
 
     return {
         "message": "Login successful",
@@ -451,7 +489,9 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
             "is_active": user.is_active,
             "is_verified": user.is_verified,
             "approval_status": user.approval_status,
-            "created_at": user.created_at
+            "created_at": user.created_at,
+            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+            "tenant_slug": user.tenant.slug if user.tenant else None
         }
     }
 
@@ -465,7 +505,7 @@ def get_hr_requests(
     db: Session = Depends(get_db)
 ):
     """List HR users by status for Super Admin management"""
-    query = db.query(User).filter(User.role != "super_admin")
+    query = db.query(User).filter(User.role.notin_(["root-admin", "root_admin", "super_admin"]))
     
     if status == "pending":
         query = query.filter(User.approval_status == "pending", User.is_verified == True)
@@ -490,8 +530,8 @@ def remove_hr_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     
-    if user.role == "super_admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot remove a Super Admin")
+    if is_any_admin(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot remove an Administrator")
 
     user.is_active = False
     # Reassign candidates (Phase 3 fix)
@@ -516,22 +556,37 @@ def _reassign_managed_resources(db: Session, old_hr_id: int, fallback_user_id: i
 
 @router.get("/pending-approvals", response_model=List[UserListResponse])
 @limiter.limit("20/minute")
-def get_pending_approvals(request: Request, current_admin: User = Depends(get_current_admin), db: Session = Depends(get_db)):
-    """List HR users waiting for Super Admin approval"""
-    pending_users = db.query(User).filter(
+def get_pending_approvals(
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+    tenant_ctx: Optional[TenantContext] = Depends(get_optional_tenant_context)
+):
+    """List HR users waiting for approval, scoped to active tenant."""
+    query = db.query(User).filter(
         User.role == "pending_hr",
         User.approval_status == "pending",
         User.is_verified == True
-    ).order_by(User.created_at.desc()).all()
-    return pending_users
+    )
+    if tenant_ctx:
+        query = query.filter(User.tenant_id == tenant_ctx.id)
+    return query.order_by(User.created_at.desc()).all()
 
 
 @router.post("/approve/{user_id}", response_model=UserResponse)
 @limiter.limit("10/minute")
-def approve_hr_user(request: Request, user_id: int, current_admin: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+def approve_hr_user(
+    request: Request,
+    user_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+    tenant_ctx: Optional[TenantContext] = Depends(get_optional_tenant_context)
+):
     """Approve a pending or rejected HR user account"""
-    user = db.query(User).filter(User.id == user_id, User.role != "super_admin").first()
+    user = db.query(User).filter(User.id == user_id, User.role.notin_(["root-admin", "root_admin", "super_admin"])).first()
     if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HR user not found")
+    if tenant_ctx and user.tenant_id and str(user.tenant_id) != str(tenant_ctx.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HR user not found")
     
     if user.approval_status == "approved" and user.is_active:
@@ -562,7 +617,7 @@ def approve_hr_user(request: Request, user_id: int, current_admin: User = Depend
 @limiter.limit("10/minute")
 def reject_hr_user(request: Request, user_id: int, current_admin: User = Depends(get_current_admin), db: Session = Depends(get_db)):
     """Reject a pending or active HR user account"""
-    user = db.query(User).filter(User.id == user_id, User.role != "super_admin").first()
+    user = db.query(User).filter(User.id == user_id, User.role.notin_(["root-admin", "root_admin", "super_admin"])).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HR user not found")
 
@@ -688,21 +743,20 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     return {"message": "Logged out successfully"}
 
 def is_platform_super_admin(user: User) -> bool:
-    """Determine if a user is the overall CALRIMS Platform Super Admin."""
-    if not user or user.role != "super_admin":
-        return False
-    configured = (settings.super_admin_email or "").strip().lower()
-    email = (user.email or "").strip().lower()
-    if configured and email == configured:
-        return True
-    if email in ("caldiminternship@gmail.com", "test.admin@calrims.local", "admin@calrims.com"):
-        return True
-    return False
+    """
+    Determine if a user is the root platform admin.
+    Strict rule: ONLY accounts with role 'root-admin' qualify.
+    Tenant-specific super_admin accounts (e.g. Amazon, Acme) NEVER qualify.
+    """
+    return is_root_admin(user)
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get current authenticated user info"""
-    current_user.is_platform_super_admin = is_platform_super_admin(current_user)
+    current_user.is_root_admin = is_root_admin(current_user)
+    current_user.is_platform_super_admin = is_root_admin(current_user)
+    if current_user.tenant:
+        current_user.tenant_slug = current_user.tenant.slug
     return current_user
 
 @router.get("/ws-token")
@@ -724,14 +778,14 @@ def list_available_tenants(
 ):
     """
     List active organizations for tenant switching.
-    RESTRICTED: Only CALRIMS Platform Super Admins can list and switch across all organizations.
-    Regular Organization Admins and HR users are strictly locked to their own organization.
+    RESTRICTED: Only CALRIMS Platform Root Admins (role: 'root-admin') can list and switch across all organizations.
+    On tenant subdomains or for tenant users (including super_admin and hr), return only the current tenant.
     """
     from sqlalchemy import text
+    tenant_ctx = getattr(request.state, "tenant", None)
 
-    # If user is not the CALRIMS platform super admin, return only their current tenant
-    if not is_platform_super_admin(current_user):
-        tenant_ctx = getattr(request.state, "tenant", None)
+    # 1. If not root-admin, return ONLY their current organization
+    if not is_root_admin(current_user):
         if tenant_ctx:
             return [{
                 "id": str(tenant_ctx.id),
@@ -742,7 +796,20 @@ def list_available_tenants(
             }]
         return []
 
-    # Platform Super Admin can see and switch between all organizations
+    # 2. Even if root-admin, if browsing on a dedicated tenant subdomain, return only that tenant
+    from app.core.middleware import _resolve_slug_from_host
+    subdomain_slug = _resolve_slug_from_host(request.headers.get("host", ""))
+    if subdomain_slug and subdomain_slug != "default":
+        if tenant_ctx:
+            return [{
+                "id": str(tenant_ctx.id),
+                "name": tenant_ctx.name,
+                "slug": tenant_ctx.slug,
+                "logo_url": tenant_ctx.logo_url,
+                "status": tenant_ctx.status,
+            }]
+
+    # 3. Root Admin on central platform portal can see all organizations
     rows = db.execute(
         text("SELECT id, name, slug, logo_url, status FROM public.tenants WHERE status = 'active' ORDER BY name ASC")
     ).fetchall()

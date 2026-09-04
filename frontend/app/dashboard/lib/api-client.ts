@@ -33,6 +33,7 @@ interface TenantMeta {
   slug: string
   name?: string
   logo_url?: string | null
+  status?: string | null
 }
 
 let _activeTenant: TenantMeta | null = null
@@ -84,49 +85,78 @@ export class APIClient {
     if (!isMultipart) {
       headers['Content-Type'] = 'application/json'
     }
-    if (typeof window !== 'undefined' && !(endpoint && this.isPublicEndpoint(endpoint))) {
+    if (typeof window !== 'undefined') {
       const isInterviewRoute = window.location.pathname.includes('/interview')
       if (isInterviewRoute) {
         const interviewToken = sessionStorage.getItem('interview_token')
         if (interviewToken) {
           headers['Authorization'] = `Bearer ${interviewToken}`
         }
-      } else {
-        const authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
+      } else if (!(endpoint && this.isPublicEndpoint(endpoint))) {
+        let authToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
+        if (!authToken || authToken === 'cookie_managed') {
+          // Check document.cookie for access_token or token as fallback
+          try {
+            const match = document.cookie.match(/(?:^|;\s*)(?:access_token|token)=([^;]+)/)
+            if (match) {
+              authToken = decodeURIComponent(match[1])
+            }
+          } catch (_) {}
+        }
         if (authToken && authToken !== 'cookie_managed') {
           headers['Authorization'] = `Bearer ${authToken}`
         }
       }
 
-      // ── Multi-tenancy: attach tenant headers to every authenticated call ──
-      // First try the module-level store (set by AuthContext after login).
-      // Then fall back to the x-tenant-slug cookie injected by Next.js middleware.
+      // ── Multi-tenancy: attach tenant headers to EVERY call (public and authenticated) ──
       const tenant = _activeTenant
-      if (tenant) {
+      if (tenant && tenant.status !== 'suspended') {
         headers['X-Tenant-Slug'] = tenant.slug
+        if (tenant.id) {
+          headers['X-Tenant-ID'] = tenant.id
+        }
+      } else if (tenant && tenant.slug === 'default') {
+        headers['X-Tenant-Slug'] = 'default'
         if (tenant.id) {
           headers['X-Tenant-ID'] = tenant.id
         }
       } else {
         let subdomainSlug: string | null = null
-        if (typeof window !== 'undefined') {
-          const host = window.location.hostname.toLowerCase()
-          if (host.endsWith('.localhost')) {
-            const sub = host.replace('.localhost', '')
-            if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') subdomainSlug = sub
+        const host = window.location.hostname.toLowerCase()
+        if (host.endsWith('.localhost')) {
+          const sub = host.slice(0, -'.localhost'.length)
+          if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') {
+            subdomainSlug = sub
+          }
+        } else {
+          const parts = host.split('.')
+          if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
+            subdomainSlug = parts[0]
           }
         }
+
+        // Check document cookie for x-tenant-slug
+        let cookieSlug: string | null = null
+        try {
+          const cookieMatch = document.cookie.match(/(?:^|;\s*)x-tenant-slug=([^;]+)/)
+          if (cookieMatch) cookieSlug = decodeURIComponent(cookieMatch[1])
+        } catch (_) {}
+
         const storedSlug =
           subdomainSlug ||
-          (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tenant_slug')) || ''
+          cookieSlug ||
+          (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tenant_slug')) ||
+          (typeof localStorage !== 'undefined' && localStorage.getItem('tenant_slug')) ||
+          ''
+
         if (storedSlug) {
           headers['X-Tenant-Slug'] = storedSlug
         }
       }
     }
+    headers['X-Requested-With'] = 'XMLHttpRequest'
     headers['X-Request-Source'] = 'rims-frontend'
     return headers
-
   }
 
 
@@ -258,7 +288,7 @@ export class APIClient {
 
     const isStandardFormat = result && typeof result === 'object' && 'success' in result
     const success = isStandardFormat ? result.success : response.ok
-    const data = isStandardFormat ? result.data : result
+    const data = isStandardFormat ? (result.data !== undefined ? result.data : result) : result
     const error = isStandardFormat ? result.error : (result.detail || result.error || response.statusText)
 
     if (!success) {

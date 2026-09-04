@@ -39,7 +39,7 @@ export default function DashboardLayout({
     // Only redirect to login if we are CERTAIN that the user is not authenticated
     // (or is not an HR / Admin) and the loading process has finished without network errors.
     if (isMounted && !isLoading && !isOffline) {
-      if (!isAuthenticated || (user && user.role !== 'hr' && user.role !== 'super_admin')) {
+      if (!isAuthenticated || (user && !['hr', 'super_admin', 'root-admin', 'root_admin'].includes(user.role))) {
         router.push('/auth/login?expired=true')
       }
     }
@@ -81,7 +81,7 @@ export default function DashboardLayout({
     )
   }
 
-  const isUserAuthorized = isAuthenticated && user && (user.role === 'hr' || user.role === 'super_admin')
+  const isUserAuthorized = isAuthenticated && user && ['hr', 'super_admin', 'root-admin', 'root_admin'].includes(user.role)
 
   // Prevent rendering protected content for unauthenticated or unauthorized users
   if (!isUserAuthorized && !isOffline) {

@@ -714,7 +714,7 @@ export default function RepositoryPage() {
     }, [filteredSets, currentPage, pageSize])
 
     // Access guard — placed AFTER all hooks to satisfy rules-of-hooks
-    if (user && user.role !== 'hr' && user.role !== 'super_admin') {
+    if (user && !['hr', 'super_admin', 'root-admin', 'root_admin'].includes(user.role)) {
         return (
             <div className="flex flex-col items-center justify-center p-20 gap-4 text-center">
                 <Database className="h-16 w-16 text-muted-foreground/20" />

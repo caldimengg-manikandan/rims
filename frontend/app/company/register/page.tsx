@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { getApiBaseUrl } from '@/lib/config'
+import { toast } from 'sonner'
 import {
   Building2,
   Globe,
@@ -56,7 +57,16 @@ export default function CompanyRegisterPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<{
+    companyName?: string
+    slug?: string
+    adminName?: string
+    adminEmail?: string
+    adminPassword?: string
+    confirmPassword?: string
+  }>({})
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false)
+  const [isSubmitted, setIsSubmitted] = useState(false)
 
   // Form State
   const [formData, setFormData] = useState({
@@ -88,15 +98,20 @@ export default function CompanyRegisterPage() {
     setFormData((prev) => {
       const updated = { ...prev, companyName: val }
       if (!slugManuallyEdited) {
-        updated.slug = val
+        let genSlug = val
           .toLowerCase()
           .replace(/[^a-z0-9]/g, '-')
           .replace(/-+/g, '-')
           .replace(/^-|-$/g, '')
           .slice(0, 30)
+        updated.slug = genSlug
       }
       return updated
     })
+    if (fieldErrors.companyName) {
+      setFieldErrors((prev) => ({ ...prev, companyName: undefined }))
+    }
+    if (error) setError(null)
   }
 
   const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -106,40 +121,119 @@ export default function CompanyRegisterPage() {
       .replace(/[^a-z0-9-]/g, '')
       .slice(0, 30)
     setFormData((prev) => ({ ...prev, slug: cleaned }))
+    if (fieldErrors.slug) {
+      setFieldErrors((prev) => ({ ...prev, slug: undefined }))
+    }
+    if (error) setError(null)
   }
 
   const validateStep1 = () => {
-    if (!formData.companyName.trim()) {
-      setError('Please enter your company or organization name.')
+    const trimmedName = formData.companyName.trim()
+    let slugVal = formData.slug.trim().toLowerCase()
+
+    // If slug is empty or missing but company name was provided, generate slug now
+    if (!slugVal && trimmedName) {
+      slugVal = trimmedName
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 30)
+      if (slugVal.length === 1) slugVal = `${slugVal}-org`
+      setFormData((prev) => ({ ...prev, slug: slugVal }))
+    }
+
+    const errors: { companyName?: string; slug?: string } = {}
+    if (!trimmedName) {
+      errors.companyName = 'Please enter your company or organization name.'
+    }
+    if (!slugVal) {
+      errors.slug = 'Workspace subdomain slug is required.'
+    } else if (slugVal.length < 2) {
+      errors.slug = 'Subdomain slug must be at least 2 characters.'
+    } else if (!/^[a-z0-9-]+$/.test(slugVal)) {
+      errors.slug = 'Subdomain can only contain lowercase letters, numbers, and hyphens.'
+    } else if (slugVal.startsWith('-') || slugVal.endsWith('-')) {
+      errors.slug = 'Subdomain cannot start or end with a hyphen.'
+    }
+
+    setFieldErrors((prev) => ({ ...prev, ...errors }))
+
+    if (errors.companyName || errors.slug) {
+      const msg = errors.companyName || errors.slug || 'Please complete the required workspace fields.'
+      setError(msg)
+      toast.error(msg)
       return false
     }
-    if (!formData.slug.trim() || formData.slug.length < 2) {
-      setError('Subdomain slug must be at least 2 characters.')
-      return false
-    }
+
     setError(null)
+    setFieldErrors((prev) => ({ ...prev, companyName: undefined, slug: undefined }))
     return true
   }
 
   const validateStep2 = () => {
-    if (!formData.adminName.trim()) {
-      setError('Please enter the administrator full name.')
+    const trimmedAdmin = formData.adminName.trim()
+    const trimmedEmail = formData.adminEmail.trim().toLowerCase()
+    const errors: { adminName?: string; adminEmail?: string; adminPassword?: string; confirmPassword?: string } = {}
+
+    if (!trimmedAdmin) {
+      errors.adminName = 'Please enter the administrator full name.'
+    }
+    if (!trimmedEmail) {
+      errors.adminEmail = 'Please enter a work email address.'
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      errors.adminEmail = 'Please enter a valid work email address (e.g. admin@company.com).'
+    }
+    if (!formData.adminPassword) {
+      errors.adminPassword = 'Password is required.'
+    } else if (formData.adminPassword.length < 8) {
+      errors.adminPassword = 'Password must be at least 8 characters long.'
+    }
+    if (formData.adminPassword && formData.adminPassword !== formData.confirmPassword) {
+      errors.confirmPassword = 'Passwords do not match.'
+    }
+
+    setFieldErrors((prev) => ({ ...prev, ...errors }))
+
+    if (errors.adminName || errors.adminEmail || errors.adminPassword || errors.confirmPassword) {
+      const msg = errors.adminName || errors.adminEmail || errors.adminPassword || errors.confirmPassword || 'Please complete all required fields.'
+      setError(msg)
+      toast.error(msg)
       return false
     }
-    if (!formData.adminEmail.trim() || !formData.adminEmail.includes('@')) {
-      setError('Please enter a valid work email address.')
-      return false
-    }
-    if (formData.adminPassword.length < 8) {
-      setError('Password must be at least 8 characters long.')
-      return false
-    }
-    if (formData.adminPassword !== formData.confirmPassword) {
-      setError('Passwords do not match.')
-      return false
-    }
+
     setError(null)
+    setFieldErrors((prev) => ({ ...prev, adminName: undefined, adminEmail: undefined, adminPassword: undefined, confirmPassword: undefined }))
     return true
+  }
+
+  const handleContinueToAdminSetup = (e?: React.MouseEvent | React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (validateStep1()) {
+      setError(null)
+      setStep(2)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
+  const handleContinueToCustomization = (e?: React.MouseEvent | React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (validateStep2()) {
+      setError(null)
+      setStep(3)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (step === 1) {
+      handleContinueToAdminSetup(e)
+    } else if (step === 2) {
+      handleContinueToCustomization(e)
+    } else {
+      handleSubmit(e)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -174,32 +268,14 @@ export default function CompanyRegisterPage() {
         throw new Error(data.detail || data.error || 'Registration failed. Please try again.')
       }
 
-      // Save active tenant to session storage for seamless tenant switching
-      if (typeof window !== 'undefined' && data.tenant) {
-        sessionStorage.setItem('tenant_slug', data.tenant.slug)
-        sessionStorage.setItem('tenant_id', data.tenant.id)
-        localStorage.setItem('rims_session_present', '1')
-
-        // Redirect directly to the newly registered subdomain on localhost
-        const isLocal =
-          window.location.hostname === 'localhost' ||
-          window.location.hostname === '127.0.0.1' ||
-          window.location.hostname.endsWith('.localhost')
-        if (isLocal && data.tenant.slug) {
-          const port = window.location.port ? `:${window.location.port}` : ''
-          window.location.href = `http://${data.tenant.slug}.localhost${port}/calrims/dashboard/hr`
-          return
-        }
-      }
-
-      // Route to dashboard
-      router.push('/dashboard/hr')
+      setIsSubmitted(true)
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred.')
+      const msg = err.message || 'An unexpected error occurred.'
+      setError(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
-
   }
 
   return (
@@ -237,6 +313,54 @@ export default function CompanyRegisterPage() {
 
       {/* Main Content */}
       <main className="relative z-10 max-w-7xl mx-auto px-6 py-12 lg:py-16 w-full flex-1">
+        {isSubmitted ? (
+          <div className="flex items-center justify-center py-8 sm:py-12">
+            <Card className="max-w-xl w-full border-border/60 bg-card/90 backdrop-blur-2xl shadow-2xl p-8 sm:p-12 text-center space-y-8 animate-in fade-in zoom-in-95 duration-500">
+              <div className="w-20 h-20 rounded-3xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto shadow-inner">
+                <CheckCircle2 className="w-10 h-10 text-primary animate-pulse" />
+              </div>
+
+              <div className="space-y-4">
+                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 px-3 py-1 text-xs font-semibold rounded-full">
+                  Registration Submitted
+                </Badge>
+                <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+                  Thank you for registering.
+                </h2>
+                <p className="text-base sm:text-lg text-muted-foreground leading-relaxed px-2 font-medium">
+                  Please wait while we set things up for you. We’ll contact you soon.
+                </p>
+              </div>
+
+              <div className="p-5 rounded-2xl bg-muted/40 border border-border/50 text-left space-y-2.5">
+                <div className="flex justify-between items-center text-xs text-muted-foreground font-bold uppercase tracking-wider">
+                  <span>Organization</span>
+                  <Badge variant="outline" className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                    Setup In Progress
+                  </Badge>
+                </div>
+                <p className="font-extrabold text-lg text-foreground truncate">{formData.companyName}</p>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+                  <Globe className="w-3.5 h-3.5 text-primary" />
+                  <span>{formData.slug}.calrims.com</span>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
+                <Link href="/" className="w-full sm:w-auto">
+                  <Button variant="outline" className="w-full h-11 px-6 font-semibold rounded-xl">
+                    Return to Home
+                  </Button>
+                </Link>
+                <Link href="/auth/login" className="w-full sm:w-auto">
+                  <Button className="w-full h-11 px-6 font-semibold rounded-xl shadow-lg shadow-primary/25">
+                    Go to Sign In
+                  </Button>
+                </Link>
+              </div>
+            </Card>
+          </div>
+        ) : (
         <div className="grid lg:grid-cols-12 gap-12 items-start">
           
           {/* Left Column: Form & Stepper */}
@@ -270,7 +394,7 @@ export default function CompanyRegisterPage() {
 
               <button
                 type="button"
-                onClick={() => validateStep1() && setStep(2)}
+                onClick={() => handleContinueToAdminSetup()}
                 className={`flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
                   step === 2 ? 'bg-card text-foreground shadow-sm font-bold border border-border/40' : 'text-muted-foreground hover:text-foreground'
                 }`}
@@ -283,7 +407,11 @@ export default function CompanyRegisterPage() {
 
               <button
                 type="button"
-                onClick={() => validateStep1() && validateStep2() && setStep(3)}
+                onClick={() => {
+                  if (validateStep1() && validateStep2()) {
+                    setStep(3)
+                  }
+                }}
                 className={`flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all ${
                   step === 3 ? 'bg-card text-foreground shadow-sm font-bold border border-border/40' : 'text-muted-foreground hover:text-foreground'
                 }`}
@@ -299,13 +427,13 @@ export default function CompanyRegisterPage() {
             {error && (
               <div className="p-4 bg-destructive/10 border border-destructive/25 text-destructive rounded-2xl flex items-start gap-3 text-sm animate-in fade-in">
                 <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <div className="flex-1">{error}</div>
+                <div className="flex-1 font-semibold">{error}</div>
               </div>
             )}
 
             {/* Form Card */}
             <Card className="bg-card/70 backdrop-blur-xl border-border/60 shadow-xl rounded-3xl overflow-hidden">
-              <form onSubmit={handleSubmit}>
+              <form onSubmit={handleFormSubmit}>
                 <CardContent className="p-6 sm:p-8 space-y-6">
                   
                   {/* STEP 1: Organization Details */}
@@ -316,16 +444,22 @@ export default function CompanyRegisterPage() {
                           Company / Organization Name <span className="text-destructive">*</span>
                         </label>
                         <div className="relative">
-                          <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Building2 className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 ${fieldErrors.companyName ? 'text-destructive' : 'text-muted-foreground'}`} />
                           <Input
                             id={companyNameId}
                             placeholder="e.g. Acme Corporation or Helix BioLabs"
                             value={formData.companyName}
                             onChange={handleCompanyNameChange}
                             required
-                            className="pl-10 h-12 bg-background/50 rounded-xl text-base"
+                            aria-invalid={!!fieldErrors.companyName}
+                            className={`pl-10 h-12 bg-background/50 rounded-xl text-base ${fieldErrors.companyName ? 'border-destructive focus-visible:ring-destructive/30' : ''}`}
                           />
                         </div>
+                        {fieldErrors.companyName && (
+                          <p className="text-xs text-destructive font-medium mt-1 animate-in fade-in">
+                            {fieldErrors.companyName}
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-1.5">
@@ -333,9 +467,9 @@ export default function CompanyRegisterPage() {
                           <span>Workspace Subdomain <span className="text-destructive">*</span></span>
                           <span className="text-[11px] text-muted-foreground font-normal">Auto-generated</span>
                         </label>
-                        <div className="flex rounded-xl overflow-hidden border border-input bg-background/50 focus-within:ring-2 focus-within:ring-ring">
+                        <div className={`flex rounded-xl overflow-hidden border bg-background/50 focus-within:ring-2 ${fieldErrors.slug ? 'border-destructive focus-within:ring-destructive/30' : 'border-input focus-within:ring-ring'}`}>
                           <div className="pl-3.5 pr-1 flex items-center text-muted-foreground">
-                            <Globe className="w-4 h-4 mr-2 text-primary" />
+                            <Globe className={`w-4 h-4 mr-2 ${fieldErrors.slug ? 'text-destructive' : 'text-primary'}`} />
                             <span className="text-xs font-mono text-muted-foreground">https://</span>
                           </div>
                           <input
@@ -344,15 +478,22 @@ export default function CompanyRegisterPage() {
                             value={formData.slug}
                             onChange={handleSlugChange}
                             placeholder="acme"
+                            aria-invalid={!!fieldErrors.slug}
                             className="flex-1 bg-transparent py-2.5 text-sm font-semibold text-foreground focus:outline-none"
                           />
                           <div className="pr-3.5 flex items-center text-xs font-mono text-muted-foreground/80 bg-muted/40 px-2 border-l border-border/40">
                             .calrims.com
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          Your candidates and recruiters will access your isolated portal at this link.
-                        </p>
+                        {fieldErrors.slug ? (
+                          <p className="text-xs text-destructive font-medium mt-1 animate-in fade-in">
+                            {fieldErrors.slug}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Your candidates and recruiters will access your isolated portal at this link.
+                          </p>
+                        )}
                       </div>
 
                       <div className="grid sm:grid-cols-2 gap-4 pt-2">
@@ -389,10 +530,17 @@ export default function CompanyRegisterPage() {
                         </div>
                       </div>
 
+                      {error && (
+                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{error}</span>
+                        </div>
+                      )}
+
                       <div className="pt-4 flex justify-end">
                         <Button
                           type="button"
-                          onClick={() => validateStep1() && setStep(2)}
+                          onClick={handleContinueToAdminSetup}
                           size="lg"
                           className="h-12 px-6 rounded-xl font-bold gap-2 shadow-lg shadow-primary/20"
                         >
@@ -415,16 +563,26 @@ export default function CompanyRegisterPage() {
                           Administrator Full Name <span className="text-destructive">*</span>
                         </label>
                         <div className="relative">
-                          <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <User className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 ${fieldErrors.adminName ? 'text-destructive' : 'text-muted-foreground'}`} />
                           <Input
                             id={adminNameId}
                             placeholder="e.g. Sarah Jenkins or Alex Mercer"
                             value={formData.adminName}
-                            onChange={(e) => setFormData({ ...formData, adminName: e.target.value })}
+                            onChange={(e) => {
+                              setFormData({ ...formData, adminName: e.target.value })
+                              if (fieldErrors.adminName) setFieldErrors(prev => ({ ...prev, adminName: undefined }))
+                              if (error) setError(null)
+                            }}
                             required
-                            className="pl-10 h-12 bg-background/50 rounded-xl"
+                            aria-invalid={!!fieldErrors.adminName}
+                            className={`pl-10 h-12 bg-background/50 rounded-xl ${fieldErrors.adminName ? 'border-destructive focus-visible:ring-destructive/30' : ''}`}
                           />
                         </div>
+                        {fieldErrors.adminName && (
+                          <p className="text-xs text-destructive font-medium mt-1 animate-in fade-in">
+                            {fieldErrors.adminName}
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-1.5">
@@ -432,17 +590,27 @@ export default function CompanyRegisterPage() {
                           Work Email Address <span className="text-destructive">*</span>
                         </label>
                         <div className="relative">
-                          <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Mail className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 ${fieldErrors.adminEmail ? 'text-destructive' : 'text-muted-foreground'}`} />
                           <Input
                             id={adminEmailId}
                             type="email"
                             placeholder="admin@yourcompany.com"
                             value={formData.adminEmail}
-                            onChange={(e) => setFormData({ ...formData, adminEmail: e.target.value })}
+                            onChange={(e) => {
+                              setFormData({ ...formData, adminEmail: e.target.value })
+                              if (fieldErrors.adminEmail) setFieldErrors(prev => ({ ...prev, adminEmail: undefined }))
+                              if (error) setError(null)
+                            }}
                             required
-                            className="pl-10 h-12 bg-background/50 rounded-xl"
+                            aria-invalid={!!fieldErrors.adminEmail}
+                            className={`pl-10 h-12 bg-background/50 rounded-xl ${fieldErrors.adminEmail ? 'border-destructive focus-visible:ring-destructive/30' : ''}`}
                           />
                         </div>
+                        {fieldErrors.adminEmail && (
+                          <p className="text-xs text-destructive font-medium mt-1 animate-in fade-in">
+                            {fieldErrors.adminEmail}
+                          </p>
+                        )}
                       </div>
 
                       <div className="grid sm:grid-cols-2 gap-4">
@@ -451,15 +619,20 @@ export default function CompanyRegisterPage() {
                             Password <span className="text-destructive">*</span>
                           </label>
                           <div className="relative">
-                            <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 ${fieldErrors.adminPassword ? 'text-destructive' : 'text-muted-foreground'}`} />
                             <Input
                               id={adminPasswordId}
                               type={showPassword ? 'text' : 'password'}
                               placeholder="Min. 8 characters"
                               value={formData.adminPassword}
-                              onChange={(e) => setFormData({ ...formData, adminPassword: e.target.value })}
+                              onChange={(e) => {
+                                setFormData({ ...formData, adminPassword: e.target.value })
+                                if (fieldErrors.adminPassword) setFieldErrors(prev => ({ ...prev, adminPassword: undefined }))
+                                if (error) setError(null)
+                              }}
                               required
-                              className="pl-10 pr-10 h-12 bg-background/50 rounded-xl"
+                              aria-invalid={!!fieldErrors.adminPassword}
+                              className={`pl-10 pr-10 h-12 bg-background/50 rounded-xl ${fieldErrors.adminPassword ? 'border-destructive focus-visible:ring-destructive/30' : ''}`}
                             />
                             <button
                               type="button"
@@ -469,6 +642,11 @@ export default function CompanyRegisterPage() {
                               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                           </div>
+                          {fieldErrors.adminPassword && (
+                            <p className="text-xs text-destructive font-medium mt-1 animate-in fade-in">
+                              {fieldErrors.adminPassword}
+                            </p>
+                          )}
                         </div>
 
                         <div className="space-y-1.5">
@@ -476,19 +654,36 @@ export default function CompanyRegisterPage() {
                             Confirm Password <span className="text-destructive">*</span>
                           </label>
                           <div className="relative">
-                            <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                            <Lock className={`absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 ${fieldErrors.confirmPassword ? 'text-destructive' : 'text-muted-foreground'}`} />
                             <Input
                               id={confirmPasswordId}
                               type={showPassword ? 'text' : 'password'}
                               placeholder="Re-enter password"
                               value={formData.confirmPassword}
-                              onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                              onChange={(e) => {
+                                setFormData({ ...formData, confirmPassword: e.target.value })
+                                if (fieldErrors.confirmPassword) setFieldErrors(prev => ({ ...prev, confirmPassword: undefined }))
+                                if (error) setError(null)
+                              }}
                               required
-                              className="pl-10 h-12 bg-background/50 rounded-xl"
+                              aria-invalid={!!fieldErrors.confirmPassword}
+                              className={`pl-10 h-12 bg-background/50 rounded-xl ${fieldErrors.confirmPassword ? 'border-destructive focus-visible:ring-destructive/30' : ''}`}
                             />
                           </div>
+                          {fieldErrors.confirmPassword && (
+                            <p className="text-xs text-destructive font-medium mt-1 animate-in fade-in">
+                              {fieldErrors.confirmPassword}
+                            </p>
+                          )}
                         </div>
                       </div>
+
+                      {error && (
+                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                          <AlertCircle className="w-4 h-4 shrink-0" />
+                          <span>{error}</span>
+                        </div>
+                      )}
 
                       <div className="pt-4 flex justify-between items-center">
                         <Button
@@ -501,7 +696,7 @@ export default function CompanyRegisterPage() {
                         </Button>
                         <Button
                           type="button"
-                          onClick={() => validateStep2() && setStep(3)}
+                          onClick={handleContinueToCustomization}
                           size="lg"
                           className="h-12 px-6 rounded-xl font-bold gap-2 shadow-lg shadow-primary/20"
                         >
@@ -721,9 +916,9 @@ export default function CompanyRegisterPage() {
               </div>
             </div>
           </div>
-
         </div>
-      </main>
+      )}
+    </main>
 
       {/* Footer */}
       <footer className="relative z-10 border-t border-border/40 py-6 bg-background/50 backdrop-blur-md">

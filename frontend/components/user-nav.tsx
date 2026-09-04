@@ -114,13 +114,13 @@ export function UserNav() {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator className="opacity-50 my-1" />
                 <DropdownMenuGroup className="p-1">
-                    {user?.role === 'super_admin' && (
+                    {['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '') && (
                         <DropdownMenuItem className="cursor-pointer py-2.5 px-3 rounded-xl focus:bg-primary/5 focus:text-primary focus:pl-4 transition-all duration-200 gap-2.5" onClick={() => router.push('/dashboard/settings')}>
                             <Settings className="h-4 w-4 text-muted-foreground" />
                             <span>Settings</span>
                         </DropdownMenuItem>
                     )}
-                    {user?.role === 'super_admin' && (
+                    {['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '') && (
                         <DropdownMenuItem
                             className="cursor-pointer py-2.5 px-3 rounded-xl focus:bg-primary/5 focus:text-primary focus:pl-4 transition-all duration-200 gap-2.5"
                             onClick={() => {

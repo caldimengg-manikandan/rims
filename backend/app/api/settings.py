@@ -45,13 +45,14 @@ def _verify_imap_credentials(email: str, password: str) -> dict:
     except Exception as e:
         return {"ok": False, "error": f"Could not connect to Gmail IMAP server: {e}"}
 
-def _get_sensitive_settings_dict(db: Session, current_user: User) -> dict:
+def _get_sensitive_settings_dict(db: Session, current_user: User, tenant_ctx: Optional[Any] = None) -> dict:
     ensure_global_settings_table(db)
     
     from app.core.branding import get_all_branding
-    branding = get_all_branding(db)
+    effective_tenant = tenant_ctx or getattr(current_user, "tenant", None)
+    branding = get_all_branding(db, tenant_ctx=effective_tenant)
     
-    if current_user.role == 'super_admin':
+    if current_user.role in ('root-admin', 'root_admin', 'super_admin'):
         settings_records = db.query(GlobalSettings).all()
         settings_dict = {s.key: s.value for s in settings_records}
         
@@ -109,10 +110,15 @@ def _get_sensitive_settings_dict(db: Session, current_user: User) -> dict:
 def get_settings(
     request: Request, db: Session = Depends(get_db)
 ):
-    """Fetch global settings (public - branding only, sensitive fields omitted)."""
     ensure_global_settings_table(db)
     from app.core.branding import get_all_branding
-    branding = get_all_branding(db)
+    tenant_ctx = getattr(request.state, "tenant", None)
+    if not tenant_ctx:
+        slug_hdr = request.headers.get("X-Tenant-Slug")
+        if slug_hdr:
+            from app.domain.models import Tenant
+            tenant_ctx = db.query(Tenant).filter(Tenant.slug == slug_hdr.strip().lower()).first()
+    branding = get_all_branding(db, tenant_ctx=tenant_ctx)
 
     return {
         "company_logo_url": branding.get("company_logo_url"),
@@ -156,7 +162,8 @@ def get_sensitive_settings(
     db: Session = Depends(get_db)
 ):
     """Fetch sensitive settings (Super Admin or HR)."""
-    return _get_sensitive_settings_dict(db, current_user)
+    tenant_ctx = getattr(request.state, "tenant", None)
+    return _get_sensitive_settings_dict(db, current_user, tenant_ctx=tenant_ctx)
 
 
 @router.post("", response_model=GlobalSettingsResponse)
@@ -171,7 +178,7 @@ def update_settings(
     ensure_global_settings_table(db)
     data = settings_data.model_dump(exclude_unset=True)
     
-    if current_user.role != 'super_admin':
+    if current_user.role not in ('root-admin', 'root_admin', 'super_admin'):
         allowed_keys = {"imap_email", "imap_password", "auto_sync_enabled"}
         data = {k: v for k, v in data.items() if k in allowed_keys}
     
@@ -215,23 +222,48 @@ def update_settings(
         
     db.add(current_user)
     
-    if current_user.role == 'super_admin':
-        for key, value in data.items():
-            if key in {"imap_email", "imap_password", "auto_sync_enabled"}:
-                continue
-            if value is None:
-                continue
-                
-            str_value = str(value)
-            if isinstance(value, bool):
-                str_value = "true" if value else "false"
-                
-            setting = db.query(GlobalSettings).filter(GlobalSettings.key == key).first()
-            if setting:
-                setting.value = str_value
-            else:
-                setting = GlobalSettings(key=key, value=str_value)
-                db.add(setting)
+    tenant_obj = getattr(request.state, "tenant", None) or getattr(current_user, "tenant", None)
+
+    if current_user.role in ('root-admin', 'root_admin', 'super_admin'):
+        if tenant_obj:
+            # Update tenant's own branding in tenants table
+            tenant_settings = dict(tenant_obj.settings or {})
+            t_branding = dict(tenant_settings.get("branding", {}))
+            branding_keys = {
+                "company_name", "product_name", "company_logo_url", "dark_logo_url",
+                "favicon_url", "footer_text", "support_email", "theme_color",
+                "terms_url", "privacy_url", "seo_title_default", "seo_description_default"
+            }
+            for k in branding_keys:
+                if k in data and data[k] is not None:
+                    t_branding[k] = str(data[k])
+            if "theme_color" in data and data["theme_color"]:
+                tenant_settings["primaryColor"] = str(data["theme_color"])
+            if "company_logo_url" in data and data["company_logo_url"]:
+                tenant_obj.logo_url = str(data["company_logo_url"])
+            if "company_name" in data and data["company_name"]:
+                tenant_obj.name = str(data["company_name"])
+            tenant_settings["branding"] = t_branding
+            tenant_obj.settings = tenant_settings
+            db.add(tenant_obj)
+        else:
+            # Platform-wide defaults only if no tenant context
+            for key, value in data.items():
+                if key in {"imap_email", "imap_password", "auto_sync_enabled"}:
+                    continue
+                if value is None:
+                    continue
+                    
+                str_value = str(value)
+                if isinstance(value, bool):
+                    str_value = "true" if value else "false"
+                    
+                setting = db.query(GlobalSettings).filter(GlobalSettings.key == key).first()
+                if setting:
+                    setting.value = str_value
+                else:
+                    setting = GlobalSettings(key=key, value=str_value)
+                    db.add(setting)
                 
     db.commit()
     db.refresh(current_user)
@@ -257,4 +289,4 @@ def update_settings(
                 bg_db.close()
         background_tasks.add_task(run_sync_in_background)
     
-    return _get_sensitive_settings_dict(db, current_user)
+    return _get_sensitive_settings_dict(db, current_user, tenant_ctx=tenant_obj)

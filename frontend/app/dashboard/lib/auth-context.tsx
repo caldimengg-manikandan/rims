@@ -9,12 +9,16 @@ export interface User {
   id: number
   email: string
   full_name: string
-  role: 'candidate' | 'hr' | 'super_admin' | 'pending_hr'
+  role: 'root-admin' | 'root_admin' | 'super_admin' | 'hr' | 'candidate' | 'pending_hr'
   is_active: boolean
   is_verified: boolean
   approval_status: 'pending' | 'approved' | 'rejected'
   profile_image_url?: string
   created_at: string
+  tenant_id?: string | null
+  tenant_slug?: string | null
+  is_root_admin?: boolean
+  is_platform_super_admin?: boolean
 }
 
 /**
@@ -72,24 +76,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (tenant) {
         sessionStorage.setItem('tenant_slug', tenant.slug)
         sessionStorage.setItem('tenant_id', tenant.id)
+        localStorage.setItem('tenant_slug', tenant.slug)
+        localStorage.setItem('tenant_id', tenant.id)
+        document.cookie = `x-tenant-slug=${encodeURIComponent(tenant.slug)}; path=/; max-age=604800; SameSite=Lax`
       } else {
         sessionStorage.removeItem('tenant_slug')
         sessionStorage.removeItem('tenant_id')
+        localStorage.removeItem('tenant_slug')
+        localStorage.removeItem('tenant_id')
+        document.cookie = `x-tenant-slug=; path=/; max-age=0; SameSite=Lax`
       }
+      window.dispatchEvent(new CustomEvent('rims:tenant-changed', { detail: { tenant } }))
     }
   }, [])
 
   // Effect initialization moved down below dependency definitions
 
 
-  const fetchCurrentUser = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchCurrentUser = useCallback(async (opts?: { silent?: boolean; token?: string }) => {
     const silent = opts?.silent ?? false
+    const explicitToken = opts?.token
 
     try {
       // If the user is not logged in, avoid GET /api/auth/me entirely.
       // HttpOnly cookies can't be checked here, so we rely on the session-present flag.
       if (typeof window !== 'undefined') {
-        const hasSession = localStorage.getItem(SESSION_PRESENT_KEY) === '1'
+        const hasSession = localStorage.getItem(SESSION_PRESENT_KEY) === '1' || Boolean(explicitToken)
         if (!hasSession) {
           if (!silent) {
             setToken(null)
@@ -100,17 +112,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      if (explicitToken) {
+        fetchMeInFlight = null
+      }
+
       if (!fetchMeInFlight) {
         fetchMeInFlight = (async (): Promise<MeResult> => {
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 15000)
           try {
             const headers: Record<string, string> = {}
-            if (typeof window !== 'undefined') {
-              const storedToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')
-              if (storedToken && storedToken !== 'cookie_managed') {
-                headers['Authorization'] = `Bearer ${storedToken}`
-              }
+            const storedToken = explicitToken || (typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token')) : null)
+            if (storedToken && storedToken !== 'cookie_managed') {
+              headers['Authorization'] = `Bearer ${storedToken}`
             }
 
             const response = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
@@ -273,14 +287,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error("API base URL is not defined. Please check your environment configuration.");
       }
 
+      let currentSlug = 'default';
+      if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname.toLowerCase();
+        if (hostname.endsWith('.localhost')) {
+          const sub = hostname.slice(0, -'.localhost'.length);
+          if (sub && !['www', 'api', 'mail', 'admin', 'static'].includes(sub)) {
+            currentSlug = sub;
+          }
+        } else if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+          const parts = hostname.split('.');
+          if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
+            currentSlug = parts[0];
+          }
+        }
+      }
+
       const response = await fetch(`${apiBase}/api/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Slug': currentSlug,
+        },
         body: JSON.stringify({ email, password }),
         credentials: 'include'
       })
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new Error('Invalid credentials')
+        }
         let errorMessage = 'Login failed'
         try {
           const errorData = await response.json()
@@ -327,25 +363,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (typeof window !== 'undefined') {
           localStorage.setItem('auth_token', tokenFromPayload)
           sessionStorage.setItem('auth_token', tokenFromPayload)
-          // Set cookie on current domain and root .localhost so Next.js middleware and SSR receives it
+          // Set cookie strictly on current host to prevent cross-tenant cookie leakage
           document.cookie = `access_token=${tokenFromPayload}; path=/; max-age=604800; SameSite=Lax`
-          try {
-            document.cookie = `access_token=${tokenFromPayload}; path=/; domain=.localhost; max-age=604800; SameSite=Lax`
-          } catch (_) {}
         }
       } else {
         setToken("cookie_managed")
       }
 
       if (typeof window !== 'undefined') localStorage.setItem(SESSION_PRESENT_KEY, '1')
+      fetchMeInFlight = null
       if (userFromPayload) {
         setUser(userFromPayload as User)
       } else {
-        await fetchCurrentUser()
+        await fetchCurrentUser({ token: tokenFromPayload })
       }
 
       // Force a post-login refresh so protected routes/SWR don't race the cookie setup.
-      await fetchCurrentUser({ silent: true })
+      await fetchCurrentUser({ silent: true, token: tokenFromPayload })
     } catch (error) {
 
       // Don't log expected authentication errors to console (wrong password, etc.)

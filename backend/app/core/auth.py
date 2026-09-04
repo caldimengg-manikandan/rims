@@ -17,8 +17,16 @@ logger = logging.getLogger(__name__)
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 APPROVALID_INTERVIEW_STATUSES = {"not_started", "in_progress", "completed", "cancelled", "terminated", "expired"}
-APPROVED_STAFF_ROLES = {"super_admin", "hr"}
+APPROVED_STAFF_ROLES = {"root-admin", "root_admin", "super_admin", "hr"}
 PENDING_STAFF_ROLE = "pending_hr"
+
+def is_root_admin(user: Optional[User]) -> bool:
+    """Determine if a user has the root-admin role (above all tenants)."""
+    return bool(user and str(user.role).strip().lower() in ("root-admin", "root_admin"))
+
+def is_any_admin(user: Optional[User]) -> bool:
+    """Determine if a user is either a root-admin or a tenant super_admin."""
+    return bool(user and str(user.role).strip().lower() in ("root-admin", "root_admin", "super_admin"))
 
 def _pre_hash_password(password: str) -> bytes:
     """BUG-009 Fix: Pre-hash long passwords with SHA-256 before bcrypt to prevent
@@ -68,7 +76,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, s
     
     to_encode.update({
         "exp": expire,
-        "iat": datetime.now(timezone.utc),
+        "iat": to_encode.get("iat") or datetime.now(timezone.utc),
         "jti": secrets.token_hex(16)
     })
     
@@ -133,13 +141,13 @@ def get_current_user(
 ) -> User:
     """Dependency to get current authenticated user"""
     used_cookie = False
-    token = request.cookies.get("access_token") or request.cookies.get("hr_token")
-    if token:
-        used_cookie = True
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
     else:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
+        token = request.cookies.get("access_token") or request.cookies.get("hr_token")
+        if token:
+            used_cookie = True
 
     if not token:
         raise HTTPException(
@@ -255,9 +263,14 @@ def get_current_user(
         # Enforce password changed session revocation check (MED-03)
         iat = payload.get("iat")
         if iat and user.password_changed_at:
-            token_iat_dt = datetime.fromtimestamp(iat, tz=timezone.utc).replace(tzinfo=None)
-            if token_iat_dt < user.password_changed_at:
-                logger.warning(f"Rejected token for user (id redacted) issued at {token_iat_dt} before password_changed_at {user.password_changed_at}")
+            pwd_changed_dt = user.password_changed_at
+            if pwd_changed_dt.tzinfo is None:
+                from app.core.timezone import IST
+                pwd_changed_dt = pwd_changed_dt.replace(tzinfo=IST)
+            pwd_changed_ts = pwd_changed_dt.timestamp()
+            # Allow 2-second grace period for clock skew between token issuance and DB commit
+            if (iat + 2) < pwd_changed_ts:
+                logger.warning(f"Rejected token for user (id redacted) issued at {iat} before password_changed_at {pwd_changed_ts}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Password has been changed. Please log in again.",
@@ -292,6 +305,58 @@ def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # ── Complete Organization / Tenant Authentication Isolation Guard ──
+        tenant_ctx = getattr(request.state, "tenant", None)
+        if tenant_ctx is None:
+            slug_hdr = (request.headers.get("x-tenant-slug") or request.headers.get("X-Tenant-Slug") or "").strip()
+            if slug_hdr:
+                from app.core.middleware import _lookup_tenant_by_slug
+                t_data = _lookup_tenant_by_slug(slug_hdr)
+                if t_data:
+                    from app.core.tenant_context import TenantContext
+                    import uuid as _uuid
+                    tenant_ctx = TenantContext(
+                        id=_uuid.UUID(t_data["id"]),
+                        name=t_data["name"],
+                        slug=t_data["slug"],
+                        status=t_data.get("status", "active"),
+                        logo_url=t_data.get("logo_url"),
+                        custom_domain=t_data.get("custom_domain"),
+                        settings=t_data.get("settings") or {},
+                    )
+
+        if tenant_ctx:
+            # 1. Suspended organization check
+            # Normal tenant users are strictly blocked if their organization is suspended.
+            # Root Admin has platform-level oversight and must not be locked out of management/auth endpoints.
+            if tenant_ctx.is_suspended and not is_root_admin(user):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This organization is currently suspended."
+                )
+
+            # 2. Tenant isolation:
+            # - Root Admin ('root-admin') is above all tenants and authorized to access any tenant's data via tenant switching.
+            # - Tenant Super Admins ('super_admin') and HR users are strictly locked to their assigned organization.
+            if not is_root_admin(user):
+                if user.tenant_id and str(user.tenant_id) != str(tenant_ctx.id):
+                    logger.warning(f"[Auth] Cross-tenant access blocked: user {user.id} (tenant {user.tenant_id}, role {user.role}) attempted access to tenant {tenant_ctx.id} ({tenant_ctx.slug})")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied: Your account does not belong to this organization."
+                    )
+        else:
+            # Request is at root platform / unscoped, but user belongs to a specific tenant other than default
+            if not is_root_admin(user):
+                req_path = getattr(request, "url", None) and request.url.path or ""
+                if user.tenant_id and getattr(user, "tenant", None) and user.tenant.slug != "default":
+                    from app.core.middleware import _is_tenant_required
+                    if _is_tenant_required(req_path):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Access denied: Your account belongs to '{user.tenant.name}'. Please access your organization's portal ({user.tenant.slug}.localhost:3000)."
+                        )
+
         if hasattr(request, "state"):
             request.state.user_id = user.id
         return user
@@ -313,12 +378,16 @@ def get_current_user(
 
 
 def get_current_hr(current_user: User = Depends(get_current_user)) -> User:
-    """Dependency to ensure an approved HR or Super Admin session."""
+    """Dependency to ensure an approved HR, Tenant Admin, or Root Admin session."""
     return ensure_approved_staff(current_user, APPROVED_STAFF_ROLES)
 
 def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Dependency to ensure user is an approved Super Admin."""
-    return ensure_approved_staff(current_user, {"super_admin"})
+    """Dependency to ensure user is an approved Admin (root-admin or tenant super_admin)."""
+    return ensure_approved_staff(current_user, {"root-admin", "root_admin", "super_admin"})
+
+def get_current_root_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency to ensure user is the CALRIMS Root Admin (above all tenants)."""
+    return ensure_approved_staff(current_user, {"root-admin", "root_admin"})
 
 
 

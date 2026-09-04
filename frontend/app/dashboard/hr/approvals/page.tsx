@@ -49,7 +49,7 @@ export default function ApprovalsPage() {
     }
   }
 
-  const isSuperAdmin = user?.role === 'super_admin'
+  const isSuperAdmin = ['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '')
   const shouldFetch = isSuperAdmin
   const fetchUrl = `/api/auth/hr-requests?status=${status}`
   const { data: hrUsers = [], error, isValidating, mutate } = useSWR<HRUser[]>(

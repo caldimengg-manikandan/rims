@@ -112,16 +112,19 @@ class SecurityHeadersMiddleware:
 # TenantResolutionMiddleware (new)
 # ---------------------------------------------------------------------------
 
-# Paths that never require a tenant (health check, docs, auth bootstrap, etc.)
+# Paths where tenant context is not mandatory (auth, branding, candidate onboarding, docs, system)
 _TENANT_EXEMPT_PREFIXES = (
     "/health",
+    "/ready",
+    "/live",
     "/docs",
     "/redoc",
     "/openapi.json",
     "/api/auth/",
-    "/api/settings/branding",   # branding endpoint is public
-    "/api/support/",            # public support form
-    "/api/onboarding/",         # candidate onboarding (token-gated, not tenant-gated)
+    "/api/settings/branding",
+    "/api/support/",
+    "/api/onboarding/",
+    "/api/storage/",
     "/_next/",
     "/static/",
     "/favicon",
@@ -315,8 +318,13 @@ def _resolve_slug_from_host(host: str) -> Optional[str]:
         sub = host[:-len(".localhost")]
         if sub and sub not in ("www", "api", "mail", "admin", "static"):
             return sub
+    # Known platform apex domains have no tenant
+    if host in ("calrims.com", "rims.app", "calrims.local"):
+        return None
+
     parts = host.split(".")
-    if len(parts) >= 2:
+    # Standard internet hostnames require at least 3 parts (e.g. acme.calrims.com)
+    if len(parts) >= 3:
         candidate = parts[0]
         # Reject obviously generic subdomains
         if candidate not in ("www", "api", "mail", "admin", "static"):
@@ -349,6 +357,26 @@ def _resolve_slug_from_jwt(authorization: str) -> Optional[str]:
         return None
 
 
+def invalidate_tenant_cache(slug: Optional[str] = None, tenant_id: Optional[str] = None):
+    """Invalidate tenant cache entry in Redis and in-process memory."""
+    keys = []
+    if slug:
+        keys.append(f"tenant:slug:{slug}")
+    if tenant_id:
+        keys.append(f"tenant:id:{tenant_id}")
+    with _tenant_cache_lock:
+        for k in keys:
+            _tenant_cache.pop(k, None)
+    try:
+        from app.core.redis_store import get_redis_client
+        rc = get_redis_client()
+        if rc:
+            for k in keys:
+                rc.delete(k)
+    except Exception:
+        pass
+
+
 class TenantResolutionMiddleware:
     """
     ASGI middleware that resolves, validates, and injects tenant context for
@@ -367,7 +395,7 @@ class TenantResolutionMiddleware:
 
     On failure (tenant-required routes only):
       - 404 if slug/id cannot be resolved
-      - 403 if the tenant exists but is suspended
+      - 403 if the tenant exists but is not active (pending, suspended, rejected, deactivated)
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -379,9 +407,9 @@ class TenantResolutionMiddleware:
             return
 
         path: str = scope.get("path", "")
-
-        # Fast path: exempt routes skip tenant resolution entirely
-        if _is_exempt(path):
+        # System infrastructure fast path: docs, health, static assets skip resolution entirely
+        _SYSTEM_BYPASS_PREFIXES = ("/health", "/ready", "/live", "/docs", "/redoc", "/openapi.json", "/_next/", "/static/", "/favicon")
+        if any(path.startswith(p) for p in _SYSTEM_BYPASS_PREFIXES):
             await self.app(scope, receive, send)
             return
 
@@ -461,7 +489,7 @@ class TenantResolutionMiddleware:
                     _cached_set(cache_key, tenant_data)
 
         # ── Enforce on protected routes ──────────────────────────────────────
-        tenant_required = _is_tenant_required(path)
+        tenant_required = _is_tenant_required(path) and not _is_exempt(path)
 
         if tenant_required and (resolve_error or tenant_data is None):
             status_code = 404
@@ -469,8 +497,9 @@ class TenantResolutionMiddleware:
             await self._respond(send, status_code, body)
             return
 
-        if tenant_required and tenant_data and tenant_data.get("status") == "suspended":
-            body = json.dumps({"detail": "This organization is currently suspended"}).encode()
+        if tenant_required and tenant_data and tenant_data.get("status") in ("suspended", "pending", "rejected", "deactivated"):
+            t_status = tenant_data.get("status")
+            body = json.dumps({"detail": f"This organization is currently {t_status}"}).encode()
             await self._respond(send, 403, body)
             return
 

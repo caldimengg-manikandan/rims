@@ -13,6 +13,7 @@ import { NavigationProgress } from '@/components/navigation-progress'
 import { ScrollContainer } from '@/components/scroll-container'
 
 import { getBrandingServer } from '@/lib/branding-server';
+import { DynamicBranding } from '@/components/dynamic-branding';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,6 +87,7 @@ export default async function RootLayout({
             <div className="app-shell-watermark" />
 
             <AuthProvider>
+              <DynamicBranding />
               <ThemeProvider
                 attribute="class"
                 defaultTheme="system"

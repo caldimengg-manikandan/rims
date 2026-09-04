@@ -916,6 +916,11 @@ def get_filtered_interviews(
             selectinload(Application.interview).selectinload(Interview.report)
         )
 
+    # Multi-tenancy: scope to the active tenant
+    tenant_ctx = getattr(request.state, "tenant", None)
+    if tenant_ctx:
+        query = query.filter(Application.tenant_id == tenant_ctx.id)
+
     # Apply visibility isolation
     hr_scope = _hr_can_see_application(current_user)
     if hr_scope is not None:

@@ -2,7 +2,8 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from datetime import datetime
 import re
 import json
-from typing import Optional, List, Any, Literal
+from typing import Optional, List, Any, Literal, Union
+from uuid import UUID
 from app.domain.constants import CandidateState
 
 # ============================================================================
@@ -119,7 +120,16 @@ class UserResponse(BaseModel):
     approval_status: str
     profile_image_url: Optional[str] = None
     is_platform_super_admin: bool = False
+    is_root_admin: bool = False
+    tenant_id: Optional[Union[UUID, str]] = None
+    tenant_slug: Optional[str] = None
     created_at: datetime
+    
+    @field_validator('tenant_id', mode='before')
+    def parse_tenant_id(cls, v):
+        if v is not None:
+            return str(v)
+        return None
     
     # Pydantic v2 compatibility for naive vs aware datetimes
     @field_validator('created_at', mode='before')
@@ -1318,5 +1328,11 @@ class CodingSessionResponse(BaseModel):
     coding_completed: bool = False
     problems: List[CodingProblemResponse] = []
     submissions_summary: List[dict] = []
+
+
+class TenantStatusUpdate(BaseModel):
+    status: Literal['active', 'suspended', 'deactivated', 'pending', 'rejected']
+    reason: Optional[str] = None
+
 
 

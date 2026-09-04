@@ -114,7 +114,7 @@ export default function HRDashboard() {
     { keepPreviousData: true }
   )
 
-  const isSuperAdmin = user?.role === 'super_admin'
+  const isSuperAdmin = ['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '')
   const { data: pendingApprovals = [] } = useSWR<any[]>(
     isSuperAdmin ? '/api/auth/pending-approvals' : null,
     (url: string) => fetcher<any[]>(url),

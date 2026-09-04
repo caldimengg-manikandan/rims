@@ -172,8 +172,13 @@ def _send_via_smtp(to_email: str, subject: str, html_body: str, attachments: lis
         msg["Subject"] = subject
         
         # Set professional Display Name based on branding settings
-        branding = get_branding_dict()
-        display_name = branding.get("product_name") or branding.get("company_name") or "Recruitment System"
+        display_name = None
+        match = re.search(r'class="logo-text"[^>]*>([^<]+)<', html_body)
+        if match:
+            display_name = match.group(1).strip()
+        if not display_name:
+            branding = get_branding_dict()
+            display_name = branding.get("product_name") or branding.get("company_name") or "CAL-RIMS"
         from_addr = settings.smtp_from or settings.smtp_user
         msg["From"] = formataddr((display_name, from_addr))
         msg["To"] = to_email
@@ -262,8 +267,13 @@ async def _send_via_resend(to_email: str, subject: str, html_body: str, idempote
         if not from_email:
             return {"success": False, "error": "RESEND_FROM not configured (Resend disabled)"}
 
-        branding = get_branding_dict()
-        display_name = branding.get("product_name") or branding.get("company_name") or "Recruitment System"
+        display_name = None
+        match = re.search(r'class="logo-text"[^>]*>([^<]+)<', html_body)
+        if match:
+            display_name = match.group(1).strip()
+        if not display_name:
+            branding = get_branding_dict()
+            display_name = branding.get("product_name") or branding.get("company_name") or "CAL-RIMS"
         from_formatted = formataddr((display_name, from_email))
 
         # Generate readable plain text representation as a fallback
@@ -508,12 +518,23 @@ async def execute_email_with_retries(
     logger.error(f"[EMAIL][PERMANENT_FAILURE] (Event: {event_id}) Failed for {_safe_email_target(to_email)}")
     return False
 
-def get_branding_dict() -> dict:
+def get_branding_dict(tenant: Optional[Any] = None) -> dict:
     try:
         from app.infrastructure.database import SessionLocal
         from app.core.branding import get_all_branding
+        from app.domain.models import Tenant
+        import uuid
         with SessionLocal() as db:
-            return get_all_branding(db)
+            tenant_obj = None
+            if tenant is not None:
+                if isinstance(tenant, (str, uuid.UUID)):
+                    try:
+                        tenant_obj = db.query(Tenant).filter((Tenant.id == tenant) | (Tenant.slug == str(tenant))).first()
+                    except Exception:
+                        pass
+                elif hasattr(tenant, "slug") or hasattr(tenant, "settings") or hasattr(tenant, "name"):
+                    tenant_obj = tenant
+            return get_all_branding(db, tenant_ctx=tenant_obj)
     except Exception as e:
         logger.warning(f"Could not load branding settings from DB: {e}")
         try:
@@ -521,20 +542,20 @@ def get_branding_dict() -> dict:
             return BRANDING_DEFAULTS.copy()
         except Exception:
             return {
-                "company_name": "Caldim Engineering",
+                "company_name": "CALDIM",
                 "product_name": "CAL-RIMS",
                 "theme_color": "#2563eb",
                 "support_email": "support@caldimproducts.com",
-                "footer_text": "Powered by Caldim Engineering. Built for teams who care about who they hire."
+                "footer_text": "Powered by CALDIM. Built for teams who care about who they hire."
             }
 
-def get_templated_email(content_html: str, title: str) -> str:
-    branding = get_branding_dict()
-    company_name = branding.get("company_name", "Caldim Engineering")
+def get_templated_email(content_html: str, title: str, tenant: Optional[Any] = None) -> str:
+    branding = get_branding_dict(tenant=tenant)
+    company_name = branding.get("company_name", "CALDIM")
     product_name = branding.get("product_name", "CAL-RIMS")
     theme_color = branding.get("theme_color", "#2563eb")
     support_email = branding.get("support_email", "support@caldimproducts.com")
-    footer_text = branding.get("footer_text", "Powered by Caldim Engineering. Built for teams who care about who they hire.")
+    footer_text = branding.get("footer_text", "Powered by CALDIM. Built for teams who care about who they hire.")
 
     return f"""<!DOCTYPE html>
 <html>
@@ -620,10 +641,22 @@ def get_templated_email(content_html: str, title: str) -> str:
 
 # --- Email Templates ---
 
-async def send_otp_email(to_email: str, otp: str):
+async def send_otp_email(to_email: str, otp: str, tenant: Optional[Any] = None):
     subject = "Verify your account for the Recruitment System"
-    branding = get_branding_dict()
-    company_name = branding.get("company_name", "Caldim Engineering")
+    tenant_obj = tenant
+    if not tenant_obj:
+        try:
+            from app.infrastructure.database import SessionLocal
+            from app.domain.models import User
+            with SessionLocal() as db:
+                user = db.query(User).filter(User.email.ilike(to_email.strip())).first()
+                if user and user.tenant:
+                    tenant_obj = user.tenant
+        except Exception:
+            pass
+
+    branding = get_branding_dict(tenant=tenant_obj)
+    company_name = branding.get("company_name", "CALDIM")
     content_html = f"""
       <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:700; text-align:center;">Account Verification</h2>
       <p style="font-size:15px; line-height:1.6; color:#334155; text-align:center; margin-bottom:24px;">
@@ -636,20 +669,33 @@ async def send_otp_email(to_email: str, otp: str):
         If you did not request this verification code, please ignore this message. Your account remains secure.
       </p>
     """
-    body = get_templated_email(content_html, subject)
+    body = get_templated_email(content_html, subject, tenant=tenant_obj)
     return await execute_email_with_retries(to_email, subject, body, event_type="OTP_VERIFICATION")
 
 async def send_password_reset_email(to_email: str, otp: str):
     subject = "Password Reset Request"
-    branding = get_branding_dict()
+    
+    tenant_obj = None
+    try:
+        from app.infrastructure.database import SessionLocal
+        from app.domain.models import User
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.email.ilike(to_email.strip())).first()
+            if user and user.tenant:
+                tenant_obj = user.tenant
+    except Exception as e:
+        logger.warning(f"Could not load tenant for password reset: {e}")
+
+    branding = get_branding_dict(tenant=tenant_obj)
     theme_color = branding.get("theme_color", "#2563eb")
+    company_name = branding.get("company_name", "CALDIM")
     frontend_url = settings.frontend_base_url
     reset_link = f"{frontend_url}/auth/reset-password?email={to_email}&otp={otp}"
     
     content_html = f"""
       <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:700; text-align:center;">Reset Your Password</h2>
       <p style="font-size:15px; line-height:1.6; color:#334155; text-align:center; margin-bottom:24px;">
-        We received a request to reset the password for your account. Use the verification code below or click the button to set a new password. This link and code will expire in 30 minutes.
+        We received a request to reset the password for your account at <strong>{html.escape(company_name)}</strong>. Use the verification code below or click the button to set a new password. This link and code will expire in 30 minutes.
       </p>
       <div style="text-align:center; margin:32px 0;">
         <span style="display:inline-block; background:#f1f5f9; color:#0f172a; font-size:28px; font-weight:700; font-family:monospace; padding:12px 28px; border-radius:8px; border:1px solid #e2e8f0; letter-spacing:6px; padding-left:34px;">{html.escape(str(otp))}</span>
@@ -668,13 +714,15 @@ async def send_password_reset_email(to_email: str, otp: str):
         If you did not request a password reset, please ignore this email. Your password will remain unchanged.
       </p>
     """
-    body = get_templated_email(content_html, subject)
+    body = get_templated_email(content_html, subject, tenant=tenant_obj)
     return await execute_email_with_retries(to_email, subject, body, event_type="PASSWORD_RESET")
 
 async def send_application_received_email(to_email_or_app: Any, job_title: str = None):
+    tenant_obj = None
     if hasattr(to_email_or_app, 'candidate_email'):
         to_email = to_email_or_app.candidate_email
-        job_title = to_email_or_app.job.title
+        job_title = to_email_or_app.job.title if hasattr(to_email_or_app, 'job') and to_email_or_app.job else (job_title or "Position")
+        tenant_obj = getattr(to_email_or_app, 'tenant', None) or (getattr(to_email_or_app.job, 'tenant', None) if hasattr(to_email_or_app, 'job') else None)
     else:
         to_email = to_email_or_app
         
@@ -688,7 +736,7 @@ async def send_application_received_email(to_email_or_app: Any, job_title: str =
         Our hiring team will review your profile shortly and get back to you with updates on the next steps.
       </p>
     """
-    body = get_templated_email(content_html, subject)
+    body = get_templated_email(content_html, subject, tenant=tenant_obj)
     return await execute_email_with_retries(
         to_email, subject, body, 
         application=to_email_or_app if hasattr(to_email_or_app, 'id') else None,
@@ -705,8 +753,9 @@ async def send_interview_invitation_email(application: Any, raw_access_key: str 
             
     # Production refinement: pass the whole application object for persistence
     # This matches the execute_email_with_retries signature
+    tenant_obj = getattr(application, 'tenant', None) or (getattr(application.job, 'tenant', None) if hasattr(application, 'job') else None)
     subject = f"Congratulations! You're invited to interview for {application.job.title}"
-    branding = get_branding_dict()
+    branding = get_branding_dict(tenant=tenant_obj)
     theme_color = branding.get("theme_color", "#2563eb")
     frontend_url = settings.frontend_base_url
     access_url = f"{frontend_url}/interview/access?email={application.candidate_email}&key={raw_access_key}"
@@ -738,7 +787,7 @@ async def send_interview_invitation_email(application: Any, raw_access_key: str 
         </p>
       </div>
     """
-    body = get_templated_email(content_html, subject)
+    body = get_templated_email(content_html, subject, tenant=tenant_obj)
     return await execute_email_with_retries(
         application.candidate_email, 
         subject, 
@@ -747,9 +796,9 @@ async def send_interview_invitation_email(application: Any, raw_access_key: str 
         event_type="INTERVIEW_INVITE"
     )
 
-async def send_approved_for_interview_email(to_email: str, job_title: str, raw_access_key: str = ""):
+async def send_approved_for_interview_email(to_email: str, job_title: str, raw_access_key: str = "", tenant: Optional[Any] = None):
     subject = f"Congratulations! You're invited to interview for {job_title}"
-    branding = get_branding_dict()
+    branding = get_branding_dict(tenant=tenant)
     theme_color = branding.get("theme_color", "#2563eb")
     frontend_url = settings.frontend_base_url
     try:
@@ -787,13 +836,14 @@ async def send_approved_for_interview_email(to_email: str, job_title: str, raw_a
         </p>
       </div>
     """
-    body = get_templated_email(content_html, subject)
+    body = get_templated_email(content_html, subject, tenant=tenant)
     return await execute_email_with_retries(to_email, subject, body, event_type="INTERVIEW_INVITE")
 
 async def send_hired_email(to_email: str, job_title: str, interview=None, offer_letter_path: str = None, application: Any = None):
     subject = "Congratulations! You have been selected"
-    branding = get_branding_dict()
-    company_name = branding.get("company_name", "Caldim Engineering")
+    tenant_obj = getattr(application, 'tenant', None) or (getattr(application.job, 'tenant', None) if application and hasattr(application, 'job') else None)
+    branding = get_branding_dict(tenant=tenant_obj)
+    company_name = branding.get("company_name", "CALDIM")
     content_html = f"""
       <h2 style="margin-top:0; color:#10b981; font-size:20px; font-weight:700; text-align:center;">Congratulations!</h2>
       <p style="font-size:15px; line-height:1.6; color:#334155; text-align:center; margin-bottom:24px;">
@@ -803,7 +853,7 @@ async def send_hired_email(to_email: str, job_title: str, interview=None, offer_
         Our HR team will reach out to you within 24-48 hours to guide you through the next steps of the onboarding process.
       </p>
     """
-    body = get_templated_email(content_html, subject)
+    body = get_templated_email(content_html, subject, tenant=tenant_obj)
     attachments = []
     if offer_letter_path:
         # Determine storage type: Supabase storage paths (e.g. "offer_letters/offer_123_456.pdf")

@@ -30,6 +30,7 @@ import {
     Database,
     Code2,
     Mail,
+    Building2,
 } from 'lucide-react'
 import {
     Avatar,
@@ -79,8 +80,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         }
     )
 
+    const isRootAdmin = ['root-admin', 'root_admin'].includes(user?.role || '')
+
+    // Use SWR for pending tenant approvals (Root Admin only)
+    const { data: pendingTenantsData } = useSWR<{ count: number }>(
+        isRootAdmin ? '/api/tenants/pending' : null,
+        (url: string) => fetcher<{ count: number }>(url),
+        {
+            refreshInterval: 15000,
+            dedupingInterval: 8000,
+            revalidateOnFocus: true,
+        }
+    )
+
     const pendingCount = pendingApps?.count ?? 0
     const ticketCount = ticketData?.count || 0
+    const pendingTenantsCount = pendingTenantsData?.count || 0
 
     const { branding } = useBranding()
     const companyLogo = branding.logoUrl || null
@@ -112,7 +127,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: 'Recruitment',
             items: [
                 { href: '/dashboard/hr/jobs', label: 'Job Postings', icon: Briefcase },
-                ...(user?.role === 'super_admin' ? [{ href: '/dashboard/hr/approvals', label: 'HR Management', icon: UserCheck }] : []),
+                ...(['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '') ? [{ href: '/dashboard/hr/approvals', label: 'HR Management', icon: UserCheck }] : []),
                 { href: '/dashboard/hr/applications', label: 'Applications', icon: Users },
                 { href: '/dashboard/hr/ingested-emails', label: 'Email Ingestion Inbox', icon: Mail },
                 { href: '/dashboard/hr/pipeline', label: 'Hiring Pipeline', icon: UserCheck },
@@ -126,10 +141,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 { href: '/dashboard/hr/batch-analysis', label: 'Batch Analysis', icon: FileText },
             ]
         },
-        ...(user?.role === 'super_admin' ? [
+        ...(['super_admin', 'root-admin', 'root_admin'].includes(user?.role || '') ? [
             {
                 title: 'Administration',
                 items: [
+                    ...(isRootAdmin ? [
+                        { href: '/dashboard/tenants', label: 'Tenant Management', icon: Building2 }
+                    ] : []),
                     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
                 ]
             }
@@ -229,6 +247,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                                         {ticketCount}
                                                     </Badge>
                                                 )}
+                                                {link.label === 'Tenant Management' && pendingTenantsCount > 0 && (
+                                                    <Badge
+                                                         variant="secondary"
+                                                         className="ml-auto h-5 min-w-5 flex items-center justify-center rounded-full px-1 text-[10px] font-bold bg-amber-500 text-white animate-pulse group-data-[collapsible=icon]:hidden shadow-sm"
+                                                    >
+                                                         {pendingTenantsCount}
+                                                    </Badge>
+                                                )}
                                             </Link>
                                         </SidebarMenuButton>
                                     </SidebarMenuItem>
@@ -263,7 +289,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                 {user?.full_name}
                             </span>
                             <span className="text-[10px] text-primary/60 truncate uppercase tracking-wider font-bold mt-0.5">
-                                {user?.role === 'hr' ? 'HR Manager' : user?.role === 'super_admin' ? 'Super Admin' : 'User'}
+                                {user?.role === 'root-admin' || (user as any)?.role === 'root_admin' ? 'Root Admin' : user?.role === 'super_admin' ? 'Super Admin' : user?.role === 'hr' ? 'HR Manager' : 'User'}
                             </span>
                         </div>
                     </div>

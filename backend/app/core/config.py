@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     anthropic_api_key: str = ""
     groq_api_key: str = ""
+    openrouter_api_key: str = ""
+    ai_provider: str = "groq"
+    groq_model: str = "openai/gpt-oss-120b"
+    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct"
 
     # Encryption
     encryption_key: str = ""
@@ -143,6 +147,11 @@ class Settings(BaseSettings):
     supabase_bucket_id_cards: str = "id-cards"
     supabase_bucket_id_photos: str = "id-photos"
     supabase_bucket_videos: str = "videos"
+
+    # Storage Provider: "local" (default for development) or "supabase" (production)
+    storage_provider: str = "local"
+    local_storage_dir: str = "storage/uploads"
+    backend_base_url: str = "http://127.0.0.1:10000"
 
     # Frontend URL (Point 8, A007)
     # Pydantic-settings will prioritize the env vars listed in validation_alias.

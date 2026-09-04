@@ -64,9 +64,10 @@ export async function middleware(request: NextRequest) {
 
   const token = request.cookies.get('access_token')?.value || request.cookies.get('token')?.value;
 
-  // 3. Dashboard routes - require staff/admin token
+  // 3. Dashboard routes - require staff/admin token and strict tenant matching
   if (pathname.startsWith('/dashboard')) {
     let isValid = false;
+    let tenantMismatch = false;
 
     if (token) {
       try {
@@ -74,8 +75,45 @@ export async function middleware(request: NextRequest) {
         if (secretKey) {
           const secret = new TextEncoder().encode(secretKey);
           const { payload } = await jwtVerify(token, secret);
-          if (payload && (payload.role === 'hr' || payload.role === 'super_admin')) {
-            isValid = true;
+          if (payload && (payload.role === 'hr' || payload.role === 'super_admin' || payload.role === 'root-admin' || payload.role === 'root_admin')) {
+            const tokenTenantSlug = (payload as any).tenant_slug || (payload as any).app_metadata?.tenant_slug;
+            const tokenTenantId = (payload as any).tenant_id || (payload as any).app_metadata?.tenant_id;
+            const isRoot = payload.role === 'root-admin' || payload.role === 'root_admin';
+
+            // Restrict /dashboard/tenants strictly to Root Admin
+            if (pathname.startsWith('/dashboard/tenants') && !isRoot) {
+              const basePath = request.nextUrl.basePath || '';
+              return NextResponse.redirect(new URL(`${basePath}/dashboard/hr`, request.url));
+            }
+
+            // Enforce tenant matching:
+            if (isRoot) {
+              // Root Admin can only access central platform, not individual tenant workspaces directly
+              if (tenantSlug !== 'default') {
+                tenantMismatch = true;
+                isValid = false;
+              } else {
+                isValid = true;
+              }
+            } else {
+              // Tenant-scoped user (tenant super_admin or hr):
+              if (tenantSlug !== 'default') {
+                if (tokenTenantSlug === tenantSlug) {
+                  isValid = true;
+                } else {
+                  tenantMismatch = true;
+                  isValid = false;
+                }
+              } else {
+                // On default / central platform:
+                if (!tokenTenantSlug || tokenTenantSlug === 'default') {
+                  isValid = true;
+                } else {
+                  tenantMismatch = true;
+                  isValid = false;
+                }
+              }
+            }
           }
         }
       } catch (err) {
@@ -86,7 +124,11 @@ export async function middleware(request: NextRequest) {
     if (!isValid) {
       const basePath = request.nextUrl.basePath || '';
       const loginUrl = new URL(`${basePath}/auth/login`, request.url);
-      loginUrl.searchParams.set('expired', 'true');
+      if (tenantMismatch) {
+        loginUrl.searchParams.set('error', 'tenant_mismatch');
+      } else {
+        loginUrl.searchParams.set('expired', 'true');
+      }
       loginUrl.searchParams.set('from', pathname);
       loginUrl.searchParams.set('redirect', pathname);
       

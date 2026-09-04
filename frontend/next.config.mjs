@@ -2,7 +2,7 @@
 
 const nextConfig = {
   output: 'standalone',
-  allowedDevOrigins: ['127.0.0.1', 'localhost:3000', '192.168.1.173', '192.168.1.173:3000'],
+  allowedDevOrigins: ['127.0.0.1', '127.0.0.1:3000', 'localhost:3000', '192.168.1.173', '192.168.1.173:3000', '*.localhost:3000', 'amazon.localhost:3000', 'acme.localhost:3000', 'nexus.localhost:3000'],
   basePath: '/calrims',
   trailingSlash: true,
   devIndicators: {

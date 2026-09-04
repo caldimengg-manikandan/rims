@@ -12,7 +12,7 @@
  *     on a dedicated tenant hostname (e.g. amazon.localhost:3000 -> amazon).
  */
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useAuth } from '@/app/dashboard/lib/auth-context'
 import { APIClient } from '@/app/dashboard/lib/api-client'
 import { Building2, ShieldCheck, ChevronDown, Check } from 'lucide-react'
@@ -46,60 +46,45 @@ export function TenantSwitcher() {
   const [loading, setLoading] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // Determine if current user is the CALRIMS Platform Super Admin
-  const isPlatformSuperAdmin = Boolean(
+  const subdomainSlug = getSubdomainSlug()
+
+  // Strict Rule: ONLY accounts with role 'root-admin' (or 'root_admin'), and ONLY when on the
+  // central platform portal (NOT on tenant subdomains like amazon.localhost:3000), can see
+  // and use the Tenant Switcher dropdown.
+  // Super Admins (tenant admins), HR recruiters, candidates, and any user on a tenant subdomain
+  // see ONLY a static Organization Badge.
+  const isRootAdmin = Boolean(
     isAuthenticated &&
     user &&
-    ((user as any).is_platform_super_admin === true ||
-      ['caldiminternship@gmail.com', 'test.admin@calrims.local', 'admin@calrims.com'].includes(user.email?.toLowerCase().trim()))
+    !subdomainSlug &&
+    (user.role === 'root-admin' || (user as any).role === 'root_admin')
   )
 
-  useEffect(() => {
-    if (!isAuthenticated) return
+  const fetchTenants = useCallback(() => {
+    if (!isRootAdmin || subdomainSlug) return
 
-    let cancelled = false
     setLoading(true)
-
-    const subdomainSlug = getSubdomainSlug()
-
     APIClient.get<TenantOption[]>('/api/auth/tenants')
       .then((data) => {
-        if (cancelled) return
         const list = data ?? []
         setTenants(list)
 
-        // If visiting on a dedicated subdomain (e.g. amazon.localhost:3000), lock to that tenant
-        if (subdomainSlug) {
-          const match = list.find((t) => t.slug === subdomainSlug)
-          if (match && activeTenant?.slug !== match.slug) {
-            setActiveTenant(match)
-            if (typeof sessionStorage !== 'undefined') {
-              sessionStorage.setItem('tenant_slug', match.slug)
-              sessionStorage.setItem('tenant_id', match.id)
-            }
-            return
-          } else if (!match && activeTenant?.slug !== subdomainSlug) {
-            const fallback = {
-              id: subdomainSlug,
-              slug: subdomainSlug,
-              name: subdomainSlug.charAt(0).toUpperCase() + subdomainSlug.slice(1),
-              logo_url: null,
-              status: 'active',
-            }
-            setActiveTenant(fallback)
-            return
-          }
-        }
+        // If active tenant is not set, or is no longer active in the list (e.g. was suspended), reset to Default Organization
+        const isCurrentActiveInList =
+          activeTenant &&
+          list.some(
+            (t) =>
+              (t.id === activeTenant.id || t.slug === activeTenant.slug) &&
+              t.status === 'active'
+          )
 
-        // If on root domain, set initial active tenant
-        if (!activeTenant && list.length > 0) {
-          const savedSlug = typeof window !== 'undefined' ? sessionStorage.getItem('tenant_slug') : null
-          const initial =
-            list.find((t) => t.slug === savedSlug) ||
-            list.find((t) => t.slug !== 'default') ||
+        if (!activeTenant || !isCurrentActiveInList) {
+          const defaultTenant =
+            list.find((t) => t.slug === 'default') ||
+            list.find((t) => t.status === 'active') ||
             list[0]
-          if (initial) {
-            setActiveTenant(initial)
+          if (defaultTenant) {
+            setActiveTenant(defaultTenant)
           }
         }
       })
@@ -107,13 +92,48 @@ export function TenantSwitcher() {
         // Silently handle
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        setLoading(false)
       })
+  }, [isRootAdmin, subdomainSlug, activeTenant, setActiveTenant])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    // If visiting on a dedicated subdomain (e.g. amazon.localhost:3000), lock to that tenant
+    if (subdomainSlug) {
+      if (activeTenant?.slug !== subdomainSlug) {
+        setActiveTenant({
+          id: subdomainSlug,
+          slug: subdomainSlug,
+          name: subdomainSlug.charAt(0).toUpperCase() + subdomainSlug.slice(1),
+          logo_url: null,
+          status: 'active',
+        })
+      }
+      setLoading(false)
+      return
+    }
+
+    // Only fetch list of tenants if root admin on the central portal
+    if (!isRootAdmin) {
+      setLoading(false)
+      return
+    }
+
+    fetchTenants()
+
+    const handleUpdate = () => {
+      fetchTenants()
+    }
+
+    window.addEventListener('rims:tenant-changed', handleUpdate)
+    window.addEventListener('rims:data-mutated', handleUpdate)
 
     return () => {
-      cancelled = true
+      window.removeEventListener('rims:tenant-changed', handleUpdate)
+      window.removeEventListener('rims:data-mutated', handleUpdate)
     }
-  }, [isAuthenticated, activeTenant, setActiveTenant])
+  }, [isAuthenticated, subdomainSlug, isRootAdmin, fetchTenants])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -128,10 +148,10 @@ export function TenantSwitcher() {
 
   if (!isAuthenticated) return null
 
-  // CASE 1: Regular Organization Super Admin or HR Recruiter
+  // CASE 1: Tenant Super Admins, HR Recruiters, Candidates, OR browsing on a tenant subdomain
   // -> Render only a sleek, static Organization Badge. No switcher dropdown!
-  if (!isPlatformSuperAdmin) {
-    const orgName = activeTenant?.name || (getSubdomainSlug() ? getSubdomainSlug()!.toUpperCase() : 'Organization')
+  if (!isRootAdmin) {
+    const orgName = activeTenant?.name || (subdomainSlug ? subdomainSlug.toUpperCase() : 'Organization')
     const logoUrl = activeTenant?.logo_url
 
     return (
@@ -193,7 +213,7 @@ export function TenantSwitcher() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="listbox"
-        title="Switch Organization (Platform Super Admin)"
+        title="Switch Organization (Root Admin)"
         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all cursor-pointer font-medium max-w-[210px] ${
           open
             ? 'bg-muted border-primary/40 text-foreground shadow-md'
@@ -218,7 +238,7 @@ export function TenantSwitcher() {
         </span>
 
         <span className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-500 font-bold uppercase">
-          Admin
+          Root Admin
         </span>
 
         <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -233,7 +253,7 @@ export function TenantSwitcher() {
         >
           <div className="px-3.5 py-2.5 border-b border-border/50 flex items-center justify-between text-[11px] text-muted-foreground">
             <span className="font-bold uppercase tracking-wider">Switch Organization</span>
-            <span className="text-[10px] text-primary font-semibold">Global Admin</span>
+            <span className="text-[10px] text-primary font-semibold">Root Admin</span>
           </div>
 
           <div className="max-h-64 overflow-y-auto p-1.5 space-y-1">

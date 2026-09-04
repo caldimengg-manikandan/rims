@@ -584,10 +584,11 @@ def list_public_jobs(
     search: Optional[str] = None,
     skip: int = 0,
     limit: Optional[int] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
-    """List open and closed jobs (Public endpoint). Use skip/limit for pagination (default limit 100, max 200)."""
-    query = db.query(Job).filter(Job.status.in_(["open", "closed"]))
+    """List open and closed jobs (Public endpoint). Scoped strictly to the active tenant."""
+    query = db.query(Job).filter(Job.tenant_id == tenant_ctx.id, Job.status.in_(["open", "closed"]))
 
     if search:
         from sqlalchemy import or_
@@ -620,8 +621,8 @@ def list_jobs(
     query = db.query(Job)
     # Multi-tenancy: scope to the active tenant (belt-and-suspenders over RLS).
     query = query.filter(Job.tenant_id == tenant_ctx.id)
-    # Apply visibility isolation: Anyone not a super_admin is restricted to their own jobs
-    if current_user.role.lower() not in ["super_admin", "admin"]:
+    # Apply visibility isolation: Anyone not an admin (root-admin, super_admin) is restricted to their own jobs
+    if current_user.role.lower() not in ["root-admin", "root_admin", "super_admin", "admin"]:
         query = query.filter(Job.hr_id == current_user.id)
 
     # Apply optional status filter
@@ -635,17 +636,18 @@ def list_jobs(
 @router.get("/public/{job_id}", response_model=JobPublicResponse)
 def get_public_job(
     job_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get open/closed job details (Public endpoint). Supports numeric ID or JOB- identifier."""
     # Try numeric ID first if job_id is all digits
     job = None
     if job_id.isdigit():
-        job = db.query(Job).filter(Job.id == int(job_id), Job.status.in_(["open", "closed"])).first()
+        job = db.query(Job).filter(Job.id == int(job_id), Job.tenant_id == tenant_ctx.id, Job.status.in_(["open", "closed"])).first()
     
     # If not found by numeric ID, try the string job_id (identifier)
     if not job:
-        job = db.query(Job).filter(Job.job_id == job_id, Job.status.in_(["open", "closed"])).first()
+        job = db.query(Job).filter(Job.job_id == job_id, Job.tenant_id == tenant_ctx.id, Job.status.in_(["open", "closed"])).first()
     
     if not job:
         raise HTTPException(

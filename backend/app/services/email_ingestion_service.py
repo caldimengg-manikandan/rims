@@ -407,7 +407,7 @@ def fetch_resume_attachments(db: Session, imap_user: str, imap_pass: str, hr_id:
         # Pre-fetch open jobs for this HR user (or all if hr_id is None or user is super_admin) to isolate sync scoping
         with SessionLocal() as local_db:
             user_record = local_db.query(User).filter(User.id == hr_id).first() if hr_id else None
-            is_super_admin = (user_record.role == 'super_admin') if user_record else False
+            is_super_admin = (user_record.role in ('root-admin', 'root_admin', 'super_admin')) if user_record else False
 
             query = local_db.query(Job).filter(Job.status == 'open')
             if hr_id is not None and not is_super_admin:
@@ -742,7 +742,7 @@ async def run_batch_resume_processing(db: Session = None, hr_id: int = None):
     # 2. Fetch open jobs data using a short-lived session
     with SessionLocal() as jobs_db:
         user_record = jobs_db.query(User).filter(User.id == hr_id).first() if hr_id else None
-        is_super_admin = (user_record.role == 'super_admin') if user_record else False
+        is_super_admin = (user_record.role in ('root-admin', 'root_admin', 'super_admin')) if user_record else False
 
         query = jobs_db.query(Job).filter(Job.status == 'open')
         if hr_id is not None and not is_super_admin:

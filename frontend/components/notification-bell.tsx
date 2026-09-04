@@ -54,7 +54,7 @@ export function NotificationBell() {
     const [isOpen, setIsOpen] = useState(false)
     const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
     const [isDeleting, setIsDeleting] = useState(false)
-    const canViewNotifications = ['super_admin', 'hr'].includes(user?.role || '')
+    const canViewNotifications = ['super_admin', 'root-admin', 'root_admin', 'hr'].includes(user?.role || '')
 
     const { data: notifications = [], mutate } = useSWR<Notification[]>(
         canViewNotifications ? '/api/notifications?limit=50' : null,

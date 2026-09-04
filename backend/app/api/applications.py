@@ -27,7 +27,7 @@ from app.domain.schemas import (
     BulkDeleteEmailsRequest,
 )
 from app.core.auth import get_current_hr, get_current_admin
-from app.core.ownership import validate_hr_ownership, get_tenant_context, get_optional_tenant_context
+from app.core.ownership import validate_hr_ownership, validate_tenant_ownership, get_tenant_context, get_optional_tenant_context
 from app.core.tenant_context import TenantContext
 from app.services.ai_service import parse_resume_with_ai, extract_basic_candidate_info
 from app.services.email_service import send_application_received_email, send_rejected_email, send_approved_for_interview_email
@@ -250,12 +250,14 @@ def get_application_failures(
 def get_candidate_ranking(
     job_id: int,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get ranked candidates for a specific job (Point 3)"""
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    validate_tenant_ownership(job, tenant_ctx, resource_name="job")
     # Apply visibility isolation
     if current_user.role.lower() == "hr":
         if job.hr_id != current_user.id:
@@ -670,7 +672,8 @@ async def apply_for_job(
 
     except IntegrityError as e:
         db.rollback()
-        logger.warning(f"Duplicate application integrity violation: {e}")
+        err_str = str(e).lower()
+        logger.warning(f"Application integrity violation: {e}")
         from app.core.storage import delete_file
         try:
             if resume_storage_path:
@@ -679,6 +682,18 @@ async def apply_for_job(
                 delete_file(settings.supabase_bucket_id_photos, photo_storage_path)
         except Exception as del_err:
             logger.warning(f"Failed to clean up files on IntegrityError: {del_err}")
+
+        if "applications_pkey" in err_str:
+            try:
+                db.execute(text("SELECT setval(pg_get_serial_sequence('applications', 'id'), (SELECT COALESCE(MAX(id), 1) FROM applications))"))
+                db.commit()
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database ID sequence was out of sync and has now been repaired. Please resubmit your application."
+            )
+
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="You have already applied for this job."
@@ -761,13 +776,7 @@ async def process_application_background(application_id: int, job_id: int, abs_f
             if not abs_file_path:
                 raise Exception("No resume file path available (storage likely disabled)")
                 
-            from app.core.storage import get_supabase_client
-            supabase = get_supabase_client()
-            if not supabase:
-                raise Exception("Supabase client not initialized")
-            
-            # Download from storage
-            # Assuming 'resumes' bucket
+            # Download from storage (Local or Cloud)
             bucket_name = settings.supabase_bucket_resumes
             from app.core.storage import download_file
             response = download_file(bucket_name, abs_file_path)
@@ -1114,10 +1123,12 @@ def has_applied_for_job(
 def get_pending_applications_count(
     current_user: User = Depends(get_current_hr),
     db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
-    """Sidebar / badges: count applications not in a terminal state, scoped to HR's jobs."""
+    """Sidebar / badges: count applications not in a terminal state, scoped to HR's jobs and active tenant."""
     # Use func.count() directly — avoids loading full ORM objects just to count them.
     q = db.query(func.count(Application.id)).filter(
+        Application.tenant_id == tenant_ctx.id,
         ~Application.status.in_(("onboarded", "rejected", "offer_rejected", "offer_accepted")),
         or_(func.trim(Application.file_status).in_(('active', 'missing')), Application.file_status == None)
     )
@@ -2348,7 +2359,8 @@ def get_application(
     application_id: int,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Get application details (HR only)"""
     application = db.query(Application).options(
@@ -2364,6 +2376,7 @@ def get_application(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Application not found"
         )
+    validate_tenant_ownership(application, tenant_ctx, resource_name="application")
     validate_hr_ownership(application, current_user, resource_name="application")
     
     # Automatic Self-Healing for Incompatible/Mismatched Encryption Keys
@@ -2699,7 +2712,8 @@ def update_application_status(
     status_update: ApplicationStatusUpdate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """
     Execute a state transition on an application via the finite state machine.
@@ -2718,6 +2732,7 @@ def update_application_status(
     application = db.query(Application).filter(Application.id == application_id).with_for_update().first()
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
+    validate_tenant_ownership(application, tenant_ctx, resource_name="application")
     validate_hr_ownership(application, current_user, resource_name="application")
 
     # Parse the action
@@ -2888,7 +2903,8 @@ def update_application_status(
 def delete_application(
     application_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_hr)
+    current_user: User = Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """
     Delete an application along with associated data. HR only.
@@ -2896,6 +2912,7 @@ def delete_application(
     app = db.query(Application).filter(Application.id == application_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
+    validate_tenant_ownership(app, tenant_ctx, resource_name="application")
     validate_hr_ownership(app, current_user, resource_name="application")
 
     # Fetch file paths before deletion
@@ -2934,7 +2951,8 @@ def delete_application(
 def bulk_delete_applications(
     application_ids: List[int],
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_hr)
+    current_user: User = Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """
     Delete multiple applications in a single transaction. HR only.
@@ -2948,8 +2966,8 @@ def bulk_delete_applications(
             detail="Cannot delete more than 100 applications at a time."
         )
 
-    # Fetch all applications and validate ownership
-    apps = db.query(Application).filter(Application.id.in_(application_ids)).all()
+    # Fetch all applications and validate ownership within the active tenant
+    apps = db.query(Application).filter(Application.id.in_(application_ids), Application.tenant_id == tenant_ctx.id).all()
     
     if len(apps) != len(application_ids):
         found_ids = [app.id for app in apps]
@@ -3053,12 +3071,14 @@ def update_hr_notes(
     application_id: int,
     notes_update: ApplicationNotesUpdate,
     current_user: User = Depends(get_current_hr),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
 ):
     """Update HR notes for an application"""
     application = db.query(Application).filter(Application.id == application_id).with_for_update().first()
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
+    validate_tenant_ownership(application, tenant_ctx, resource_name="application")
     validate_hr_ownership(application, current_user, resource_name="application")
         
     application.hr_notes = notes_update.hr_notes

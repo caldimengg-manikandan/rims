@@ -35,7 +35,7 @@ from contextlib import asynccontextmanager
 from app.core.auth import hash_password
 from app.core.config import get_settings
 from app.infrastructure.database import Base, engine
-from app.api import auth, jobs, applications, interviews, decisions, notifications, analytics, tickets, support, hr_tickets, ops_email, settings as hr_settings, onboarding, repository, websocket, coding as coding_api
+from app.api import auth, jobs, applications, interviews, decisions, notifications, analytics, tickets, support, hr_tickets, ops_email, settings as hr_settings, onboarding, repository, websocket, coding as coding_api, storage as storage_api, tenants
 from app.domain.models import (
     User, Job, Application, ResumeExtraction, 
     Interview, InterviewQuestion, InterviewAnswer,
@@ -66,10 +66,46 @@ settings.validate_config()
 # Schema creation: guarded to primary worker only in multi-process deployments.
 # BUG-038 Fix: create_all() is disabled in production to prevent accidental schema
 # mutations. Production deployments must use 'alembic upgrade head' instead.
+def _ensure_coding_schema():
+    """Ensure coding assessment columns are present on jobs and interviews tables."""
+    from sqlalchemy import text
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'jobs' AND column_name = 'coding_round_enabled') THEN
+                        ALTER TABLE public.jobs ADD COLUMN coding_round_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+                        ALTER TABLE public.jobs ADD COLUMN coding_round_duration_minutes INTEGER NOT NULL DEFAULT 60;
+                        ALTER TABLE public.jobs ADD COLUMN coding_repo_set_id INTEGER;
+                        ALTER TABLE public.jobs ADD COLUMN coding_allowed_languages JSONB;
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'interviews' AND column_name = 'coding_completed') THEN
+                        ALTER TABLE public.interviews ADD COLUMN coding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+                        ALTER TABLE public.interviews ADD COLUMN coding_score DOUBLE PRECISION;
+                        ALTER TABLE public.interviews ADD COLUMN coding_completed_at TIMESTAMPTZ;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.users ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+                        CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON public.users(tenant_id);
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'question_sets' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.question_sets ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
+                        CREATE INDEX IF NOT EXISTS idx_question_sets_tenant_id ON public.question_sets(tenant_id);
+                    END IF;
+                END $$;
+            """))
+    except Exception as exc:
+        logger.warning(f"Could not auto-verify coding schema: {exc}")
+
 if os.environ.get("WORKER_ID", "0") == "0":
     if settings.env != "production":
         Base.metadata.create_all(bind=engine)
+        _ensure_coding_schema()
     else:
+        _ensure_coding_schema()
         logger.info(
             "Production mode: Skipping Base.metadata.create_all(). "
             "Run 'alembic upgrade head' to apply schema changes."
@@ -96,7 +132,7 @@ def bootstrap_super_admin():
             if "postgresql" in str(db.get_bind().url).lower():
                 db.execute(_text("SELECT pg_advisory_xact_lock(1919191919)"))
 
-            existing_admin = db.query(User).filter(User.role == "super_admin").first()
+            existing_admin = db.query(User).filter(User.role.in_(["root-admin", "root_admin", "super_admin"])).first()
             if existing_admin:
                 return
             existing_email_user = db.query(User).filter(User.email == configured_email).first()
@@ -296,10 +332,29 @@ async def _imap_polling_loop():
                     try:
                         imap_password = decrypt_field(target["password_enc"]).strip()
                         logger.info(f"Running auto-sync for user ID {target['id']} ({target['email']})")
-                        await asyncio.to_thread(fetch_resume_attachments, None, target["email"], imap_password, target["id"])
-                        await run_batch_resume_processing(None, hr_id=target["id"])
+                        res = await asyncio.to_thread(fetch_resume_attachments, None, target["email"], imap_password, target["id"])
+                        if isinstance(res, dict) and not res.get("success") and ("authentication" in str(res.get("error", "")).lower() or "credential" in str(res.get("error", "")).lower()):
+                            # Auto-disable sync for this user so we don't loop/spam failures
+                            with SessionLocal() as fix_db:
+                                u_fix = fix_db.query(User).filter(User.id == target["id"]).first()
+                                if u_fix:
+                                    u_fix.auto_sync_enabled = False
+                                    fix_db.commit()
+                            logger.warning(f"Auto-sync disabled for user ID {target['id']} ({target['email']}): Invalid or expired credentials. Please update Gmail App Password in Settings.")
+                        else:
+                            await run_batch_resume_processing(None, hr_id=target["id"])
                     except Exception as sync_err:
-                        logger.error(f"Auto-sync failed for user {target['id']}: {sync_err}")
+                        err_str = str(sync_err).lower()
+                        if "key mismatch" in err_str or "unreadable" in err_str or "decryption failure" in err_str:
+                            with SessionLocal() as fix_db:
+                                u_fix = fix_db.query(User).filter(User.id == target["id"]).first()
+                                if u_fix:
+                                    u_fix.auto_sync_enabled = False
+                                    u_fix.imap_password = None
+                                    fix_db.commit()
+                            logger.warning(f"Auto-sync disabled for user ID {target['id']} ({target['email']}): Password cannot be decrypted (encryption key changed). Please re-enter credentials in Settings.")
+                        else:
+                            logger.error(f"Auto-sync failed for user {target['id']}: {sync_err}")
             else:
                 logger.debug("No users have auto-sync enabled.")
             
@@ -370,6 +425,20 @@ async def _imap_polling_loop():
 @asynccontextmanager
 async def lifespan(app):
     """Application lifespan: manages background tasks on startup/shutdown."""
+    # Startup — synchronize PostgreSQL sequences with MAX(id)
+    try:
+        from sqlalchemy import text
+        from app.infrastructure.database import SessionLocal
+        with SessionLocal() as db:
+            for tbl in ["applications", "jobs", "users", "interviews", "notifications", "audit_logs"]:
+                try:
+                    db.execute(text(f"SELECT setval(pg_get_serial_sequence('public.\"{tbl}\"', 'id'), (SELECT COALESCE(MAX(id), 1) FROM public.\"{tbl}\"))"))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+    except Exception as e:
+        logger.debug(f"Startup sequence check: {e}")
+
     # Startup — start IMAP polling loop on all workers; database lock handles concurrency.
     polling_task = asyncio.create_task(_imap_polling_loop())
     logger.info("IMAP polling loop task spawned on this worker.")
@@ -702,6 +771,8 @@ app.include_router(onboarding.router)
 app.include_router(repository.router)
 app.include_router(websocket.router)
 app.include_router(coding_api.router)
+app.include_router(storage_api.router)
+app.include_router(tenants.router)
 
 
 @app.exception_handler(RequestValidationError)

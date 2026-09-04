@@ -436,7 +436,7 @@ export default function IngestedEmailsPage() {
                         </Badge>
                     )}
                     <div className="flex gap-3">
-                        {selectedIds.length > 0 && (user?.role === 'super_admin' || user?.role === 'hr') && (
+                        {selectedIds.length > 0 && ['super_admin', 'root-admin', 'root_admin', 'hr'].includes(user?.role || '') && (
                             <Button
                                 onClick={handleBulkDelete}
                                 className="gap-2 bg-rose-600 hover:bg-rose-700 text-white shadow-lg shadow-rose-600/20 rounded-xl h-11 font-semibold active:scale-[0.98] transition-all duration-200"
@@ -683,7 +683,7 @@ export default function IngestedEmailsPage() {
                     <Table>
                         <TableHeader className="bg-muted/30 border-b border-border/40">
                             <TableRow>
-                                {(user?.role === 'super_admin' || user?.role === 'hr') && (
+                                {['super_admin', 'root-admin', 'root_admin', 'hr'].includes(user?.role || '') && (
                                     <TableHead className="w-[50px] pl-6">
                                         <Checkbox
                                             checked={isAllSelected}
@@ -711,7 +711,7 @@ export default function IngestedEmailsPage() {
 
                                 return (
                                     <TableRow key={item.id} className="border-b border-border/20 last:border-b-0 cursor-pointer group premium-table-row">
-                                        {(user?.role === 'super_admin' || user?.role === 'hr') && (
+                                        {['super_admin', 'root-admin', 'root_admin', 'hr'].includes(user?.role || '') && (
                                             <TableCell className="w-[50px] pl-6" onClick={(e) => e.stopPropagation()}>
                                                 <Checkbox
                                                     checked={selectedIds.includes(item.id)}
@@ -803,7 +803,7 @@ export default function IngestedEmailsPage() {
                                                                 <AlertTriangle className="h-3 w-3" />
                                                                 No Resume
                                                             </Badge>
-                                                        ) : (user?.role === 'super_admin' || user?.role === 'hr') ? (
+                                                        ) : ['super_admin', 'root-admin', 'root_admin', 'hr'].includes(user?.role || '') ? (
                                                             <Button
                                                                 size="sm"
                                                                 variant="outline"
@@ -817,7 +817,7 @@ export default function IngestedEmailsPage() {
                                                                 Unassigned
                                                             </Badge>
                                                         )}
-                                                        {(user?.role === 'super_admin' || user?.role === 'hr') && (
+                                                        {['super_admin', 'root-admin', 'root_admin', 'hr'].includes(user?.role || '') && (
                                                             <Button
                                                                 size="sm"
                                                                 variant="ghost"
