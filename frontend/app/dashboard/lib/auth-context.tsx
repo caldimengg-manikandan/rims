@@ -404,11 +404,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setUser(null)
     setToken(null)
-    if (typeof window !== 'undefined') localStorage.removeItem(SESSION_PRESENT_KEY)
-    localStorage.removeItem('auth_token') // For legacy test hooks
+    setActiveTenant(null)
+    setActiveTenantMeta(null)
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(SESSION_PRESENT_KEY)
+      localStorage.removeItem('auth_token')
+      localStorage.removeItem('tenant_slug')
+      localStorage.removeItem('tenant_id')
+      sessionStorage.removeItem('tenant_slug')
+      sessionStorage.removeItem('tenant_id')
+      document.cookie = 'x-tenant-slug=; path=/; max-age=0; SameSite=Lax'
+      document.cookie = 'x-tenant-slug=; path=/calrims; max-age=0; SameSite=Lax'
+      document.cookie = 'x-tenant-slug=; path=/calrims/; max-age=0; SameSite=Lax'
+      document.cookie = 'x-tenant-id=; path=/; max-age=0; SameSite=Lax'
+      document.cookie = 'x-tenant-id=; path=/calrims; max-age=0; SameSite=Lax'
+      document.cookie = 'x-tenant-id=; path=/calrims/; max-age=0; SameSite=Lax'
+      document.cookie = 'access_token=; path=/; max-age=0; SameSite=Lax'
+      document.cookie = 'access_token=; path=/calrims; max-age=0; SameSite=Lax'
+      document.cookie = 'access_token=; path=/calrims/; max-age=0; SameSite=Lax'
+      document.cookie = 'token=; path=/; max-age=0; SameSite=Lax'
+      document.cookie = 'token=; path=/calrims; max-age=0; SameSite=Lax'
+      document.cookie = 'token=; path=/calrims/; max-age=0; SameSite=Lax'
+      window.dispatchEvent(new CustomEvent('rims:tenant-changed', { detail: { tenant: null } }))
+      window.dispatchEvent(new CustomEvent('rims:data-mutated', { detail: { keys: ['*'] } }))
+    }
     clearSession() // Clear session intelligence data
     window.location.href = window.location.origin + '/calrims/'
-  }, [])
+  }, [setActiveTenant])
 
   const refreshUser = useCallback(async () => {
     if (typeof window !== 'undefined') {

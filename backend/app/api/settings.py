@@ -113,11 +113,26 @@ def get_settings(
     ensure_global_settings_table(db)
     from app.core.branding import get_all_branding
     tenant_ctx = getattr(request.state, "tenant", None)
-    if not tenant_ctx:
-        slug_hdr = request.headers.get("X-Tenant-Slug")
-        if slug_hdr:
+    tenant_param = (request.query_params.get("tenant") or request.query_params.get("tenant_slug") or "").strip().lower()
+    slug_hdr = (request.headers.get("X-Tenant-Slug") or "").strip().lower()
+
+    if tenant_param:
+        if tenant_param in ("", "platform"):
+            tenant_ctx = None
+        else:
             from app.domain.models import Tenant
-            tenant_ctx = db.query(Tenant).filter(Tenant.slug == slug_hdr.strip().lower()).first()
+            found_tenant = db.query(Tenant).filter(Tenant.slug == tenant_param).first()
+            if found_tenant:
+                tenant_ctx = found_tenant
+    elif slug_hdr:
+        if slug_hdr in ("", "platform"):
+            tenant_ctx = None
+        else:
+            from app.domain.models import Tenant
+            found_tenant = db.query(Tenant).filter(Tenant.slug == slug_hdr).first()
+            if found_tenant:
+                tenant_ctx = found_tenant
+
     branding = get_all_branding(db, tenant_ctx=tenant_ctx)
 
     return {

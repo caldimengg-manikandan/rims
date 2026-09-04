@@ -50,6 +50,8 @@ import {
     Eye,
     EyeOff,
     Check,
+    RotateCcw,
+    FileCode,
 } from 'lucide-react'
 import {
     Select,
@@ -59,6 +61,12 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+    CodingLanguage,
+    FALLBACK_CODING_LANGUAGES,
+    getLanguageById,
+    getLanguageLabel,
+} from '@/lib/coding-languages'
 
 interface TestCase {
     id?: number
@@ -76,8 +84,10 @@ interface Problem {
     input_format?: string
     output_format?: string
     constraints?: string
+    supported_languages?: string[]
     starter_code?: Record<string, string>
     solution_code?: string
+    solution_codes?: Record<string, string>
     difficulty: string
     time_limit_ms: number
     memory_limit_mb: number
@@ -100,15 +110,11 @@ interface QuestionSet {
     created_at: string
 }
 
-const AVAILABLE_LANGUAGES = [
-    { id: 'python3', label: 'Python 3' },
-    { id: 'java21', label: 'Java 21' },
-]
-
 export default function CodingRepositoryPage() {
     const [activeTab, setActiveTab] = useState<'problems' | 'sets'>('problems')
     const [problems, setProblems] = useState<Problem[]>([])
     const [questionSets, setQuestionSets] = useState<QuestionSet[]>([])
+    const [availableLanguages, setAvailableLanguages] = useState<CodingLanguage[]>(FALLBACK_CODING_LANGUAGES)
     const [loading, setLoading] = useState(true)
 
     // Problem Modal State
@@ -122,9 +128,13 @@ export default function CodingRepositoryPage() {
     const [difficulty, setDifficulty] = useState('medium')
     const [timeLimitMs, setTimeLimitMs] = useState(2000)
     const [memoryLimitMb, setMemoryLimitMb] = useState(256)
-    const [solutionCode, setSolutionCode] = useState('')
-    const [pyStarter, setPyStarter] = useState('def solution():\n    # Write your code here\n    pass\n\nif __name__ == "__main__":\n    solution()')
-    const [javaStarter, setJavaStarter] = useState('import java.util.*;\n\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        // Write your solution here\n    }\n}')
+
+    // Multi-Language state for Problem
+    const [selectedLangs, setSelectedLangs] = useState<string[]>(['python3', 'java21'])
+    const [starterCodes, setStarterCodes] = useState<Record<string, string>>({})
+    const [solutionCodes, setSolutionCodes] = useState<Record<string, string>>({})
+    const [activeCodeLang, setActiveCodeLang] = useState<string>('python3')
+
     const [testCases, setTestCases] = useState<TestCase[]>([
         { input: '5\n1 2 3 4 5', expected_output: '15', weight: 1.0, is_hidden: false },
         { input: '3\n10 20 30', expected_output: '60', weight: 1.0, is_hidden: true },
@@ -134,6 +144,8 @@ export default function CodingRepositoryPage() {
     // Validation Report Modal
     const [validationModalOpen, setValidationModalOpen] = useState(false)
     const [validatingProblemId, setValidatingProblemId] = useState<number | null>(null)
+    const [validatingLang, setValidatingLang] = useState<string | null>(null)
+    const [validationLangFilter, setValidationLangFilter] = useState<string>('all')
     const [validationReport, setValidationReport] = useState<any>(null)
 
     // Question Set Modal State
@@ -151,12 +163,16 @@ export default function CodingRepositoryPage() {
     const fetchData = useCallback(async () => {
         setLoading(true)
         try {
-            const [problemsRes, setsRes] = await Promise.all([
+            const [problemsRes, setsRes, langsRes] = await Promise.all([
                 APIClient.get<Problem[]>('/api/coding/problems'),
                 APIClient.get<QuestionSet[]>('/api/coding/question-sets'),
+                APIClient.get<CodingLanguage[]>('/api/coding/languages').catch(() => null),
             ])
             setProblems(problemsRes || [])
             setQuestionSets(setsRes || [])
+            if (Array.isArray(langsRes) && langsRes.length > 0) {
+                setAvailableLanguages(langsRes)
+            }
         } catch (err: any) {
             toast.error(err.message || 'Failed to load coding repository data')
         } finally {
@@ -179,11 +195,22 @@ export default function CodingRepositoryPage() {
         setDifficulty('medium')
         setTimeLimitMs(2000)
         setMemoryLimitMb(256)
-        setSolutionCode('')
-        setPyStarter('def solution():\n    # Write your code here\n    pass\n\nif __name__ == "__main__":\n    solution()')
-        setJavaStarter('import java.util.*;\n\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        // Write your solution here\n    }\n}')
+
+        const initialLangs = ['python3']
+        setSelectedLangs(initialLangs)
+        const initialStarters: Record<string, string> = {}
+        const initialSolutions: Record<string, string> = {}
+        availableLanguages.forEach(l => {
+            initialStarters[l.id] = l.default_starter_code
+            initialSolutions[l.id] = l.default_solution_template
+        })
+        setStarterCodes(initialStarters)
+        setSolutionCodes(initialSolutions)
+        setActiveCodeLang('python3')
+
         setTestCases([
-            { input: '', expected_output: '', weight: 1.0, is_hidden: false },
+            { input: '5\n1 2 3 4 5', expected_output: '15', weight: 1.0, is_hidden: false },
+            { input: '3\n10 20 30', expected_output: '60', weight: 1.0, is_hidden: true },
         ])
         setProblemModalOpen(true)
     }
@@ -191,7 +218,7 @@ export default function CodingRepositoryPage() {
     const openEditProblem = async (p: Problem) => {
         setEditingProblem(p)
         try {
-            const detail = await APIClient.get<Problem>(`/api/coding/problems/${p.id}`)
+            const detail = await APIClient.get<any>(`/api/coding/problems/${p.id}`)
             setProblemTitle(detail.title)
             setProblemDesc(detail.description)
             setInputFormat(detail.input_format || '')
@@ -200,9 +227,43 @@ export default function CodingRepositoryPage() {
             setDifficulty(detail.difficulty)
             setTimeLimitMs(detail.time_limit_ms)
             setMemoryLimitMb(detail.memory_limit_mb)
-            setSolutionCode(detail.solution_code || '')
-            setPyStarter(detail.starter_code?.python3 || '')
-            setJavaStarter(detail.starter_code?.java21 || '')
+
+            const langs: string[] = detail.supported_languages && detail.supported_languages.length > 0
+                ? detail.supported_languages
+                : (detail.starter_code && Object.keys(detail.starter_code).length > 0
+                    ? Object.keys(detail.starter_code)
+                    : ['python3', 'java21'])
+            setSelectedLangs(langs)
+
+            const sMap: Record<string, string> = {}
+            availableLanguages.forEach(l => {
+                sMap[l.id] = l.default_starter_code
+            })
+            if (detail.starter_code && typeof detail.starter_code === 'object') {
+                Object.assign(sMap, detail.starter_code)
+            }
+            setStarterCodes(sMap)
+
+            const solMap: Record<string, string> = {}
+            availableLanguages.forEach(l => {
+                solMap[l.id] = l.default_solution_template
+            })
+            if (detail.solution_codes && typeof detail.solution_codes === 'object') {
+                Object.assign(solMap, detail.solution_codes)
+            } else if (detail.solution_code) {
+                try {
+                    const parsed = JSON.parse(detail.solution_code)
+                    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+                        Object.assign(solMap, parsed)
+                    } else {
+                        solMap[langs[0] || 'python3'] = detail.solution_code
+                    }
+                } catch {
+                    solMap[langs[0] || 'python3'] = detail.solution_code
+                }
+            }
+            setSolutionCodes(solMap)
+            setActiveCodeLang(langs[0] || 'python3')
             setTestCases(detail.test_cases || [])
             setProblemModalOpen(true)
         } catch (err: any) {
@@ -210,9 +271,51 @@ export default function CodingRepositoryPage() {
         }
     }
 
+    const toggleProblemLanguage = (langId: string) => {
+        if (selectedLangs.includes(langId)) {
+            if (selectedLangs.length <= 1) {
+                toast.error('A coding problem must support at least one programming language.')
+                return
+            }
+            const updated = selectedLangs.filter(l => l !== langId)
+            setSelectedLangs(updated)
+            if (activeCodeLang === langId) {
+                setActiveCodeLang(updated[0])
+            }
+        } else {
+            const updated = [...selectedLangs, langId]
+            setSelectedLangs(updated)
+            if (!starterCodes[langId]) {
+                const langObj = getLanguageById(langId, availableLanguages)
+                setStarterCodes(prev => ({
+                    ...prev,
+                    [langId]: langObj.default_starter_code
+                }))
+            }
+            if (!solutionCodes[langId]) {
+                const langObj = getLanguageById(langId, availableLanguages)
+                setSolutionCodes(prev => ({
+                    ...prev,
+                    [langId]: langObj.default_solution_template
+                }))
+            }
+            setActiveCodeLang(langId)
+        }
+    }
+
     const handleSaveProblem = async () => {
-        if (!problemTitle.trim() || !problemDesc.trim() || !solutionCode.trim()) {
-            toast.error('Title, description, and reference solution are required.')
+        if (!problemTitle.trim() || !problemDesc.trim()) {
+            toast.error('Title and description are required.')
+            return
+        }
+        if (selectedLangs.length === 0) {
+            toast.error('Please select at least one supported language.')
+            return
+        }
+        const missingSolutions = selectedLangs.filter(l => !solutionCodes[l] || !solutionCodes[l].trim())
+        if (missingSolutions.length > 0) {
+            const names = missingSolutions.map(l => getLanguageLabel(l, availableLanguages)).join(', ')
+            toast.error(`Please provide a reference solution for each selected language: ${names}`)
             return
         }
         if (testCases.length === 0) {
@@ -222,6 +325,13 @@ export default function CodingRepositoryPage() {
 
         setSavingProblem(true)
         try {
+            const activeStarters: Record<string, string> = {}
+            const activeSolutions: Record<string, string> = {}
+            selectedLangs.forEach(langId => {
+                activeStarters[langId] = starterCodes[langId] || ''
+                activeSolutions[langId] = solutionCodes[langId] || ''
+            })
+
             const payload = {
                 title: problemTitle.trim(),
                 description: problemDesc.trim(),
@@ -231,11 +341,10 @@ export default function CodingRepositoryPage() {
                 difficulty,
                 time_limit_ms: Number(timeLimitMs),
                 memory_limit_mb: Number(memoryLimitMb),
-                solution_code: solutionCode.trim(),
-                starter_code: {
-                    python3: pyStarter,
-                    java21: javaStarter,
-                },
+                supported_languages: selectedLangs,
+                starter_code: activeStarters,
+                solution_codes: activeSolutions,
+                solution_code: JSON.stringify(activeSolutions),
                 test_cases: testCases.map((tc, idx) => ({
                     input: tc.input,
                     expected_output: tc.expected_output,
@@ -261,17 +370,21 @@ export default function CodingRepositoryPage() {
         }
     }
 
-    const handleValidateSolution = async (problemId: number) => {
+    const handleValidateSolution = async (problemId: number, lang?: string) => {
         setValidatingProblemId(problemId)
+        setValidatingLang(lang || null)
         try {
-            const report = await APIClient.post(`/api/coding/problems/${problemId}/validate-solution`, {})
+            const body = lang ? { language: lang } : {}
+            const report = await APIClient.post<any>(`/api/coding/problems/${problemId}/validate-solution`, body)
             setValidationReport(report)
+            setValidationLangFilter(lang || 'all')
             setValidationModalOpen(true)
             fetchData()
         } catch (err: any) {
             toast.error(err.message || 'Solution validation failed')
         } finally {
             setValidatingProblemId(null)
+            setValidatingLang(null)
         }
     }
 
@@ -404,84 +517,97 @@ export default function CodingRepositoryPage() {
                                     <TableRow>
                                         <TableHead>Title</TableHead>
                                         <TableHead>Difficulty</TableHead>
+                                        <TableHead>Supported Languages</TableHead>
                                         <TableHead>Limits</TableHead>
                                         <TableHead>Test Cases</TableHead>
                                         <TableHead className="text-right">Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {problems.map((p) => (
-                                        <TableRow key={p.id}>
-                                            <TableCell className="font-medium">
-                                                <div className="space-y-0.5">
-                                                    <span className="text-foreground">{p.title}</span>
-                                                    <p className="text-xs text-muted-foreground line-clamp-1">{p.description}</p>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Badge
-                                                    variant="outline"
-                                                    className={
-                                                        p.difficulty === 'easy'
-                                                            ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10'
-                                                            : p.difficulty === 'hard'
-                                                            ? 'border-rose-500/30 text-rose-600 bg-rose-500/10'
-                                                            : 'border-amber-500/30 text-amber-600 bg-amber-500/10'
-                                                    }
-                                                >
-                                                    {p.difficulty.toUpperCase()}
-                                                </Badge>
-                                            </TableCell>
-                                            <TableCell className="text-xs text-muted-foreground">
-                                                <div className="flex items-center gap-3">
-                                                    <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {p.time_limit_ms}ms</span>
-                                                    <span className="flex items-center gap-1"><Cpu className="h-3 w-3" /> {p.memory_limit_mb}MB</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <div className="flex items-center gap-1 text-xs">
-                                                    <span className="font-semibold text-foreground">{p.test_cases?.length || 0}</span>
-                                                    <span className="text-muted-foreground">
-                                                        ({p.test_cases?.filter(tc => !tc.is_hidden).length || 0} public, {p.test_cases?.filter(tc => tc.is_hidden).length || 0} hidden)
-                                                    </span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <div className="flex items-center justify-end gap-1">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        onClick={() => handleValidateSolution(p.id)}
-                                                        disabled={validatingProblemId === p.id}
-                                                        className="text-primary hover:bg-primary/10 gap-1 text-xs"
+                                    {problems.map((p) => {
+                                        const langs = p.supported_languages && p.supported_languages.length > 0
+                                            ? p.supported_languages
+                                            : (p.starter_code ? Object.keys(p.starter_code) : ['python3'])
+                                        return (
+                                            <TableRow key={p.id}>
+                                                <TableCell className="font-medium">
+                                                    <div className="space-y-0.5">
+                                                        <span className="text-foreground font-semibold">{p.title}</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={
+                                                            p.difficulty === 'easy'
+                                                                ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10'
+                                                                : p.difficulty === 'hard'
+                                                                ? 'border-rose-500/30 text-rose-600 bg-rose-500/10'
+                                                                : 'border-amber-500/30 text-amber-600 bg-amber-500/10'
+                                                        }
                                                     >
-                                                        {validatingProblemId === p.id ? (
-                                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                        ) : (
-                                                            <Play className="h-3.5 w-3.5" />
-                                                        )}
-                                                        Validate
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        onClick={() => openEditProblem(p)}
-                                                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                                                    >
-                                                        <Pencil className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        onClick={() => setDeleteTarget({ type: 'problem', id: p.id, title: p.title })}
-                                                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                                    >
-                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                    </Button>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                                        {p.difficulty.toUpperCase()}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-wrap gap-1 max-w-[220px]">
+                                                        {langs.map(l => (
+                                                            <Badge key={l} variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                                                                {getLanguageLabel(l, availableLanguages)}
+                                                            </Badge>
+                                                        ))}
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="text-xs text-muted-foreground">
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {p.time_limit_ms}ms</span>
+                                                        <span className="flex items-center gap-1"><Cpu className="h-3 w-3" /> {p.memory_limit_mb}MB</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex items-center gap-1 text-xs">
+                                                        <span className="font-semibold text-foreground">{p.test_cases?.length || 0}</span>
+                                                        <span className="text-muted-foreground">
+                                                            ({p.test_cases?.filter(tc => !tc.is_hidden).length || 0} public, {p.test_cases?.filter(tc => tc.is_hidden).length || 0} hidden)
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => handleValidateSolution(p.id)}
+                                                            disabled={validatingProblemId === p.id}
+                                                            className="text-primary hover:bg-primary/10 gap-1 text-xs"
+                                                        >
+                                                            {validatingProblemId === p.id ? (
+                                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                            ) : (
+                                                                <Play className="h-3.5 w-3.5" />
+                                                            )}
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => openEditProblem(p)}
+                                                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                                        >
+                                                            <Pencil className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => setDeleteTarget({ type: 'problem', id: p.id, title: p.title })}
+                                                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                        )
+                                    })}
                                 </TableBody>
                             </Table>
                         )}
@@ -535,7 +661,7 @@ export default function CodingRepositoryPage() {
                                                             variant="secondary"
                                                             className="text-[11px] font-mono capitalize"
                                                         >
-                                                            {lang === 'python3' ? 'Python 3' : lang === 'java21' ? 'Java 21' : lang}
+                                                            {getLanguageLabel(lang, availableLanguages)}
                                                         </Badge>
                                                     ))}
                                                 </div>
@@ -572,15 +698,16 @@ export default function CodingRepositoryPage() {
                 </Card>
             )}
 
-            {/* Problem Create/Edit Modal */}
+            {/* Problem Create/Edit Modal - 85% Screen Width */}
             <Dialog open={problemModalOpen} onOpenChange={setProblemModalOpen}>
-                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="w-[92vw] max-w-[92vw] sm:w-[85vw] sm:max-w-[85vw] max-h-[92vh] overflow-y-auto p-6 md:p-8">
                     <DialogHeader>
-                        <DialogTitle>{editingProblem ? 'Edit Coding Problem' : 'Create Coding Problem'}</DialogTitle>
-                        <DialogDescription>Configure problem statement, test cases, and the reference solution.</DialogDescription>
+                        <DialogTitle className="text-xl font-bold">{editingProblem ? 'Edit Coding Problem' : 'Create Coding Problem'}</DialogTitle>
+                        <DialogDescription>Configure problem statement, supported programming languages, starter codes, reference solutions, and test cases.</DialogDescription>
                     </DialogHeader>
 
-                    <div className="space-y-4 py-2">
+                    <div className="space-y-5 py-2">
+                        {/* Basic Details */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="md:col-span-2 space-y-1.5">
                                 <Label htmlFor="prob-title">Problem Title *</Label>
@@ -668,48 +795,206 @@ export default function CodingRepositoryPage() {
                             </div>
                         </div>
 
-                        {/* Starter Codes */}
-                        <div className="space-y-3 pt-2 border-t border-border">
-                            <h4 className="text-sm font-semibold text-foreground">Starter Code Templates (by Language)</h4>
-                            <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Python 3 Starter</Label>
-                                <textarea
-                                    value={pyStarter}
-                                    onChange={(e) => setPyStarter(e.target.value)}
-                                    rows={3}
-                                    className="w-full font-mono text-xs p-3 bg-muted/40 border border-border rounded-lg focus:outline-none"
-                                />
+                        {/* Supported Languages Multi-select */}
+                        <div className="space-y-2 pt-3 border-t border-border">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <Label className="text-sm font-semibold text-foreground">
+                                        Supported Programming Languages *
+                                    </Label>
+                                    <p className="text-xs text-muted-foreground">
+                                        Select which languages candidates can use for this problem. Configure starter code and reference solution for each.
+                                    </p>
+                                </div>
+                                <span className="text-xs text-primary font-medium">
+                                    {selectedLangs.length} of {availableLanguages.length} selected
+                                </span>
                             </div>
-                            <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground">Java 21 Starter</Label>
-                                <textarea
-                                    value={javaStarter}
-                                    onChange={(e) => setJavaStarter(e.target.value)}
-                                    rows={4}
-                                    className="w-full font-mono text-xs p-3 bg-muted/40 border border-border rounded-lg focus:outline-none"
-                                />
+
+                            <div className="flex flex-wrap gap-2 pt-1">
+                                {availableLanguages.map((lang) => {
+                                    const isSelected = selectedLangs.includes(lang.id)
+                                    const hasSolution = Boolean(solutionCodes[lang.id]?.trim())
+                                    return (
+                                        <button
+                                            key={lang.id}
+                                            type="button"
+                                            onClick={() => toggleProblemLanguage(lang.id)}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition-all ${
+                                                isSelected
+                                                    ? 'border-primary bg-primary/10 text-primary font-medium shadow-sm ring-1 ring-primary/20'
+                                                    : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-primary/40'
+                                            }`}
+                                        >
+                                            <div className={`h-4 w-4 rounded flex items-center justify-center border ${
+                                                isSelected ? 'bg-primary text-primary-foreground border-primary' : 'border-muted-foreground/40'
+                                            }`}>
+                                                {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                            </div>
+                                            <span>{lang.name || lang.label || lang.id}</span>
+                                            {isSelected && (
+                                                <span
+                                                    className={`h-2 w-2 rounded-full ${
+                                                        hasSolution ? 'bg-emerald-500' : 'bg-amber-500'
+                                                    }`}
+                                                    title={hasSolution ? 'Reference solution configured' : 'Reference solution missing'}
+                                                />
+                                            )}
+                                        </button>
+                                    )
+                                })}
                             </div>
                         </div>
 
-                        {/* Reference Solution Code */}
-                        <div className="space-y-2 pt-2 border-t border-border">
+                        {/* Per-Language Starter Code & Reference Solution Configuration */}
+                        <div className="space-y-4 pt-3 border-t border-border">
                             <div className="flex items-center justify-between">
-                                <Label className="text-sm font-semibold text-foreground">
-                                    Reference Solution Code (Server-side only) *
-                                </Label>
-                                <span className="text-[11px] text-muted-foreground">Used for validating test cases</span>
+                                <div>
+                                    <h4 className="text-sm font-semibold text-foreground">
+                                        Starter Code & Reference Solution by Language
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground">
+                                        Customize starter code and server-side reference solutions for each enabled language.
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                                    <span className="flex items-center gap-1.5">
+                                        <span className="h-2 w-2 rounded-full bg-emerald-500" /> Solution Ready
+                                    </span>
+                                    <span className="flex items-center gap-1.5">
+                                        <span className="h-2 w-2 rounded-full bg-amber-500" /> Missing Solution
+                                    </span>
+                                </div>
                             </div>
-                            <textarea
-                                value={solutionCode}
-                                onChange={(e) => setSolutionCode(e.target.value)}
-                                rows={5}
-                                className="w-full font-mono text-xs p-3 bg-muted/40 border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary"
-                                placeholder="# Working reference solution used to verify test cases..."
-                            />
+
+                            {/* Language Switcher Tabs */}
+                            <div className="flex items-center gap-1 border-b border-border overflow-x-auto pb-1">
+                                {selectedLangs.map((langId) => {
+                                    const langObj = getLanguageById(langId, availableLanguages)
+                                    const isActive = activeCodeLang === langId
+                                    const hasSolution = Boolean(solutionCodes[langId]?.trim())
+                                    return (
+                                        <button
+                                            key={langId}
+                                            type="button"
+                                            onClick={() => setActiveCodeLang(langId)}
+                                            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs rounded-t-lg font-medium transition-colors border-b-2 ${
+                                                isActive
+                                                    ? 'border-primary text-primary bg-primary/5'
+                                                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                                            }`}
+                                        >
+                                            <span className={`h-2 w-2 rounded-full ${hasSolution ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                            <span>{langObj.name || langObj.label || langId}</span>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+
+                            {/* Active Language Editors */}
+                            {activeCodeLang && (
+                                <div className="space-y-4 p-4 rounded-xl border border-border bg-muted/20">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                                            <FileCode className="h-4 w-4 text-primary" />
+                                            Language: {getLanguageLabel(activeCodeLang, availableLanguages)}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => {
+                                                    const defaultStarter = getLanguageById(activeCodeLang, availableLanguages).default_starter_code
+                                                    setStarterCodes(prev => ({ ...prev, [activeCodeLang]: defaultStarter }))
+                                                    toast.info(`Reset starter code for ${getLanguageLabel(activeCodeLang, availableLanguages)}`)
+                                                }}
+                                                className="h-7 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                                            >
+                                                <RotateCcw className="h-3 w-3" /> Reset Starter
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => {
+                                                    const defaultSol = getLanguageById(activeCodeLang, availableLanguages).default_solution_template
+                                                    setSolutionCodes(prev => ({ ...prev, [activeCodeLang]: defaultSol }))
+                                                    toast.info(`Reset reference solution for ${getLanguageLabel(activeCodeLang, availableLanguages)}`)
+                                                }}
+                                                className="h-7 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                                            >
+                                                <RotateCcw className="h-3 w-3" /> Reset Solution
+                                            </Button>
+                                            {editingProblem && (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    disabled={validatingProblemId === editingProblem.id}
+                                                    onClick={() => handleValidateSolution(editingProblem.id, activeCodeLang)}
+                                                    className="h-7 text-[11px] gap-1 text-primary border-primary/30 hover:bg-primary/10"
+                                                >
+                                                    {validatingProblemId === editingProblem.id && validatingLang === activeCodeLang ? (
+                                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                                    ) : (
+                                                        <Play className="h-3 w-3" />
+                                                    )}
+                                                    Validate {getLanguageLabel(activeCodeLang, availableLanguages)}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        {/* Starter Code */}
+                                        <div className="space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-xs font-medium text-foreground">
+                                                    Starter Code (Candidate Monaco Editor)
+                                                </Label>
+                                                <span className="text-[10px] text-muted-foreground font-mono">
+                                                    .{getLanguageById(activeCodeLang, availableLanguages).extension}
+                                                </span>
+                                            </div>
+                                            <textarea
+                                                value={starterCodes[activeCodeLang] || ''}
+                                                onChange={(e) => {
+                                                    const val = e.target.value
+                                                    setStarterCodes(prev => ({ ...prev, [activeCodeLang]: val }))
+                                                }}
+                                                rows={10}
+                                                className="w-full font-mono text-xs p-3 bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed"
+                                                placeholder={`// Initial starter code for ${getLanguageLabel(activeCodeLang, availableLanguages)}...`}
+                                            />
+                                        </div>
+
+                                        {/* Reference Solution Code */}
+                                        <div className="space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-xs font-medium text-foreground flex items-center gap-1">
+                                                    Reference Solution (Server-side Docker evaluation) *
+                                                </Label>
+                                                <span className="text-[10px] text-muted-foreground">Encrypted at rest</span>
+                                            </div>
+                                            <textarea
+                                                value={solutionCodes[activeCodeLang] || ''}
+                                                onChange={(e) => {
+                                                    const val = e.target.value
+                                                    setSolutionCodes(prev => ({ ...prev, [activeCodeLang]: val }))
+                                                }}
+                                                rows={10}
+                                                className="w-full font-mono text-xs p-3 bg-background border border-border rounded-lg focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed"
+                                                placeholder={`// Full working solution in ${getLanguageLabel(activeCodeLang, availableLanguages)} used to verify test cases...`}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Test Cases Manager */}
-                        <div className="space-y-3 pt-2 border-t border-border">
+                        <div className="space-y-3 pt-3 border-t border-border">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <h4 className="text-sm font-semibold text-foreground">Test Cases</h4>
@@ -726,9 +1011,9 @@ export default function CodingRepositoryPage() {
                                 </Button>
                             </div>
 
-                            <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                                 {testCases.map((tc, idx) => (
-                                    <div key={idx} className="p-3 bg-muted/30 border border-border rounded-lg space-y-2">
+                                    <div key={idx} className="p-3.5 bg-muted/30 border border-border rounded-lg space-y-2.5">
                                         <div className="flex items-center justify-between text-xs">
                                             <span className="font-semibold text-foreground">Test Case #{idx + 1}</span>
                                             <div className="flex items-center gap-4">
@@ -774,29 +1059,35 @@ export default function CodingRepositoryPage() {
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <textarea
-                                                value={tc.input}
-                                                onChange={(e) => {
-                                                    const updated = [...testCases]
-                                                    updated[idx].input = e.target.value
-                                                    setTestCases(updated)
-                                                }}
-                                                placeholder="Standard Input (stdin)"
-                                                rows={2}
-                                                className="w-full font-mono text-xs p-2 bg-background border border-border rounded focus:outline-none"
-                                            />
-                                            <textarea
-                                                value={tc.expected_output}
-                                                onChange={(e) => {
-                                                    const updated = [...testCases]
-                                                    updated[idx].expected_output = e.target.value
-                                                    setTestCases(updated)
-                                                }}
-                                                placeholder="Expected Output (stdout)"
-                                                rows={2}
-                                                className="w-full font-mono text-xs p-2 bg-background border border-border rounded focus:outline-none"
-                                            />
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <span className="text-[11px] text-muted-foreground font-medium">Standard Input (stdin)</span>
+                                                <textarea
+                                                    value={tc.input}
+                                                    onChange={(e) => {
+                                                        const updated = [...testCases]
+                                                        updated[idx].input = e.target.value
+                                                        setTestCases(updated)
+                                                    }}
+                                                    placeholder="Standard Input (stdin)"
+                                                    rows={3}
+                                                    className="w-full font-mono text-xs p-2.5 bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <span className="text-[11px] text-muted-foreground font-medium">Expected Output (stdout)</span>
+                                                <textarea
+                                                    value={tc.expected_output}
+                                                    onChange={(e) => {
+                                                        const updated = [...testCases]
+                                                        updated[idx].expected_output = e.target.value
+                                                        setTestCases(updated)
+                                                    }}
+                                                    placeholder="Expected Output (stdout) — or leave blank to auto-generate from solution"
+                                                    rows={3}
+                                                    className="w-full font-mono text-xs p-2.5 bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
@@ -816,7 +1107,7 @@ export default function CodingRepositoryPage() {
 
             {/* Validation Report Dialog */}
             <Dialog open={validationModalOpen} onOpenChange={setValidationModalOpen}>
-                <DialogContent className="max-w-lg">
+                <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             {validationReport?.all_passed ? (
@@ -827,47 +1118,140 @@ export default function CodingRepositoryPage() {
                             Reference Solution Validation Report
                         </DialogTitle>
                         <DialogDescription>
-                            Execution verification of the reference solution against configured test cases.
+                            Execution verification of the reference solution against configured test cases in Docker sandbox.
                         </DialogDescription>
                     </DialogHeader>
 
                     {validationReport && (
-                        <div className="space-y-3 py-2 text-sm">
+                        <div className="space-y-4 py-2 text-sm">
                             <div className="flex items-center justify-between p-3 bg-muted/40 rounded-lg">
                                 <span className="font-medium">Validation Status:</span>
                                 <Badge variant={validationReport.all_passed ? 'default' : 'destructive'}>
-                                    {validationReport.all_passed ? 'All Test Cases Passed' : 'Discrepancy Found'}
+                                    {validationReport.all_passed ? 'All Test Cases Passed' : 'Discrepancy / Error Found'}
                                 </Badge>
                             </div>
+
+                            {/* Language Filter Tabs (when multiple languages tested) */}
+                            {validationReport.validated_languages && validationReport.validated_languages.length > 1 && (
+                                <div className="space-y-2">
+                                    <span className="text-xs font-semibold text-foreground">Filter by Language:</span>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <button
+                                            type="button"
+                                            onClick={() => setValidationLangFilter('all')}
+                                            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                                validationLangFilter === 'all'
+                                                    ? 'bg-primary text-primary-foreground shadow-sm'
+                                                    : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                                            }`}
+                                        >
+                                            All Languages ({validationReport.details?.length || 0})
+                                        </button>
+                                        {validationReport.validated_languages.map((l: string) => {
+                                            const lDetails = validationReport.details?.filter((d: any) => d.language === l) || []
+                                            const passed = lDetails.filter((d: any) => d.status === 'valid' || d.status === 'generated').length
+                                            const total = lDetails.length
+                                            const allPassed = passed === total && total > 0
+
+                                            return (
+                                                <button
+                                                    key={l}
+                                                    type="button"
+                                                    onClick={() => setValidationLangFilter(l)}
+                                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                                        validationLangFilter === l
+                                                            ? 'bg-primary text-primary-foreground shadow-sm'
+                                                            : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                                                    }`}
+                                                >
+                                                    <span className={`h-2 w-2 rounded-full ${allPassed ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                                    <span>{getLanguageLabel(l, availableLanguages)}</span>
+                                                    <span className="text-[10px] opacity-80">({passed}/{total})</span>
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
                             {validationReport.generated_count > 0 && (
                                 <p className="text-xs text-emerald-600 dark:text-emerald-400">
                                     Generated missing expected outputs for {validationReport.generated_count} test case(s).
                                 </p>
                             )}
 
-                            <div className="space-y-2 max-h-60 overflow-y-auto">
-                                {validationReport.details?.map((d: any, idx: number) => (
-                                    <div key={idx} className="p-2 border border-border rounded flex items-center justify-between text-xs">
-                                        <span>Test Case #{idx + 1}</span>
-                                        <Badge
-                                            variant="outline"
-                                            className={
-                                                d.status === 'valid'
-                                                    ? 'border-emerald-500/30 text-emerald-600'
-                                                    : d.status === 'generated'
-                                                    ? 'border-blue-500/30 text-blue-600'
-                                                    : 'border-rose-500/30 text-rose-600'
-                                            }
-                                        >
-                                            {d.status.toUpperCase()}
-                                        </Badge>
-                                    </div>
-                                ))}
+                            {/* Details List */}
+                            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                                {(validationReport.details || [])
+                                    .filter((d: any) => validationLangFilter === 'all' || d.language === validationLangFilter)
+                                    .map((d: any, idx: number) => {
+                                        // Display human-friendly Test Case #1, #2, #3
+                                        const caseNum = d.test_case_number || d.display_order || (idx + 1)
+                                        return (
+                                            <div key={idx} className="p-3 border border-border rounded-lg text-xs space-y-2 bg-card/50">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-semibold text-foreground">
+                                                            Test Case #{caseNum}
+                                                        </span>
+                                                        {d.language && (
+                                                            <Badge variant="secondary" className="text-[10px] font-mono">
+                                                                {getLanguageLabel(d.language, availableLanguages)}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={
+                                                            d.status === 'valid'
+                                                                ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10'
+                                                                : d.status === 'generated'
+                                                                ? 'border-blue-500/30 text-blue-600 bg-blue-500/10'
+                                                                : 'border-rose-500/30 text-rose-600 bg-rose-500/10'
+                                                        }
+                                                    >
+                                                        {d.status.toUpperCase()}
+                                                    </Badge>
+                                                </div>
+                                                {d.error && (
+                                                    <div className="space-y-1">
+                                                        <span className="text-[10px] text-muted-foreground font-semibold">
+                                                            Execution Error ({getLanguageLabel(d.language, availableLanguages)}):
+                                                        </span>
+                                                        <p className="font-mono text-[11px] text-rose-600 dark:text-rose-400 bg-rose-500/5 p-2 rounded border border-rose-500/20 whitespace-pre-wrap break-all">
+                                                            {d.error}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                                {d.status === 'mismatch' && (
+                                                    <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-muted/40 p-2 rounded">
+                                                        <div>
+                                                            <span className="text-muted-foreground block text-[10px]">Expected:</span>
+                                                            <span className="text-emerald-600 dark:text-emerald-400">{d.expected}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-muted-foreground block text-[10px]">Actual:</span>
+                                                            <span className="text-rose-600 dark:text-rose-400">{d.actual}</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {d.status === 'generated' && (
+                                                    <div className="text-[11px] font-mono bg-muted/40 p-2 rounded">
+                                                        <span className="text-muted-foreground block text-[10px]">Generated Output:</span>
+                                                        <span className="text-blue-600 dark:text-blue-400">{d.output}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
                             </div>
                         </div>
                     )}
 
-                    <DialogFooter>
+                    <DialogFooter className="flex items-center justify-between sm:justify-between">
+                        <span className="text-xs text-muted-foreground">
+                            {validationReport?.details?.length || 0} test case execution(s)
+                        </span>
                         <Button onClick={() => setValidationModalOpen(false)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>
@@ -875,7 +1259,7 @@ export default function CodingRepositoryPage() {
 
             {/* Question Set Create/Edit Modal */}
             <Dialog open={setModalOpen} onOpenChange={setSetModalOpen}>
-                <DialogContent className="max-w-xl">
+                <DialogContent className="w-[92vw] max-w-[92vw] sm:w-[680px] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>{editingSet ? 'Edit Question Set' : 'Create Question Set'}</DialogTitle>
                         <DialogDescription>
@@ -912,13 +1296,15 @@ export default function CodingRepositoryPage() {
                             <p className="text-xs text-muted-foreground">
                                 Jobs selecting this question set can allow any subset of these languages.
                             </p>
-                            <div className="flex items-center gap-4 pt-1">
-                                {AVAILABLE_LANGUAGES.map((lang) => {
+                            <div className="flex flex-wrap gap-2 pt-1">
+                                {availableLanguages.map((lang) => {
                                     const isChecked = supportedLangs.includes(lang.id)
                                     return (
                                         <label
                                             key={lang.id}
-                                            className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-background cursor-pointer hover:border-primary/40 transition-colors"
+                                            className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors text-xs font-medium ${
+                                                isChecked ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background hover:border-primary/40'
+                                            }`}
                                         >
                                             <Checkbox
                                                 checked={isChecked}
@@ -930,7 +1316,7 @@ export default function CodingRepositoryPage() {
                                                     }
                                                 }}
                                             />
-                                            <span className="text-sm font-medium">{lang.label}</span>
+                                            <span>{lang.name || lang.label || lang.id}</span>
                                         </label>
                                     )
                                 })}
@@ -946,6 +1332,9 @@ export default function CodingRepositoryPage() {
                                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                                     {problems.map((p) => {
                                         const isSelected = selectedProblemIds.includes(p.id)
+                                        const pLangs = p.supported_languages && p.supported_languages.length > 0
+                                            ? p.supported_languages
+                                            : (p.starter_code ? Object.keys(p.starter_code) : ['python3'])
                                         return (
                                             <label
                                                 key={p.id}
@@ -968,6 +1357,13 @@ export default function CodingRepositoryPage() {
                                                         <span className="text-sm font-medium text-foreground">{p.title}</span>
                                                         <span className="text-xs text-muted-foreground ml-2 capitalize">({p.difficulty})</span>
                                                     </div>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {pLangs.map(l => (
+                                                        <Badge key={l} variant="outline" className="text-[9px] py-0 px-1 font-mono">
+                                                            {getLanguageLabel(l, availableLanguages)}
+                                                        </Badge>
+                                                    ))}
                                                 </div>
                                             </label>
                                         )

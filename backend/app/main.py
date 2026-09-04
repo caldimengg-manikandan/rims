@@ -77,8 +77,13 @@ def _ensure_coding_schema():
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'jobs' AND column_name = 'coding_round_enabled') THEN
                         ALTER TABLE public.jobs ADD COLUMN coding_round_enabled BOOLEAN NOT NULL DEFAULT FALSE;
                         ALTER TABLE public.jobs ADD COLUMN coding_round_duration_minutes INTEGER NOT NULL DEFAULT 60;
+                        ALTER TABLE public.jobs ADD COLUMN coding_problem_count INTEGER NULL;
                         ALTER TABLE public.jobs ADD COLUMN coding_repo_set_id INTEGER;
                         ALTER TABLE public.jobs ADD COLUMN coding_allowed_languages JSONB;
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'coding_problems' AND column_name = 'supported_languages') THEN
+                        ALTER TABLE public.coding_problems ADD COLUMN supported_languages JSONB NULL;
                     END IF;
 
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'interviews' AND column_name = 'coding_completed') THEN

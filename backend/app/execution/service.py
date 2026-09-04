@@ -83,66 +83,141 @@ class ExecutionService:
         self,
         problem: CodingProblem,
         test_cases: List[CodingTestCase],
-        language: str = "python3"
+        language: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Executes the reference solution against test cases:
-        - If expected_output is empty, generates it from the reference solution.
-        - If expected_output already exists, verifies matching without overwriting.
+        Executes reference solution(s) against test cases:
+        - If language is specified, validates that language's solution.
+        - If language is None, validates all configured reference solutions for the problem.
+        - If expected_output is empty, generates it from the first valid reference solution.
+        - If expected_output already exists, verifies matching without silently overwriting.
         """
+        solutions = problem.get_solution_codes()
+        if not solutions:
+            return {
+                "all_passed": False,
+                "generated_count": 0,
+                "details": [{
+                    "test_case_id": None,
+                    "status": "error",
+                    "error": "No reference solution code configured for this problem.",
+                }],
+            }
+
+        # Determine which languages to validate
+        if language:
+            target_langs = [language] if language in solutions else []
+            if not target_langs:
+                return {
+                    "all_passed": False,
+                    "generated_count": 0,
+                    "details": [{
+                        "test_case_id": None,
+                        "status": "error",
+                        "error": f"No reference solution configured for language '{language}'. Configured: {', '.join(solutions.keys())}",
+                    }],
+                }
+        else:
+            # Validate all solutions configured on the problem (in supported_languages order if available)
+            supported = problem.supported_languages or list(solutions.keys())
+            target_langs = [l for l in supported if l in solutions]
+            if not target_langs:
+                target_langs = list(solutions.keys())
+
         results_summary = []
         all_passed = True
         generated_count = 0
 
-        for tc in test_cases:
-            res = self.executor.run(
-                language=language,
-                source_code=problem.solution_code,
-                stdin=tc.input,
-                time_limit_ms=problem.time_limit_ms,
-                memory_limit_mb=problem.memory_limit_mb,
-            )
-
-            if res.exit_code != 0 or res.timed_out or res.compilation_failed:
+        for lang in target_langs:
+            source_code = solutions[lang]
+            if not source_code or not source_code.strip():
                 all_passed = False
                 results_summary.append({
-                    "test_case_id": tc.id,
+                    "test_case_id": None,
+                    "language": lang,
                     "status": "error",
-                    "error": res.stderr or res.compilation_error or "Execution error",
+                    "error": f"Reference solution for '{lang}' is empty.",
                 })
                 continue
 
-            ref_output = self.judge.normalize_output(res.stdout)
+            for tc_idx, tc in enumerate(test_cases):
+                order_num = getattr(tc, "display_order", None) or (tc_idx + 1)
+                res = self.executor.run(
+                    language=lang,
+                    source_code=source_code,
+                    stdin=tc.input,
+                    time_limit_ms=problem.time_limit_ms,
+                    memory_limit_mb=problem.memory_limit_mb,
+                )
 
-            if not tc.expected_output or not tc.expected_output.strip():
-                # Generate missing expected output
-                tc.expected_output = ref_output
-                generated_count += 1
-                results_summary.append({
-                    "test_case_id": tc.id,
-                    "status": "generated",
-                    "output": ref_output,
-                })
-            else:
-                existing_norm = self.judge.normalize_output(tc.expected_output)
-                if ref_output == existing_norm:
+                if res.exit_code != 0 or res.timed_out or res.compilation_failed:
+                    all_passed = False
+                    err_msg = res.compilation_error or res.stderr or "Execution error"
                     results_summary.append({
                         "test_case_id": tc.id,
-                        "status": "valid",
+                        "test_case_number": order_num,
+                        "display_order": order_num,
+                        "language": lang,
+                        "status": "error",
+                        "error": err_msg[:300],
+                    })
+                    continue
+
+                ref_output = self.judge.normalize_output(res.stdout)
+
+                if not tc.expected_output or not tc.expected_output.strip():
+                    # Generate missing expected output from the reference solution
+                    tc.expected_output = ref_output
+                    generated_count += 1
+                    results_summary.append({
+                        "test_case_id": tc.id,
+                        "test_case_number": order_num,
+                        "display_order": order_num,
+                        "language": lang,
+                        "status": "generated",
+                        "output": ref_output,
                     })
                 else:
-                    all_passed = False
-                    results_summary.append({
-                        "test_case_id": tc.id,
-                        "status": "mismatch",
-                        "expected": tc.expected_output,
-                        "actual": ref_output,
-                    })
+                    existing_norm = self.judge.normalize_output(tc.expected_output)
+                    if ref_output == existing_norm:
+                        results_summary.append({
+                            "test_case_id": tc.id,
+                            "test_case_number": order_num,
+                            "display_order": order_num,
+                            "language": lang,
+                            "status": "valid",
+                        })
+                    else:
+                        all_passed = False
+                        results_summary.append({
+                            "test_case_id": tc.id,
+                            "test_case_number": order_num,
+                            "display_order": order_num,
+                            "language": lang,
+                            "status": "mismatch",
+                            "expected": tc.expected_output,
+                            "actual": ref_output,
+                        })
+
+        # Calculate per-language breakdown
+        lang_summary = {}
+        for lang in target_langs:
+            lang_details = [d for d in results_summary if d.get("language") == lang]
+            passed_count = sum(1 for d in lang_details if d.get("status") in ("valid", "generated"))
+            total_count = len(lang_details)
+            lang_summary[lang] = {
+                "all_passed": passed_count == total_count and total_count > 0,
+                "passed_count": passed_count,
+                "total_count": total_count,
+                "details": lang_details,
+            }
 
         return {
             "all_passed": all_passed,
             "generated_count": generated_count,
             "details": results_summary,
+            "validated_languages": target_langs,
+            "languages_summary": lang_summary,
         }
 
 

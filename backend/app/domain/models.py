@@ -141,6 +141,7 @@ class Job(Base):
     behavioural_repo_set_id = Column(Integer, ForeignKey('question_sets.id', ondelete='SET NULL'), nullable=True)
     coding_round_enabled = Column(Boolean, default=False)
     coding_round_duration_minutes = Column(Integer, default=60)
+    coding_problem_count = Column(Integer, nullable=True)  # Number of problems from question set
     coding_repo_set_id = Column(Integer, ForeignKey('coding_question_sets.id', ondelete='SET NULL'), nullable=True)
     coding_allowed_languages = Column(JSON, nullable=True)  # e.g. ["python3", "java21"]
     duration_minutes = Column(Integer, default=60) # Global interview duration
@@ -1016,9 +1017,23 @@ class CodingProblem(Base):
     input_format = Column(Text, nullable=True)
     output_format = Column(Text, nullable=True)
     constraints = Column(Text, nullable=True)
+    supported_languages = Column(JSON, nullable=True)  # e.g. ["python3", "java21"]
     starter_code = Column(JSON, nullable=True)  # {"python3": "...", "java21": "..."}
     solution_code = Column(EncryptedText, nullable=False)  # Reference solution (server-side only)
     difficulty = Column(String(50), default="medium", index=True)  # easy, medium, hard
+
+    def get_solution_codes(self) -> dict:
+        """Returns reference solutions mapped by language identifier."""
+        if not self.solution_code:
+            return {}
+        try:
+            import json
+            parsed = json.loads(self.solution_code)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        return {"python3": self.solution_code}
     time_limit_ms = Column(Integer, default=2000)
     memory_limit_mb = Column(Integer, default=256)
     hr_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)

@@ -162,6 +162,8 @@ def _validate_interview_pipeline(job_data, experience_level: str, db: Session = 
     # Rule 6: Coding Round validation
     coding_round_enabled = getattr(job_data, 'coding_round_enabled', False) or False
     coding_round_duration_minutes = getattr(job_data, 'coding_round_duration_minutes', 60) or 60
+    raw_problem_count = getattr(job_data, 'coding_problem_count', None)
+    coding_problem_count = raw_problem_count if isinstance(raw_problem_count, int) else None
     coding_repo_set_id = getattr(job_data, 'coding_repo_set_id', None)
     coding_allowed_languages = getattr(job_data, 'coding_allowed_languages', None)
 
@@ -192,6 +194,19 @@ def _validate_interview_pipeline(job_data, experience_level: str, db: Session = 
                         f"Question Set supported languages ({', '.join(sorted(set_langs))}). Disallowed: {', '.join(sorted(diff))}."
                     )
                 )
+            
+            # Validate coding_problem_count against items count in q_set
+            total_set_problems = len(q_set.items) if getattr(q_set, "items", None) and isinstance(q_set.items, list) else 0
+            if coding_problem_count is not None:
+                if coding_problem_count < 1:
+                    raise HTTPException(status_code=400, detail="Number of coding problems must be at least 1.")
+                if total_set_problems > 0 and coding_problem_count > total_set_problems:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Number of coding problems ({coding_problem_count}) cannot exceed available problems in the selected set ({total_set_problems})."
+                    )
+            elif total_set_problems > 0:
+                coding_problem_count = total_set_problems
 
     return {
         "aptitude_enabled": aptitude_enabled,
@@ -208,6 +223,7 @@ def _validate_interview_pipeline(job_data, experience_level: str, db: Session = 
         "behavioural_repo_set_id": getattr(job_data, 'behavioural_repo_set_id', None),
         "coding_round_enabled": coding_round_enabled,
         "coding_round_duration_minutes": coding_round_duration_minutes,
+        "coding_problem_count": coding_problem_count,
         "coding_repo_set_id": coding_repo_set_id,
         "coding_allowed_languages": coding_allowed_languages,
     }
@@ -507,6 +523,7 @@ def create_job(
         # Coding Round
         coding_round_enabled=pipeline.get("coding_round_enabled", False),
         coding_round_duration_minutes=pipeline.get("coding_round_duration_minutes", 60),
+        coding_problem_count=pipeline.get("coding_problem_count"),
         coding_repo_set_id=pipeline.get("coding_repo_set_id"),
         coding_allowed_languages=pipeline.get("coding_allowed_languages"),
     )
@@ -771,6 +788,7 @@ def update_job(
         job_data.aptitude_mode is not None,
         job_data.coding_round_enabled is not None,
         job_data.coding_round_duration_minutes is not None,
+        job_data.coding_problem_count is not None,
         job_data.coding_repo_set_id is not None,
         job_data.coding_allowed_languages is not None,
     ])
@@ -795,6 +813,7 @@ def update_job(
             aptitude_questions_file = job_data.aptitude_questions_file if job_data.aptitude_questions_file is not None else job.aptitude_questions_file
             coding_round_enabled = job_data.coding_round_enabled if job_data.coding_round_enabled is not None else job.coding_round_enabled
             coding_round_duration_minutes = job_data.coding_round_duration_minutes if job_data.coding_round_duration_minutes is not None else job.coding_round_duration_minutes
+            coding_problem_count = job_data.coding_problem_count if job_data.coding_problem_count is not None else job.coding_problem_count
             coding_repo_set_id = job_data.coding_repo_set_id if job_data.coding_repo_set_id is not None else job.coding_repo_set_id
             coding_allowed_languages = job_data.coding_allowed_languages if job_data.coding_allowed_languages is not None else job.coding_allowed_languages
 
@@ -810,6 +829,7 @@ def update_job(
         job.aptitude_mode = pipeline.get("aptitude_mode") or "ai"
         job.coding_round_enabled = pipeline.get("coding_round_enabled", False)
         job.coding_round_duration_minutes = pipeline.get("coding_round_duration_minutes", 60)
+        job.coding_problem_count = pipeline.get("coding_problem_count")
         job.coding_repo_set_id = pipeline.get("coding_repo_set_id")
         job.coding_allowed_languages = pipeline.get("coding_allowed_languages")
         

@@ -31,6 +31,7 @@ import { Slider } from '@/components/ui/slider'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { getLanguageLabel } from '@/lib/coding-languages'
 
 // ── Repository types ──────────────────────────────────────────────────────────
 interface RepoSet {
@@ -198,6 +199,7 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
         coding_round_duration_minutes: initialData?.coding_round_duration_minutes || 60,
         coding_repo_set_id: initialData?.coding_repo_set_id || null,
         coding_allowed_languages: initialData?.coding_allowed_languages || [],
+        coding_problem_count: initialData?.coding_problem_count ?? (initialData?.coding_problem_count || null),
     })
 
     const [isUploadingAptitude, setIsUploadingAptitude] = useState(false)
@@ -537,10 +539,13 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
         Boolean(formData.first_level_enabled) &&
         (formData.interview_mode === 'upload' || formData.interview_mode === 'mixed')
 
+    const totalCodingProblems = selectedCodingSet?.items?.length || 0
     const isCodingValid = !formData.coding_round_enabled || (
         Boolean(codingRepoSetId) &&
         Array.isArray(formData.coding_allowed_languages) &&
-        formData.coding_allowed_languages.length > 0
+        formData.coding_allowed_languages.length > 0 &&
+        formData.coding_allowed_languages.every((l: string) => (selectedCodingSet?.supported_languages || []).includes(l)) &&
+        (!formData.coding_problem_count || (formData.coding_problem_count >= 1 && (totalCodingProblems === 0 || formData.coding_problem_count <= totalCodingProblems)))
     )
 
     const isFormValid =
@@ -1223,7 +1228,7 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                                             setFormData(prev => ({
                                                 ...prev,
                                                 coding_round_enabled: !!checked,
-                                                ...(!checked && { coding_repo_set_id: null, coding_allowed_languages: [] })
+                                                ...(!checked && { coding_repo_set_id: null, coding_allowed_languages: [], coding_problem_count: null })
                                             }))
                                             if (!checked) {
                                                 setCodingRepoSetId(null)
@@ -1261,16 +1266,21 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                                                         setCodingRepoSetId(id)
                                                         const found = codingQuestionSets.find(s => s.id === id) || null
                                                         setSelectedCodingSet(found)
-                                                        // Default allowed languages to all supported languages of this set
-                                                        if (found && found.supported_languages) {
+                                                        if (found) {
+                                                            const totalItems = found.items?.length || 0
+                                                            const count = totalItems > 0 ? Math.min(formData.coding_problem_count || totalItems, totalItems) : 1
                                                             setFormData(prev => ({
                                                                 ...prev,
-                                                                coding_allowed_languages: found.supported_languages
+                                                                coding_repo_set_id: id,
+                                                                coding_allowed_languages: found.supported_languages || [],
+                                                                coding_problem_count: count,
                                                             }))
                                                         } else {
                                                             setFormData(prev => ({
                                                                 ...prev,
-                                                                coding_allowed_languages: []
+                                                                coding_repo_set_id: null,
+                                                                coding_allowed_languages: [],
+                                                                coding_problem_count: null,
                                                             }))
                                                         }
                                                     }}
@@ -1293,21 +1303,26 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                                         {/* Languages selection (subset of Question Set supported languages) */}
                                         {selectedCodingSet && (
                                             <div className="space-y-2 p-3.5 rounded-xl border border-border bg-card/40">
-                                                <Label className="text-xs font-semibold text-foreground">
-                                                    Job-Allowed Languages (Subset of Question Set) *
-                                                </Label>
+                                                <div className="flex items-center justify-between">
+                                                    <Label className="text-xs font-semibold text-foreground">
+                                                        Allowed Programming Languages (Subset of Question Set) *
+                                                    </Label>
+                                                    <span className="text-[11px] text-muted-foreground">
+                                                        Set supports: {selectedCodingSet.supported_languages?.map((l: string) => getLanguageLabel(l)).join(', ')}
+                                                    </span>
+                                                </div>
                                                 <p className="text-xs text-muted-foreground">
                                                     Select which languages candidates can choose during this interview.
                                                 </p>
-                                                <div className="flex flex-wrap gap-4 pt-1">
+                                                <div className="flex flex-wrap gap-2 pt-1">
                                                     {selectedCodingSet.supported_languages?.map((lang: string) => {
                                                         const isSelected = (formData.coding_allowed_languages || []).includes(lang)
-                                                        const label = lang === 'python3' ? 'Python 3' : lang === 'java21' ? 'Java 21' : lang
+                                                        const label = getLanguageLabel(lang)
                                                         return (
                                                             <label
                                                                 key={lang}
-                                                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
-                                                                    isSelected ? 'border-primary bg-primary/10 text-primary' : 'border-border text-foreground hover:border-primary/40'
+                                                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all text-xs font-medium ${
+                                                                    isSelected ? 'border-primary bg-primary/10 text-primary font-semibold' : 'border-border text-foreground hover:border-primary/40'
                                                                 }`}
                                                             >
                                                                 <Checkbox
@@ -1323,7 +1338,7 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                                                                         }))
                                                                     }}
                                                                 />
-                                                                <span className="text-sm font-medium">{label}</span>
+                                                                <span>{label}</span>
                                                             </label>
                                                         )
                                                     })}
@@ -1334,23 +1349,64 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                                             </div>
                                         )}
 
-                                        {/* Coding Duration */}
-                                        <div className="space-y-1.5">
-                                            <Label htmlFor="coding_duration" className="text-xs font-semibold text-foreground">
-                                                Coding Round Duration (Minutes)
-                                            </Label>
-                                            <Input
-                                                id="coding_duration"
-                                                type="number"
-                                                min={15}
-                                                max={180}
-                                                value={formData.coding_round_duration_minutes || 60}
-                                                onChange={(e) => setFormData(prev => ({
-                                                    ...prev,
-                                                    coding_round_duration_minutes: Number(e.target.value) || 60
-                                                }))}
-                                                className="w-40 h-10 border border-border rounded-xl bg-background/50 text-foreground text-sm"
-                                            />
+                                        {/* Number of Coding Problems & Coding Duration */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <div className="space-y-1.5">
+                                                <div className="flex items-center justify-between">
+                                                    <Label htmlFor="coding_problem_count" className="text-xs font-semibold text-foreground">
+                                                        Number of Coding Problems *
+                                                    </Label>
+                                                    {selectedCodingSet && (
+                                                        <span className="text-[11px] text-muted-foreground">
+                                                            Available: {selectedCodingSet.items?.length || 0}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <Input
+                                                    id="coding_problem_count"
+                                                    type="number"
+                                                    min={1}
+                                                    max={selectedCodingSet?.items?.length || 10}
+                                                    value={formData.coding_problem_count ?? (selectedCodingSet?.items?.length ? Math.min(selectedCodingSet.items.length, 2) : 1)}
+                                                    onChange={(e) => {
+                                                        const val = parseInt(e.target.value) || 1
+                                                        setFormData(prev => ({
+                                                            ...prev,
+                                                            coding_problem_count: val
+                                                        }))
+                                                    }}
+                                                    className="w-full h-10 border border-border rounded-xl bg-background/50 text-foreground text-sm"
+                                                />
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    Number of problems assigned to candidates (1 to {selectedCodingSet?.items?.length || 1}).
+                                                </p>
+                                                {selectedCodingSet?.items?.length && formData.coding_problem_count && formData.coding_problem_count > selectedCodingSet.items.length && (
+                                                    <p className="text-xs text-destructive">
+                                                        Cannot exceed {selectedCodingSet.items.length} problems available in this set.
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            <div className="space-y-1.5">
+                                                <Label htmlFor="coding_duration" className="text-xs font-semibold text-foreground">
+                                                    Coding Round Duration (Minutes)
+                                                </Label>
+                                                <Input
+                                                    id="coding_duration"
+                                                    type="number"
+                                                    min={15}
+                                                    max={180}
+                                                    value={formData.coding_round_duration_minutes || 60}
+                                                    onChange={(e) => setFormData(prev => ({
+                                                        ...prev,
+                                                        coding_round_duration_minutes: Number(e.target.value) || 60
+                                                    }))}
+                                                    className="w-full h-10 border border-border rounded-xl bg-background/50 text-foreground text-sm"
+                                                />
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    Total assessment time allocated to candidate.
+                                                </p>
+                                            </div>
                                         </div>
                                     </div>
                                 )}

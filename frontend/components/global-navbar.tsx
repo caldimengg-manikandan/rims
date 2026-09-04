@@ -26,8 +26,9 @@ export const GlobalNavbar = React.memo(function GlobalNavbar() {
   const { isAuthenticated, user } = useAuth()
 
   const { branding } = useBranding()
-  const companyLogo = branding.logoUrl
-  const companyName = branding.companyName
+  const rawCompanyName = branding.companyName
+  const companyName = (!rawCompanyName || rawCompanyName === 'Default Organization') ? 'CAL-RIMS' : rawCompanyName
+  const companyLogo = branding.logoUrl || '/calrims/logo.png'
 
   if (!mounted) return null
 

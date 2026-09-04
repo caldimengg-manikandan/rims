@@ -108,49 +108,64 @@ export class APIClient {
         }
       }
 
-      // ── Multi-tenancy: attach tenant headers to EVERY call (public and authenticated) ──
-      const tenant = _activeTenant
-      if (tenant && tenant.status !== 'suspended') {
-        headers['X-Tenant-Slug'] = tenant.slug
-        if (tenant.id) {
-          headers['X-Tenant-ID'] = tenant.id
-        }
-      } else if (tenant && tenant.slug === 'default') {
-        headers['X-Tenant-Slug'] = 'default'
-        if (tenant.id) {
-          headers['X-Tenant-ID'] = tenant.id
+      // ── Multi-tenancy: attach tenant headers ──
+      let subdomainSlug: string | null = null
+      const host = window.location.hostname.toLowerCase()
+      if (host.endsWith('.localhost')) {
+        const sub = host.slice(0, -'.localhost'.length)
+        if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') {
+          subdomainSlug = sub
         }
       } else {
-        let subdomainSlug: string | null = null
-        const host = window.location.hostname.toLowerCase()
-        if (host.endsWith('.localhost')) {
-          const sub = host.slice(0, -'.localhost'.length)
-          if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') {
-            subdomainSlug = sub
+        const parts = host.split('.')
+        if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
+          subdomainSlug = parts[0]
+        }
+      }
+
+      // If calling the platform default branding endpoint (no tenant query param and not on a subdomain),
+      // NEVER attach a tenant slug header!
+      const isBrandingDefaultReq = (endpoint === '/api/settings/branding' || endpoint === '/api/settings/branding/') && !subdomainSlug
+
+      if (!isBrandingDefaultReq) {
+        // Check whether user has an active session
+        const hasSession =
+          (typeof localStorage !== 'undefined' && localStorage.getItem('rims_session_present') === '1') ||
+          (typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('auth_token'))) ||
+          (typeof sessionStorage !== 'undefined' && Boolean(sessionStorage.getItem('auth_token')))
+
+        const tenant = _activeTenant
+        if (tenant && tenant.status !== 'suspended' && (hasSession || subdomainSlug)) {
+          headers['X-Tenant-Slug'] = tenant.slug
+          if (tenant.id) {
+            headers['X-Tenant-ID'] = tenant.id
+          }
+        } else if (tenant && tenant.slug === 'default') {
+          headers['X-Tenant-Slug'] = 'default'
+          if (tenant.id) {
+            headers['X-Tenant-ID'] = tenant.id
           }
         } else {
-          const parts = host.split('.')
-          if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
-            subdomainSlug = parts[0]
+          // Check document cookie for x-tenant-slug
+          let cookieSlug: string | null = null
+          try {
+            const cookieMatch = document.cookie.match(/(?:^|;\s*)x-tenant-slug=([^;]+)/)
+            if (cookieMatch) cookieSlug = decodeURIComponent(cookieMatch[1])
+          } catch (_) {}
+
+          // Only fall back to storage/cookie if on a dedicated subdomain OR if user is actively authenticated!
+          let storedSlug = subdomainSlug
+          if (!storedSlug && hasSession) {
+            storedSlug =
+              (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tenant_slug')) ||
+              cookieSlug ||
+              (typeof localStorage !== 'undefined' && localStorage.getItem('tenant_slug')) ||
+              ''
           }
-        }
 
-        // Check document cookie for x-tenant-slug
-        let cookieSlug: string | null = null
-        try {
-          const cookieMatch = document.cookie.match(/(?:^|;\s*)x-tenant-slug=([^;]+)/)
-          if (cookieMatch) cookieSlug = decodeURIComponent(cookieMatch[1])
-        } catch (_) {}
-
-        const storedSlug =
-          subdomainSlug ||
-          cookieSlug ||
-          (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('tenant_slug')) ||
-          (typeof localStorage !== 'undefined' && localStorage.getItem('tenant_slug')) ||
-          ''
-
-        if (storedSlug) {
-          headers['X-Tenant-Slug'] = storedSlug
+          if (storedSlug) {
+            headers['X-Tenant-Slug'] = storedSlug
+          }
         }
       }
     }

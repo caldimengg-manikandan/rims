@@ -27,7 +27,7 @@ def test_language_registry_validation():
 
     # Unsupported language raises ValueError
     with pytest.raises(ValueError, match="Unsupported language"):
-        validate_supported_languages(["python3", "cpp"])
+        validate_supported_languages(["python3", "ruby"])
 
 
 def test_judge_normalize_output():
@@ -141,3 +141,83 @@ def test_job_pipeline_language_subset_validation():
         _validate_interview_pipeline(job_invalid, "senior", db=mock_db)
     assert exc_info.value.status_code == 400
     assert "must be a subset" in exc_info.value.detail
+
+
+def test_job_pipeline_coding_problem_count_validation():
+    mock_db = MagicMock()
+    mock_q_set = CodingQuestionSet(
+        id=20,
+        title="Full Stack Set",
+        supported_languages=["python3", "java21"]
+    )
+    mock_q_set.items = [MagicMock(), MagicMock()]  # 2 problems
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_q_set
+
+    job = MagicMock()
+    job.aptitude_enabled = False
+    job.first_level_enabled = True
+    job.interview_mode = "ai"
+    job.coding_round_enabled = True
+    job.coding_repo_set_id = 20
+    job.coding_allowed_languages = ["python3"]
+    job.coding_round_duration_minutes = 60
+    job.coding_problem_count = 2
+
+    # Count of 2 out of 2 is valid
+    res = _validate_interview_pipeline(job, "senior", db=mock_db)
+    assert res["coding_problem_count"] == 2
+
+    # Count of 3 out of 2 must fail
+    job.coding_problem_count = 3
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_interview_pipeline(job, "senior", db=mock_db)
+    assert exc_info.value.status_code == 400
+    assert "cannot exceed available problems" in exc_info.value.detail
+
+    # Count of 0 must fail
+    job.coding_problem_count = 0
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_interview_pipeline(job, "senior", db=mock_db)
+    assert exc_info.value.status_code == 400
+    assert "at least 1" in exc_info.value.detail
+
+
+def test_multilanguage_solution_validation_python_and_java():
+    import json
+    from app.execution.service import ExecutionService
+    from app.domain.models import CodingProblem, CodingTestCase
+
+    problem = CodingProblem(
+        id=999,
+        title="Sum Two Numbers",
+        description="Read two numbers and print their sum",
+        supported_languages=["python3", "java21"],
+        starter_code={
+            "python3": "# Python 3\nimport sys\n",
+            "java21": "// Java 21\nimport java.util.Scanner;\n",
+        },
+        solution_code=json.dumps({
+            "python3": "import sys\nline = sys.stdin.read().split()\nif line:\n    print(int(line[0]) + int(line[1]))\n",
+            "java21": "import java.util.Scanner;\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        if (sc.hasNextInt()) {\n            int a = sc.nextInt();\n            int b = sc.nextInt();\n            System.out.println(a + b);\n        }\n    }\n}\n",
+        }),
+        time_limit_ms=5000,
+        memory_limit_mb=256,
+    )
+
+    tc1 = CodingTestCase(id=1, problem_id=999, input="5 7", expected_output="12")
+    tc2 = CodingTestCase(id=2, problem_id=999, input="10 20", expected_output="") # Missing output to be generated
+
+    svc = ExecutionService()
+
+    # Validate Python 3 specifically
+    py_report = svc.validate_system_solution(problem, [tc1, tc2], language="python3")
+    assert py_report["all_passed"] is True
+    assert py_report["generated_count"] == 1
+    assert tc2.expected_output == "12" or tc2.expected_output == "30"
+    assert tc2.expected_output == "30"
+
+    # Validate Java 21 specifically against the generated output
+    java_report = svc.validate_system_solution(problem, [tc1, tc2], language="java21")
+    assert java_report["all_passed"] is True
+    assert java_report["generated_count"] == 0 # Output already exists, verified
+

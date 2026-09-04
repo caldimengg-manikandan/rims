@@ -10,7 +10,7 @@ export async function getBrandingServer(): Promise<BrandingConfig> {
       tenantSlug = headerList.get('x-tenant-slug') || '';
       if (!tenantSlug) {
         const host = headerList.get('host') || '';
-        const lowerHost = host.toLowerCase();
+        const lowerHost = host.split(':')[0].toLowerCase().trim();
         if (lowerHost.endsWith('.localhost')) {
           const sub = lowerHost.slice(0, -'.localhost'.length);
           if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') {

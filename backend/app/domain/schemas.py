@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from datetime import datetime
 import re
 import json
-from typing import Optional, List, Any, Literal, Union
+from typing import Optional, List, Any, Literal, Union, Dict
 from uuid import UUID
 from app.domain.constants import CandidateState
 
@@ -243,6 +243,7 @@ class JobCreate(BaseModel):
     behavioural_repo_set_id: Optional[int] = None
     coding_round_enabled: Optional[bool] = False
     coding_round_duration_minutes: Optional[int] = 60
+    coding_problem_count: Optional[int] = None
     coding_repo_set_id: Optional[int] = None
     coding_allowed_languages: Optional[List[str]] = None
 
@@ -326,6 +327,7 @@ class JobUpdate(BaseModel):
     aptitude_mode: Optional[str] = None
     coding_round_enabled: Optional[bool] = None
     coding_round_duration_minutes: Optional[int] = None
+    coding_problem_count: Optional[int] = None
     coding_repo_set_id: Optional[int] = None
     coding_allowed_languages: Optional[List[str]] = None
 
@@ -400,6 +402,7 @@ class JobResponse(BaseModel):
     behavioural_repo_set_id: Optional[int] = None
     coding_round_enabled: Optional[bool] = False
     coding_round_duration_minutes: Optional[int] = 60
+    coding_problem_count: Optional[int] = None
     coding_repo_set_id: Optional[int] = None
     coding_allowed_languages: Optional[List[str]] = None
     is_applied: bool = False
@@ -1188,8 +1191,10 @@ class CodingProblemCreate(BaseModel):
     input_format: Optional[str] = None
     output_format: Optional[str] = None
     constraints: Optional[str] = None
-    starter_code: Optional[dict] = None  # e.g. {"python3": "...", "java21": "..."}
-    solution_code: str = Field(..., min_length=5)  # Reference solution (server-side only)
+    supported_languages: Optional[List[str]] = None  # e.g. ["python3", "java21"]
+    starter_code: Optional[Dict[str, str]] = None  # e.g. {"python3": "...", "java21": "..."}
+    solution_code: Optional[Union[str, Dict[str, str]]] = None  # Reference solution (server-side only)
+    solution_codes: Optional[Dict[str, str]] = None  # Multi-language solutions dict
     difficulty: Optional[str] = "medium"
     time_limit_ms: Optional[int] = Field(default=2000, ge=500, le=10000)
     memory_limit_mb: Optional[int] = Field(default=256, ge=64, le=1024)
@@ -1201,6 +1206,12 @@ class CodingProblemCreate(BaseModel):
             raise ValueError("Difficulty must be 'easy', 'medium', or 'hard'")
         return v.lower() if v else "medium"
 
+    @model_validator(mode='after')
+    def validate_solution_provided(self):
+        if not self.solution_code and not self.solution_codes:
+            raise ValueError("Either solution_code or solution_codes must be provided.")
+        return self
+
 
 class CodingProblemUpdate(BaseModel):
     title: Optional[str] = None
@@ -1208,8 +1219,10 @@ class CodingProblemUpdate(BaseModel):
     input_format: Optional[str] = None
     output_format: Optional[str] = None
     constraints: Optional[str] = None
-    starter_code: Optional[dict] = None
-    solution_code: Optional[str] = None
+    supported_languages: Optional[List[str]] = None
+    starter_code: Optional[Dict[str, str]] = None
+    solution_code: Optional[Union[str, Dict[str, str]]] = None
+    solution_codes: Optional[Dict[str, str]] = None
     difficulty: Optional[str] = None
     time_limit_ms: Optional[int] = None
     memory_limit_mb: Optional[int] = None
@@ -1223,7 +1236,8 @@ class CodingProblemResponse(BaseModel):
     input_format: Optional[str] = None
     output_format: Optional[str] = None
     constraints: Optional[str] = None
-    starter_code: Optional[dict] = None
+    supported_languages: Optional[List[str]] = None
+    starter_code: Optional[Dict[str, str]] = None
     difficulty: str
     time_limit_ms: int
     memory_limit_mb: int
@@ -1235,7 +1249,12 @@ class CodingProblemResponse(BaseModel):
 
 class CodingProblemHRDetail(CodingProblemResponse):
     """HR view containing the reference solution code."""
-    solution_code: str
+    solution_code: Union[str, Dict[str, str]]
+    solution_codes: Optional[Dict[str, str]] = None
+
+
+class ValidateSolutionRequest(BaseModel):
+    language: Optional[str] = None
 
 
 class CodingQuestionSetCreate(BaseModel):

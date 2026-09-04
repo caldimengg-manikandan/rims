@@ -8,12 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 
+import json
 from app.infrastructure.database import get_db
 from app.core.auth import get_current_hr, get_current_interview
 from app.core.ownership import get_tenant_context
 from app.core.tenant_context import TenantContext
 from app.core.rate_limiter import limiter
 from app.core.timezone import get_ist_now
+from app.core.language_registry import get_all_languages_metadata, validate_supported_languages
 from app.domain.models import (
     User,
     Job,
@@ -30,6 +32,7 @@ from app.domain.schemas import (
     CodingProblemResponse,
     CodingProblemHRDetail,
     CodingTestCaseResponse,
+    ValidateSolutionRequest,
     CodingQuestionSetCreate,
     CodingQuestionSetUpdate,
     CodingQuestionSetResponse,
@@ -48,8 +51,50 @@ router = APIRouter(prefix="/api/coding", tags=["Coding Assessment"])
 
 
 # ============================================================================
+# General / Language Registry Endpoints
+# ============================================================================
+
+@router.get("/languages")
+def get_supported_languages():
+    """List all supported programming languages with boilerplate templates."""
+    return get_all_languages_metadata()
+
+
+# ============================================================================
 # HR Endpoints — Problems Management
 # ============================================================================
+
+def _format_problem_hr_detail(problem: CodingProblem) -> CodingProblemHRDetail:
+    solution_dict = problem.get_solution_codes()
+    return CodingProblemHRDetail(
+        id=problem.id,
+        title=problem.title,
+        description=problem.description,
+        input_format=problem.input_format,
+        output_format=problem.output_format,
+        constraints=problem.constraints,
+        supported_languages=problem.supported_languages or list(solution_dict.keys()) or ["python3"],
+        starter_code=problem.starter_code or {},
+        solution_code=solution_dict,
+        solution_codes=solution_dict,
+        difficulty=problem.difficulty,
+        time_limit_ms=problem.time_limit_ms,
+        memory_limit_mb=problem.memory_limit_mb,
+        test_cases=[
+            CodingTestCaseResponse(
+                id=tc.id,
+                problem_id=tc.problem_id,
+                input=tc.input,
+                expected_output=tc.expected_output,
+                weight=tc.weight,
+                is_hidden=tc.is_hidden,
+                display_order=tc.display_order,
+            )
+            for tc in problem.test_cases
+        ],
+        created_at=problem.created_at,
+    )
+
 
 @router.get("/problems", response_model=List[CodingProblemResponse])
 def list_coding_problems(
@@ -72,6 +117,25 @@ def create_coding_problem(
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """Create a new coding problem with test cases and reference solution."""
+    # Format solution code as JSON string if passed as dictionary
+    raw_sol = problem_data.solution_codes or problem_data.solution_code
+    if isinstance(raw_sol, dict):
+        sol_code_str = json.dumps(raw_sol)
+    elif raw_sol:
+        sol_code_str = str(raw_sol).strip()
+    else:
+        sol_code_str = ""
+
+    # Determine supported languages
+    supported = problem_data.supported_languages
+    if not supported:
+        if isinstance(raw_sol, dict):
+            supported = list(raw_sol.keys())
+        elif problem_data.starter_code:
+            supported = list(problem_data.starter_code.keys())
+        else:
+            supported = ["python3"]
+
     new_problem = CodingProblem(
         tenant_id=tenant_ctx.id,
         title=problem_data.title.strip(),
@@ -79,8 +143,9 @@ def create_coding_problem(
         input_format=problem_data.input_format,
         output_format=problem_data.output_format,
         constraints=problem_data.constraints,
+        supported_languages=supported,
         starter_code=problem_data.starter_code or {},
-        solution_code=problem_data.solution_code.strip(),
+        solution_code=sol_code_str,
         difficulty=problem_data.difficulty or "medium",
         time_limit_ms=problem_data.time_limit_ms or 2000,
         memory_limit_mb=problem_data.memory_limit_mb or 256,
@@ -103,7 +168,7 @@ def create_coding_problem(
 
     db.commit()
     db.refresh(new_problem)
-    return new_problem
+    return _format_problem_hr_detail(new_problem)
 
 
 @router.get("/problems/{problem_id}", response_model=CodingProblemHRDetail)
@@ -117,7 +182,7 @@ def get_coding_problem_detail(
     problem = db.query(CodingProblem).filter(CodingProblem.id == problem_id).first()
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found.")
-    return problem
+    return _format_problem_hr_detail(problem)
 
 
 @router.put("/problems/{problem_id}", response_model=CodingProblemHRDetail)
@@ -143,10 +208,15 @@ def update_coding_problem(
         problem.output_format = data.output_format
     if data.constraints is not None:
         problem.constraints = data.constraints
+    if data.supported_languages is not None:
+        problem.supported_languages = data.supported_languages
     if data.starter_code is not None:
         problem.starter_code = data.starter_code
     if data.solution_code is not None:
-        problem.solution_code = data.solution_code.strip()
+        if isinstance(data.solution_code, dict):
+            problem.solution_code = json.dumps(data.solution_code)
+        else:
+            problem.solution_code = data.solution_code.strip()
     if data.difficulty is not None:
         problem.difficulty = data.difficulty
     if data.time_limit_ms is not None:
@@ -170,7 +240,7 @@ def update_coding_problem(
 
     db.commit()
     db.refresh(problem)
-    return problem
+    return _format_problem_hr_detail(problem)
 
 
 @router.delete("/problems/{problem_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -192,12 +262,15 @@ def delete_coding_problem(
 @router.post("/problems/{problem_id}/validate-solution")
 def validate_problem_solution(
     problem_id: int,
+    body: Optional[ValidateSolutionRequest] = None,
     current_user: User = Depends(get_current_hr),
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """
     Executes the reference solution against test cases:
+    - If body.language is provided, executes that language's solution.
+    - If not provided, executes across all configured reference solutions for the problem.
     - Generates and stores missing expected outputs.
     - Verifies existing outputs without silently overwriting.
     """
@@ -209,8 +282,10 @@ def validate_problem_solution(
     if not test_cases:
         raise HTTPException(status_code=400, detail="No test cases found for this problem to validate.")
 
+    target_lang = body.language if body and body.language else None
+
     exec_service = ExecutionService()
-    report = exec_service.validate_system_solution(problem, test_cases)
+    report = exec_service.validate_system_solution(problem, test_cases, language=target_lang)
     db.commit()
     return report
 
@@ -419,6 +494,10 @@ def get_candidate_coding_session(
         .order_by(CodingQuestionSetItem.display_order)
         .all()
     )
+
+    # Honor job.coding_problem_count if set
+    if job.coding_problem_count and job.coding_problem_count > 0:
+        set_items = set_items[:job.coding_problem_count]
 
     problems_response = []
     for item in set_items:

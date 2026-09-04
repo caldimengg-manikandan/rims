@@ -740,6 +740,14 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
         samesite="strict",
         secure=settings.env == "production"
     )
+    response.delete_cookie(
+        key="x-tenant-slug",
+        path="/"
+    )
+    response.delete_cookie(
+        key="x-tenant-id",
+        path="/"
+    )
     return {"message": "Logged out successfully"}
 
 def is_platform_super_admin(user: User) -> bool:

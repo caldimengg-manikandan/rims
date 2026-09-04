@@ -81,17 +81,17 @@ class DockerExecutor(Executor):
             os.chmod(stdin_path, 0o666)
 
             # 3. Assemble command
-            if language == "java21":
-                # Compile and execute within the same workspace
+            if lang_config.compile_cmd:
+                compile_str = " ".join(lang_config.compile_cmd)
+                run_str = " ".join(lang_config.run_cmd)
                 cmd = (
-                    "sh -c \"javac Solution.java 2> compile_err.txt && "
-                    "java -Xmx256m Solution < stdin.txt || "
+                    f"sh -c \"{compile_str} 2> compile_err.txt && "
+                    f"{run_str} < stdin.txt || "
                     "{ exit_c=$?; if [ -s compile_err.txt ]; then cat compile_err.txt >&2; exit 2; else exit $exit_c; fi; }\""
                 )
-            elif language == "python3":
-                cmd = "sh -c \"python3 solution.py < stdin.txt\""
             else:
-                cmd = f"sh -c \"{lang_config.compile_and_run_cmd} < stdin.txt\""
+                run_str = " ".join(lang_config.run_cmd)
+                cmd = f"sh -c \"{run_str} < stdin.txt\""
 
             # 4. Prepare container constraints
             wall_timeout_seconds = max(int(time_limit_ms / 1000) + 2, 4)
@@ -135,10 +135,17 @@ class DockerExecutor(Executor):
 
             except ContainerError as ce:
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-                stderr_text = ce.stderr.decode("utf-8", errors="replace") if isinstance(ce.stderr, bytes) else str(ce.stderr or "")
-                stdout_text = ce.stdout.decode("utf-8", errors="replace") if isinstance(ce.stdout, bytes) else str(ce.stdout or "")
+                ce_stderr = getattr(ce, "stderr", None)
+                ce_stdout = getattr(ce, "stdout", None)
+                stderr_text = ce_stderr.decode("utf-8", errors="replace") if isinstance(ce_stderr, bytes) else str(ce_stderr or "")
+                stdout_text = ce_stdout.decode("utf-8", errors="replace") if isinstance(ce_stdout, bytes) else str(ce_stdout or "")
 
-                is_compilation = (ce.exit_status == 2 and language == "java21") or "javac" in stderr_text
+                is_compilation = (
+                    (ce.exit_status == 2 and lang_config.compile_cmd is not None)
+                    or "javac" in stderr_text
+                    or "compilation" in stderr_text.lower()
+                    or "error:" in stderr_text.lower()
+                )
                 return ExecutionResult(
                     stdout=stdout_text,
                     stderr=stderr_text,
