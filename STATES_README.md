@@ -1,4 +1,4 @@
-# Candidate States and Actions Directory
+y# Candidate States and Actions Directory
 
 This document provides a complete lookup of candidate application stages (states) and the corresponding actions (FSM transitions) or UI buttons available in each stage.
 

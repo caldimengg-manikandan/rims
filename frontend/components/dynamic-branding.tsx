@@ -19,6 +19,86 @@ function getSubdomainSlug(): string | null {
   return null;
 }
 
+function normalizePathname(raw: string | null | undefined): string {
+  if (!raw) return '/';
+  // Strip basePath /calrims
+  let p = raw.replace(/^\/calrims(?=\/|$)/, '');
+  // Strip query and hash
+  p = p.split('?')[0].split('#')[0];
+  // Strip trailing slashes (except root)
+  p = p.replace(/\/+$/, '');
+  return p || '/';
+}
+
+function getPageLabel(p: string): string | null {
+  // Auth
+  if (p === '/auth/login') return 'Sign In';
+  if (p === '/auth/register') return 'Create Account';
+  if (p === '/auth/forgot-password') return 'Forgot Password';
+  if (p === '/auth/reset-password') return 'Reset Password';
+  if (p === '/auth/verify') return 'Verify Account';
+  if (p.startsWith('/auth/')) return 'Authentication';
+
+  // Company
+  if (p === '/company/register') return 'Register Organization';
+  if (p === '/company' || p.startsWith('/company/')) return 'Company Profile';
+
+  // Dashboard - Jobs
+  if (p === '/dashboard/hr/jobs/create') return 'Create Job';
+  if (p.startsWith('/dashboard/hr/jobs/') && p.endsWith('/edit')) return 'Edit Job';
+  if (p === '/dashboard/hr/jobs' || p.startsWith('/dashboard/hr/jobs/')) return 'Job Openings';
+
+  // Dashboard - Applications
+  if (p === '/dashboard/hr/applications') return 'Applications';
+  if (p.startsWith('/dashboard/hr/applications/')) return 'Application Details';
+
+  // Dashboard - Pipelines
+  if (p === '/dashboard/hr/pipeline') return 'Hiring Pipeline';
+  if (p.startsWith('/dashboard/hr/pipelines/')) return 'Pipeline View';
+
+  // Dashboard - HR sub-sections
+  if (p === '/dashboard/hr/approvals') return 'Pending Approvals';
+  if (p === '/dashboard/hr/batch-analysis') return 'Batch Analysis';
+  if (p === '/dashboard/hr/ingested-emails') return 'Ingested Emails';
+  if (p === '/dashboard/hr/profile') return 'Profile';
+  if (p.startsWith('/dashboard/hr/ranking/')) return 'Candidate Ranking';
+  if (p === '/dashboard/hr/reports') return 'Analytics & Reports';
+  if (p.startsWith('/dashboard/hr/scorecard/')) return 'Interview Scorecard';
+  if (p === '/dashboard/hr/tickets') return 'Support Tickets';
+
+  // Coding Repository & Question Repository
+  if (p === '/dashboard/coding-repository' || p.startsWith('/dashboard/coding-repository/')) return 'Coding Repository';
+  if (p === '/dashboard/repository' || p.startsWith('/dashboard/repository/')) return 'Question Repository';
+
+  // Other Dashboard sections
+  if (p === '/dashboard/tenants' || p.startsWith('/dashboard/tenants/')) return 'Tenant Management';
+  if (p === '/dashboard/settings' || p.startsWith('/dashboard/settings/')) return 'Settings';
+  if (p === '/dashboard/onboarding' || p.startsWith('/dashboard/onboarding/')) return 'Onboarding';
+
+  // General Dashboard & HR root (fallback for any other dashboard subpath)
+  if (p === '/dashboard' || p === '/dashboard/hr' || p.startsWith('/dashboard/hr') || p.startsWith('/dashboard/')) return 'Dashboard';
+
+  // Candidate / Public Jobs
+  if (p === '/jobs') return 'Careers';
+  if (p.startsWith('/jobs/')) return 'Job Details';
+
+  // Interview Sessions
+  if (p === '/interview/access') return 'Interview Access';
+  if (p.startsWith('/interview/live/')) return 'Live Interview';
+  if (p.startsWith('/interview/')) return 'AI Interview';
+
+  // Offer
+  if (p.startsWith('/offer/')) return 'Offer Response';
+
+  // Informational / Support
+  if (p === '/support' || p.startsWith('/support/')) return 'Support';
+  if (p === '/terms' || p.startsWith('/terms/')) return 'Terms of Service';
+  if (p === '/privacy' || p.startsWith('/privacy/')) return 'Privacy Policy';
+  if (p === '/demo' || p.startsWith('/demo/')) return 'Platform Demo';
+
+  return null;
+}
+
 export function DynamicBranding() {
   const { branding } = useBranding();
   const pathname = usePathname();
@@ -27,8 +107,10 @@ export function DynamicBranding() {
   useEffect(() => {
     if (!branding) return;
 
+    const currentPath = pathname || (typeof window !== 'undefined' ? window.location.pathname : '');
+    const normalizedPath = normalizePathname(currentPath);
     const subdomain = getSubdomainSlug();
-    const isLanding = !pathname || pathname === '/' || pathname === '/calrims' || pathname === '/calrims/';
+    const isLanding = !normalizedPath || normalizedPath === '/';
 
     // 1. Dynamic Favicon synchronization across all icon link tags
     const targetFavicon = (isLanding && !subdomain) ? '/calrims/logo.png' : (branding.faviconUrl || '/calrims/logo.png');
@@ -58,31 +140,29 @@ export function DynamicBranding() {
     document.documentElement.style.setProperty('--ring', safeThemeColor);
 
     // 3. Dynamic Document Title Synchronization
-    if (isLanding && !subdomain && !isAuthenticated) {
-      document.title = 'CAL-RIMS - AI-Powered Recruitment Intelligence System';
+    const orgDisplayName =
+      branding.companyName && branding.companyName !== 'Default Organization' && branding.companyName !== 'CALDIM'
+        ? branding.companyName
+        : activeTenant?.name && activeTenant.name !== 'Default Organization' && activeTenant.name !== 'CALDIM'
+        ? activeTenant.name
+        : subdomain
+        ? subdomain.toUpperCase()
+        : activeTenant?.slug && activeTenant.slug !== 'default'
+        ? activeTenant.slug.toUpperCase()
+        : 'CAL-RIMS';
+
+    if (isLanding) {
+      if (!subdomain && !isAuthenticated && (!activeTenant || activeTenant.slug === 'default')) {
+        document.title = branding.seoTitleDefault || 'CAL-RIMS - AI-Powered Recruitment Intelligence System';
+      } else {
+        document.title = `Careers | ${orgDisplayName}`;
+      }
     } else {
-      let pageLabel = '';
-      if (pathname.includes('/auth/login')) pageLabel = 'Sign In';
-      else if (pathname.includes('/auth/register')) pageLabel = 'Create Account';
-      else if (pathname.includes('/company/register')) pageLabel = 'Register Organization';
-      else if (pathname.includes('/dashboard/tenants')) pageLabel = 'Tenant Management';
-      else if (pathname.includes('/dashboard/hr/jobs')) pageLabel = 'Job Openings';
-      else if (pathname.includes('/dashboard/hr/candidates')) pageLabel = 'Candidates';
-      else if (pathname.includes('/dashboard/hr/interviews')) pageLabel = 'AI Interviews';
-      else if (pathname.includes('/dashboard/hr/analytics')) pageLabel = 'Analytics';
-      else if (pathname.includes('/dashboard/hr/settings')) pageLabel = 'Settings';
-      else if (pathname.includes('/dashboard/hr')) pageLabel = 'Dashboard';
-      else if (pathname.includes('/jobs')) pageLabel = 'Careers';
-
-      const orgDisplayName =
-        branding.companyName && branding.companyName !== 'Default Organization' && branding.companyName !== 'CALDIM'
-          ? branding.companyName
-          : subdomain
-          ? subdomain.toUpperCase()
-          : 'CAL-RIMS';
-
+      const pageLabel = getPageLabel(normalizedPath);
       if (pageLabel) {
         document.title = `${pageLabel} | ${orgDisplayName}`;
+      } else if (orgDisplayName && orgDisplayName !== 'CAL-RIMS') {
+        document.title = `${orgDisplayName} | Recruitment Intelligence System`;
       } else if (branding.seoTitleDefault) {
         document.title = branding.seoTitleDefault;
       }

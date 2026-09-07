@@ -47,6 +47,7 @@ import { fetcher } from '@/app/dashboard/lib/swr-fetcher'
 import { APIClient } from '@/app/dashboard/lib/api-client'
 import { getApiBaseUrl } from '@/lib/config'
 import { toast } from 'sonner'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   Radar,
   RadarChart,
@@ -61,7 +62,7 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer
 } from 'recharts'
-import { Download, FileText, Filter, Search, AlertCircle, CheckCircle2, XCircle, RotateCcw, Activity, Video, CameraOff, BarChart, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Download, FileText, Filter, Search, AlertCircle, CheckCircle2, XCircle, RotateCcw, Activity, Video, CameraOff, BarChart, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { cn } from '@/app/dashboard/lib/utils'
 
@@ -152,6 +153,7 @@ export interface Report {
   video_url?: string | null
   termination_reason?: string | null
   interview_id?: string | number | null
+  is_demo?: boolean
 }
 
 // Helper to clean question text that may be stored as JSON array strings
@@ -180,6 +182,7 @@ function cleanQuestionText(text: string): string {
 
 export default function ReportsPage() {
 
+  const confirm = useConfirm()
   const searchParams = useSearchParams()
   const urlReportId = searchParams.get('reportId')
   const urlSearch = searchParams.get('search')
@@ -534,6 +537,58 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url)
   }
 
+  const handleDeleteReport = async (reportToDelete: any) => {
+    if (!reportToDelete) return
+    const isDemo = !!reportToDelete.is_demo
+    const candidateName = reportToDelete.candidate_profile?.candidate_name || "this candidate"
+
+    const confirmed = await confirm({
+      title: isDemo ? "Delete Demo Interview Report?" : "Delete Interview Report?",
+      description: isDemo
+        ? "Are you sure you want to permanently delete this demo interview report and all underlying session data? This action cannot be undone."
+        : `Are you sure you want to permanently delete the interview report for ${candidateName}? All session data (snapshots, recordings, answers, and AI evaluations) will be permanently deleted. The candidate, application, and job records will remain intact.`,
+      confirmLabel: "Delete Report",
+      variant: "destructive",
+    })
+
+    if (!confirmed) return
+
+    try {
+      toast.loading("Deleting report...", { id: "delete-report" })
+      await APIClient.delete(`/api/analytics/reports/${reportToDelete.id}`)
+      toast.success("Interview report deleted successfully", { id: "delete-report" })
+
+      if (viewingReport && String(viewingReport.id) === String(reportToDelete.id)) {
+        setViewingReport(null)
+      }
+
+      // Optimistically update SWR cache
+      mutate(
+        reportsApiUrl,
+        (current: any) => {
+          if (!current) return current
+          if (Array.isArray(current)) {
+            return current.filter((r: any) => String(r.id) !== String(reportToDelete.id))
+          }
+          const updatedReports = (current.reports || []).filter(
+            (r: any) => String(r.id) !== String(reportToDelete.id)
+          )
+          return {
+            ...current,
+            reports: updatedReports,
+            total: Math.max(0, (current.total || 0) - 1),
+            count: updatedReports.length,
+          }
+        },
+        { revalidate: true }
+      )
+      mutate(heatmapApiUrl)
+    } catch (err: any) {
+      console.error(err)
+      toast.error(err?.message || "Failed to delete report", { id: "delete-report" })
+    }
+  }
+
   const clearAllFilters = () => {
     setAppliedFilters({
       search: '',
@@ -725,6 +780,7 @@ export default function ReportsPage() {
           onRemoveAppliedFilter={removeAppliedFilter}
           onClearFilters={clearAllFilters}
           allJobsData={allJobsData}
+          onDeleteReport={handleDeleteReport}
         />
       </div>
 
@@ -738,6 +794,11 @@ export default function ReportsPage() {
                   <div className="flex flex-col items-start gap-1">
                     <DialogTitle className="text-2xl flex items-center gap-3 flex-wrap">
                       {viewingReport.candidate_profile.candidate_name || viewingReport.display_date_short}
+                      {viewingReport.is_demo && (
+                        <Badge className="capsule-badge text-sm bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30 font-bold">
+                          Demo Interview
+                        </Badge>
+                      )}
                       {interviewNotCompleted ? (
                         <Badge className="capsule-badge border-none shadow-none text-sm bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30">
                           Suggestion: Incomplete
@@ -799,6 +860,18 @@ export default function ReportsPage() {
                     <div className="text-right border-l pl-6 border-border">
                       <div className="text-xs text-primary/80 uppercase tracking-wider font-semibold">Technical Score</div>
                       <div className="font-bold text-3xl text-primary">{viewingReport.overall_score.toFixed(1)}<span className="text-base text-primary/60 font-normal">/10</span></div>
+                    </div>
+                    <div className="border-l pl-4 border-border">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30 gap-1.5 font-semibold"
+                        onClick={() => handleDeleteReport(viewingReport)}
+                        title="Delete this interview report"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span className="hidden md:inline">Delete</span>
+                      </Button>
                     </div>
                   </div>
                 </div>

@@ -112,112 +112,71 @@ def get_next_interview_stage(job: Optional[Job], current_stage: Optional[str]) -
 # --- Imported Refactored Services ---
 
 @router.post("/demo", response_model=dict)
-def create_demo_interview(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def create_demo_interview(request: Request, db: Session = Depends(get_db)):
     """
-    Private endpoint to generate a Demo Interview session.
-
-    Behaviour:
-    - Looks up the real job with job_id='JOB-05A5RV' — that job must be pre-configured in the system.
-    - Creates a provisional Application + Interview with is_demo=True.
-    - On successful completion  → application is kept, status moves to interview_completed, report is generated.
-    - On early End Session, proctoring auto-termination, or tab-close → application/interview are cascade-deleted; no report is saved.
+    Generate an independent Demo Interview session.
+    Works directly without requiring a Job, Application, or Approval.
+    Demo reports will have job_id = NULL and application_id = NULL.
     """
-    import uuid, random
-    from app.services.candidate_service import CandidateService
-
-    # Curated pool of realistic sample applicant identities for demo sessions.
-    DEMO_SAMPLE_APPLICANTS = [
-        ("Arjun Sharma", "arjun.sharma"),
-        ("Priya Nair", "priya.nair"),
-        ("Rahul Verma", "rahul.verma"),
-        ("Sneha Iyer", "sneha.iyer"),
-        ("Vikram Patel", "vikram.patel"),
-        ("Ananya Krishnan", "ananya.krishnan"),
-        ("Rohan Mehta", "rohan.mehta"),
-        ("Divya Reddy", "divya.reddy"),
-        ("Karthik Bose", "karthik.bose"),
-        ("Meera Joshi", "meera.joshi"),
-    ]
-
-    # 1. Resolve the designated demo job — must already exist in the system.
-    job = db.query(Job).filter(Job.job_id == "JOB-05A5RV").first()
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Demo job 'JOB-05A5RV' not found. "
-                "Please create and publish a job with job_id='JOB-05A5RV' before using the demo."
-            ),
-        )
-
-    # 2. Pick an HR owner (the job's own HR user, or the first available HR).
-    hr_user = (
-        db.query(User).filter(User.id == job.hr_id).first()
-        or db.query(User).filter(User.role == "hr").first()
-    )
-    if not hr_user:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No HR user found in the system. Cannot create demo interview.",
-        )
-
-    # 3. Sample a random applicant identity from the pool.
-    name, slug = random.choice(DEMO_SAMPLE_APPLICANTS)
-    uid = uuid.uuid4().hex[:6]
-    candidate_email = f"{slug}_{uid}@demo-calrims.com"
-
-    # 4. Create a provisional demo Application.
-    app_record = Application(
-        job_id=job.id,
-        hr_id=hr_user.id,
-        # Multi-tenancy: inherit tenant from the demo job
-        tenant_id=getattr(job, 'tenant_id', None),
-        candidate_name=name,
-        candidate_email=candidate_email,
-        status="interview_scheduled",
-    )
-    db.add(app_record)
-    db.commit()
-    db.refresh(app_record)
-
-    # 5. Generate the Interview record using existing business logic.
-    svc = CandidateService(db)
-    access_key = svc.ensure_interview_record_exists(app_record)
-
-    interview = db.query(Interview).filter(Interview.application_id == app_record.id).first()
-    if not interview:
-        # Clean up orphaned application and bail out
-        db.delete(app_record)
-        db.commit()
-        raise HTTPException(status_code=500, detail="Failed to create interview record for demo session.")
-
-    # 6. Mark the interview as a provisional demo session.
-    interview.is_demo = True
-
-    # 7. Generate a short-lived (4-hour) JWT for the candidate interface.
+    import uuid
     from datetime import timedelta
     from app.core.auth import create_access_token
+    from jose import jwt as _jose_jwt
+
+    tenant_ctx = getattr(request.state, "tenant", None)
+    tenant_id = tenant_ctx.id if tenant_ctx else None
+
+    uid = uuid.uuid4().hex[:6].upper()
+    interview = Interview(
+        application_id=None,
+        is_demo=True,
+        test_id=f"DEMO-{uid}",
+        status="not_started",
+        interview_stage="first_level",
+        locked_skill="general",
+        current_difficulty="medium",
+        total_questions=20,
+        duration_minutes=60,
+        tenant_id=tenant_id
+    )
+    db.add(interview)
+    db.commit()
+    db.refresh(interview)
+
+    # Pre-generate questions directly so candidate can start immediately
+    try:
+        from app.services.interview_generation_service import _generate_first_level_questions
+        await _generate_first_level_questions(interview, None, None, db)
+    except Exception as qe:
+        logger.warning(f"Error pre-generating questions for demo interview {interview.id}: {qe}")
+
     token_expiry_delta = timedelta(hours=4)
     interview_secret = _get_interview_jwt_secret()
+    token_data = {"sub": str(interview.id), "role": "interview"}
+    if tenant_id:
+        token_data["tenant_id"] = str(tenant_id)
     access_token = create_access_token(
-        data={"sub": str(interview.id), "role": "interview"},
+        data=token_data,
         expires_delta=token_expiry_delta,
         secret=interview_secret,
     )
 
-    db.commit()
-
-    # 8. Kick off fallback question generation in the background.
-    background_tasks.add_task(_generate_fallback_questions_direct, interview.id)
+    try:
+        payload = _jose_jwt.decode(access_token, interview_secret, algorithms=[settings.jwt_algorithm])
+        jti = payload.get("jti")
+        if jti:
+            interview.active_session_jti = jti
+            db.commit()
+    except Exception:
+        pass
 
     logger.info(
-        f"[Demo] Provisional interview created: interview_id={interview.id} "
-        f"application_id={app_record.id} job_id=JOB-05A5RV candidate='{name}'"
+        f"[Demo] Independent demo interview created: interview_id={interview.id}, "
+        f"test_id={interview.test_id}, application_id=None, job_id=None"
     )
 
     return {
         "interview_id": interview.id,
-        "access_key": access_key,
         "access_token": access_token,
         "demo_url": f"/calrims/interview/{interview.id}?token={access_token}",
     }
@@ -1179,19 +1138,22 @@ def submit_answer(
                 from app.services.state_machine import CandidateStateMachine, TransitionAction
                 from app.domain.models import InterviewIssue
                 
-                fsm = CandidateStateMachine(db)
-                try:
-                    action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
-                    fsm.transition(interview.application, action, notes=f"Interview automatically terminated. Reason: {termination_reason}")
-                except Exception as e:
-                    logger.error(f"FSM Transition error during termination: {e}")
-                    interview.application.status = "interview_completed"
+                if interview.application:
+                    fsm = CandidateStateMachine(db)
+                    try:
+                        action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
+                        fsm.transition(interview.application, action, notes=f"Interview automatically terminated. Reason: {termination_reason}")
+                    except Exception as e:
+                        logger.error(f"FSM Transition error during termination: {e}")
+                        interview.application.status = "interview_completed"
                 
                 # Create a ticket for HR review
+                candidate_name = interview.application.candidate_name if interview.application else "Demo Candidate"
+                candidate_email = interview.application.candidate_email if interview.application else "demo@rims.local"
                 system_issue = InterviewIssue(
                     interview_id=interview.id,
-                    candidate_name=interview.application.candidate_name,
-                    candidate_email=interview.application.candidate_email,
+                    candidate_name=candidate_name,
+                    candidate_email=candidate_email,
                     issue_type="misconduct_appeal" if termination_reason == "misconduct" else "technical",
                     description=f"SYSTEM AUTO-TERMINATION: {termination_reason}. Input snippet: {data.answer_text[:100]}...",
                     status="pending"
@@ -1804,29 +1766,6 @@ def end_interview(
                 detail=f"Please answer all questions before ending. Missing: {len(questions) - answered_count}"
             )
 
-    # ── DEMO EARLY-END: cancel and purge all provisional records ──────────────
-    # If the candidate clicks "End Session" on a demo interview (ended_early=true
-    # or force=true) before completing it, silently delete the application record.
-    # CASCADE on Application → Interview → questions/answers cleans everything up.
-    # No report is generated; the session leaves no trace in the pipeline.
-    if (ended_early or is_forced) and getattr(interview, "is_demo", False):
-        app_record = interview.application
-        app_id = app_record.id if app_record else None
-        logger.info(
-            f"[Demo] Early end detected for provisional demo interview {interview_id} "
-            f"(application_id={app_id}). Purging all records — no report will be saved."
-        )
-        if app_record:
-            db.delete(app_record)
-        else:
-            db.delete(interview)
-        db.commit()
-        return {
-            "success": True,
-            "demo_cancelled": True,
-            "message": "Demo session cancelled. No application or report was saved.",
-        }
-
     # 1.5 Handle termination reason if provided (proctoring violations etc.)
     if data and data.get("termination_reason"):
         from app.domain.models import InterviewIssue
@@ -1920,24 +1859,6 @@ def abandon_interview(
         return {"success": True, "message": f"Interview is already in {interview.status} state."}
 
     try:
-        # ── DEMO ABANDON: purge provisional records on tab-close ──────────────
-        # If a provisional demo interview is abandoned (tab closed), silently
-        # delete the application record. CASCADE removes the interview, questions,
-        # answers, and any monitoring events. No report is generated.
-        if getattr(interview, "is_demo", False):
-            app_record = interview.application
-            app_id = app_record.id if app_record else None
-            logger.info(
-                f"[Demo] Tab-close abandon detected for demo interview {interview_id} "
-                f"(application_id={app_id}). Purging provisional records — no report will be saved."
-            )
-            if app_record:
-                db.delete(app_record)
-            else:
-                db.delete(interview)
-            db.commit()
-            return {"success": True, "demo_cancelled": True, "message": "Demo session abandoned. No records were saved."}
-
         # Mark as terminated
         _set_interview_status(interview, "terminated")
         interview.interview_stage = STAGE_COMPLETED
@@ -1947,22 +1868,22 @@ def abandon_interview(
         from app.domain.models import InterviewIssue
         system_issue = InterviewIssue(
             interview_id=interview.id,
-            candidate_name=interview.application.candidate_name if interview.application else "Candidate",
-            candidate_email=interview.application.candidate_email if interview.application else "Email N/A",
+            candidate_name=interview.application.candidate_name if interview.application else "Demo Candidate",
+            candidate_email=interview.application.candidate_email if interview.application else "demo@rims.local",
             issue_type="technical",
             description="Terminated by candidate (Tab closed)",
             status="pending"
         )
         db.add(system_issue)
         
-        # Transition state
-        from app.services.state_machine import CandidateStateMachine, TransitionAction
-        fsm = CandidateStateMachine(db)
-        try:
-            action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
-            fsm.transition(interview.application, action, notes="Candidate abandoned the session.")
-        except Exception:
-            if interview.application:
+        # Transition state if application exists
+        if interview.application:
+            from app.services.state_machine import CandidateStateMachine, TransitionAction
+            fsm = CandidateStateMachine(db)
+            try:
+                action = TransitionAction.COMPLETE_INTERVIEW if interview.application.status == "interview_scheduled" else TransitionAction.SYSTEM_INTERVIEW_COMPLETE
+                fsm.transition(interview.application, action, notes="Candidate abandoned the session.")
+            except Exception:
                 interview.application.status = "interview_completed"
         
         db.commit()
@@ -2045,6 +1966,19 @@ async def get_interview_report(
         report_dict['video_url'] = None
     
     return report_dict
+
+@router.delete("/reports/{report_id}")
+@limiter.limit("20/minute")
+def delete_interview_report(
+    request: Request,
+    report_id: str,
+    current_user: User = Depends(get_current_hr),
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context)
+):
+    """Delete an interview report and all associated interview session data permanently (HR only)."""
+    from app.services.interview_reporting_service import delete_report_and_interview_data
+    return delete_report_and_interview_data(db, report_id, current_user, tenant_ctx)
 
 @router.get("/{interview_id}/video-stream")
 def get_video_stream(

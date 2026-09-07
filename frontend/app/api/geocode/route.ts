@@ -13,7 +13,8 @@ export async function GET(request: NextRequest) {
       headers: {
         'User-Agent': 'RIMS-Geocoding-Agent/1.0 (contact@caldimproducts.com)',
         'Accept-Language': 'en'
-      }
+      },
+      signal: AbortSignal.timeout(6000)
     })
 
     if (!res.ok) {

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session, joinedload, contains_eager
 from sqlalchemy import func, and_, or_
 from typing import Optional
@@ -826,6 +826,7 @@ def get_interview_reports(
                     "assigned_hr_id": getattr(app, 'hr_id', None),
                     "assigned_hr_name": getattr(app.hr, 'full_name', 'Unknown') if (app and getattr(app, 'hr', None)) else "Unknown",
                     "is_owner": (getattr(app, 'hr_id', None) == current_user.id) if (current_user and hasattr(current_user, 'id')) else False,
+                    "is_demo": False,
                     "termination_reason": getattr(report, 'termination_reason', None)
                 })
             except Exception as e:
@@ -833,6 +834,177 @@ def get_interview_reports(
                 logger.warning(f"[REPORTS][SKIPPED] Application {getattr(app, 'id', 'unknown')} failed processing: {str(e)}")
                 failed_count += 1
                 continue
+
+        # ── Demo reports handling ──
+        is_demo_eligible = not job_id or str(job_id).lower() in ("all", "demo")
+        if is_demo_eligible:
+            try:
+                demo_q = (
+                    db.query(InterviewReport)
+                    .join(Interview, InterviewReport.interview_id == Interview.id)
+                    .filter(
+                        or_(
+                            Interview.is_demo == True,
+                            Interview.application_id.is_(None),
+                            InterviewReport.job_id.is_(None)
+                        )
+                    )
+                )
+                if tenant_id:
+                    demo_q = demo_q.filter(Interview.tenant_id == tenant_id)
+
+                if from_date:
+                    try:
+                        sd = datetime.strptime(from_date, "%Y-%m-%d").replace(hour=0, minute=0, second=0)
+                        demo_q = demo_q.filter(InterviewReport.created_at >= sd)
+                    except ValueError:
+                        pass
+                if to_date:
+                    try:
+                        ed = datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+                        demo_q = demo_q.filter(InterviewReport.created_at <= ed)
+                    except ValueError:
+                        pass
+
+                eff_demo_score = func.coalesce(InterviewReport.overall_score, Interview.overall_score, 0)
+                if score_min is not None:
+                    demo_q = demo_q.filter(eff_demo_score >= score_min)
+                if score_max is not None:
+                    demo_q = demo_q.filter(eff_demo_score <= score_max)
+
+                if status and str(status).lower() != "all":
+                    status_lower = status.lower()
+                    if status_lower == "select":
+                        demo_q = demo_q.filter(eff_demo_score > 6)
+                    elif status_lower == "consider":
+                        demo_q = demo_q.filter(and_(eff_demo_score > 4, eff_demo_score <= 6))
+                    elif status_lower == "reject":
+                        demo_q = demo_q.filter(eff_demo_score <= 4)
+                    elif status_lower == "terminated":
+                        demo_q = demo_q.filter(Interview.status == "terminated")
+                    elif status_lower in ("not completed", "incomplete"):
+                        demo_q = demo_q.filter(Interview.status.notin_(["completed", "terminated", "expired"]))
+                    else:
+                        demo_q = demo_q.filter(False)
+
+                if search:
+                    search_terms = str(search).strip().split()
+                    for term in search_terms:
+                        t = f"%{term}%"
+                        demo_q = demo_q.filter(
+                            or_(
+                                InterviewReport.candidate_name.ilike(t),
+                                InterviewReport.candidate_email.ilike(t),
+                                InterviewReport.applied_role.ilike(t),
+                                Interview.locked_skill.ilike(t),
+                            )
+                        )
+
+                demo_reports_list = demo_q.options(
+                    joinedload(InterviewReport.interview)
+                ).order_by(InterviewReport.created_at.desc()).all()
+
+                # Pre-fetch questions/answers for demo interviews if not already loaded
+                demo_iv_ids = [dr.interview_id for dr in demo_reports_list if dr.interview_id and dr.interview_id not in all_questions_map]
+                if demo_iv_ids:
+                    d_questions = db.query(InterviewQuestion).filter(
+                        InterviewQuestion.interview_id.in_(demo_iv_ids)
+                    ).order_by(InterviewQuestion.interview_id, InterviewQuestion.question_number).all()
+                    for q in d_questions:
+                        all_questions_map.setdefault(q.interview_id, []).append(q)
+                    d_q_ids = [q.id for q in d_questions]
+                    if d_q_ids:
+                        d_answers = db.query(InterviewAnswer).filter(InterviewAnswer.question_id.in_(d_q_ids)).all()
+                        for a in d_answers:
+                            all_answers_map[a.question_id] = a
+
+                for d_rep in demo_reports_list:
+                    try:
+                        d_iv = d_rep.interview
+                        d_created = d_rep.created_at or (d_iv.created_at if d_iv else None)
+                        d_q_evals = []
+                        d_apt_evals = []
+                        d_tech_scores = []
+                        d_beh_scores = []
+
+                        if d_iv:
+                            for q in all_questions_map.get(d_iv.id, []):
+                                ans = all_answers_map.get(q.id)
+                                evaluation = {}
+                                if ans and ans.answer_evaluation:
+                                    try:
+                                        if isinstance(ans.answer_evaluation, str):
+                                            if ans.answer_evaluation != "[DECRYPTION_ERROR]":
+                                                evaluation = json.loads(ans.answer_evaluation)
+                                        elif isinstance(ans.answer_evaluation, dict):
+                                            evaluation = ans.answer_evaluation
+                                    except Exception:
+                                        evaluation = {}
+                                evaluation.setdefault("overall", float(ans.answer_score or 0) if ans else 0.0)
+                                q_type = (q.question_type or "technical").lower()
+                                entry = {
+                                    "question": q.question_text,
+                                    "answer": ans.answer_text if ans else "",
+                                    "evaluation": evaluation,
+                                    "score": ans.answer_score if ans else 0,
+                                    "question_number": q.question_number,
+                                    "question_type": q_type
+                                }
+                                if q_type == "aptitude":
+                                    entry["correct"] = (ans.answer_score >= 5) if ans else False
+                                    d_apt_evals.append(entry)
+                                else:
+                                    if q_type == "behavioral":
+                                        d_beh_scores.append(ans.answer_score or 0 if ans else 0)
+                                    else:
+                                        d_tech_scores.append(ans.answer_score or 0 if ans else 0)
+                                    d_q_evals.append(entry)
+
+                        d_tech_avg = sum(d_tech_scores) / len(d_tech_scores) if d_tech_scores else (d_rep.technical_skills_score or 0)
+                        d_beh_avg = sum(d_beh_scores) / len(d_beh_scores) if d_beh_scores else (d_rep.behavioral_score or 0)
+                        d_apt_correct = sum(1 for q in d_apt_evals if q.get("correct") is True)
+                        d_apt_score = (d_apt_correct / len(d_apt_evals) * 10) if d_apt_evals else (d_rep.aptitude_score or 0)
+
+                        reports.append({
+                            "id": str(d_rep.id),
+                            "interview_id": d_rep.interview_id,
+                            "filename": f"report_{d_rep.interview_id}.json",
+                            "test_id": getattr(d_iv, 'test_id', None) if d_iv else None,
+                            "timestamp": d_created.isoformat() if d_created else datetime.now().isoformat(),
+                            "display_date": d_created.strftime("%Y-%m-%d %H:%M:%S") if d_created else "",
+                            "display_date_short": d_created.strftime("%b %d, %Y") if d_created else "",
+                            "status": getattr(d_iv, 'status', 'completed') if d_iv else "completed",
+                            "overall_score": float(d_rep.overall_score or (d_iv.overall_score if d_iv else 0) or 0),
+                            "final_score": float(d_rep.combined_score or d_rep.overall_score or 0),
+                            "technical_score": float(d_tech_avg),
+                            "behavioral_score": float(d_beh_avg),
+                            "aptitude_score": float(d_apt_score),
+                            "total_questions_answered": len([e for e in d_q_evals if e.get("answer")]),
+                            "aptitude_questions_answered": len(d_apt_evals),
+                            "question_evaluations": d_q_evals,
+                            "aptitude_question_evaluations": d_apt_evals,
+                            "candidate_profile": {
+                                "candidate_name": d_rep.candidate_name or "Demo Candidate",
+                                "candidate_email": d_rep.candidate_email or "demo@rims.local",
+                                "applied_role": "Demo Interview",
+                                "experience_level": "Demo",
+                                "primary_skill": getattr(d_iv, 'locked_skill', None) or "general",
+                                "skills": [d_iv.locked_skill] if (d_iv and getattr(d_iv, 'locked_skill', None)) else [],
+                            },
+                            "recommendation": d_rep.recommendation or "consider",
+                            "video_url": f"/api/interviews/{d_iv.id}/video-stream" if (d_iv and getattr(d_iv, 'video_recording_path', None)) else None,
+                            "risk_score": float(getattr(d_iv, 'risk_score', 0.0) if d_iv else 0.0),
+                            "assigned_hr_id": None,
+                            "assigned_hr_name": "Demo",
+                            "is_owner": True,
+                            "is_demo": True,
+                            "termination_reason": getattr(d_rep, 'termination_reason', None)
+                        })
+                        total += 1
+                    except Exception as de:
+                        logger.warning(f"[REPORTS][SKIPPED] Demo Report {getattr(d_rep, 'id', 'unknown')} failed processing: {de}")
+            except Exception as dqe:
+                logger.warning(f"[REPORTS] Demo reports query failed: {dqe}")
 
         # Final sort - newest first by timestamp
         reports.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -879,6 +1051,20 @@ def get_interview_reports(
                 "total_finished": 0,
             }
         }
+
+
+@router.delete("/reports/{report_id}")
+@limiter.limit("20/minute")
+def delete_interview_report(
+    request: Request,
+    report_id: str,
+    current_user: User = Depends(get_current_hr),
+    db: Session = Depends(get_db)
+):
+    """Permanently delete an interview report and associated interview data (HR only)."""
+    tenant_ctx = getattr(request.state, "tenant", None)
+    from app.services.interview_reporting_service import delete_report_and_interview_data
+    return delete_report_and_interview_data(db, report_id, current_user, tenant_ctx)
 
 
 @router.get("/interviews")

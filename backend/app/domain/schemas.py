@@ -1354,4 +1354,18 @@ class TenantStatusUpdate(BaseModel):
     reason: Optional[str] = None
 
 
+class CodingRepositoryImportRequest(BaseModel):
+    strategy: Optional[str] = "copy"  # "copy", "skip", "overwrite"
+    format: Optional[str] = None
+    version: Optional[str] = None
+    question_sets: Optional[List[Dict[str, Any]]] = []
+    problems: Optional[List[Dict[str, Any]]] = []
+    standalone_problems: Optional[List[Dict[str, Any]]] = []
 
+
+class CodingRepositoryImportResponse(BaseModel):
+    success: bool
+    imported_sets_count: int
+    imported_problems_count: int
+    skipped_count: int
+    messages: List[str] = []

@@ -315,7 +315,7 @@ export function JobForm({ mode, initialData, onSubmit, isSubmitting }: JobFormPr
                 return
             }
             try {
-                const res = await fetch(`/api/geocode?q=${encodeURIComponent(formData.location)}`)
+                const res = await fetch(`/calrims/api/geocode/?q=${encodeURIComponent(formData.location)}`)
                 if (!res.ok) return
                 const data = await res.json()
                 if (Array.isArray(data)) {

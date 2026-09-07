@@ -507,7 +507,7 @@ class Interview(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     test_id = Column(String(50), unique=True, index=True, nullable=True)  # New Test ID field
-    application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=True, unique=True, index=True)
     status = Column(String(50), default='not_started', index=True)  # 'not_started', 'in_progress', 'completed', 'cancelled'
     locked_skill = Column(String(50))  # e.g. 'backend', 'frontend'
     total_questions = Column(Integer, default=20)

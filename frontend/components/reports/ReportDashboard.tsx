@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileText, AlertCircle, BarChart, XCircle, Activity } from 'lucide-react'
+import { FileText, AlertCircle, BarChart, XCircle, Activity, Trash2 } from 'lucide-react'
 import { StatusChart } from '@/components/reports/Charts'
 import { ReportCard } from '@/components/reports/ReportCard'
 import { isInterviewNotCompleted } from '@/components/reports/interviewIncomplete'
@@ -48,6 +48,7 @@ interface ReportDashboardProps {
   onRemoveAppliedFilter: (key: keyof AppliedFilters) => void
   onClearFilters: () => void
   allJobsData: any[] | undefined
+  onDeleteReport?: (report: any) => void
 }
 
 const getStatusLabel = (status: string) => {
@@ -74,6 +75,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
   onRemoveAppliedFilter,
   onClearFilters,
   allJobsData,
+  onDeleteReport,
 }: ReportDashboardProps) {
   const isAnyFilterActive = useMemo(() => {
     return (
@@ -253,6 +255,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                     key={report.id}
                     report={report}
                     onClick={() => setViewingReport(report)}
+                    onDelete={onDeleteReport}
                   />
                 ))
               ) : (
@@ -283,6 +286,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                     <TableHead className="text-right">Behavioral</TableHead>
                     <TableHead className="text-right">Score</TableHead>
                     <TableHead className="text-center">Suggestion</TableHead>
+                    <TableHead className="w-16 text-center">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="stagger-children">
@@ -293,7 +297,14 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                       onClick={() => setViewingReport(report)}
                     >
                       <TableCell className="font-semibold text-foreground">
-                        {report.candidate_profile.candidate_name || report.filename.replace('.json', '')}
+                        <div className="flex items-center gap-2">
+                          <span>{report.candidate_profile.candidate_name || report.filename.replace('.json', '')}</span>
+                          {(report as any).is_demo && (
+                            <Badge variant="outline" className="text-[10px] font-bold text-purple-600 bg-purple-100 dark:bg-purple-900/40 dark:text-purple-300 border-purple-300">
+                              Demo
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>{report.display_date_short}</TableCell>
                       <TableCell className="text-sm">{report.candidate_profile.applied_role || 'N/A'}</TableCell>
@@ -318,11 +329,23 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                           </Badge>
                         )}
                       </TableCell>
+                      <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                        {onDeleteReport && (
+                          <button
+                            type="button"
+                            title="Delete report"
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all active:scale-95"
+                            onClick={() => onDeleteReport(report)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                   {filteredReports.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-24 text-center">
+                      <TableCell colSpan={8} className="h-24 text-center">
                         No reports found.
                       </TableCell>
                     </TableRow>

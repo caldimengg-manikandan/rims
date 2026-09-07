@@ -142,7 +142,7 @@ export async function middleware(request: NextRequest) {
 
   // 4. Interview routes - require candidate interview JWT
   if (pathname.startsWith('/interview') && pathname !== '/interview/access' && pathname !== '/interview/access/') {
-    const interviewToken = request.cookies.get('interview_token')?.value;
+    const interviewToken = request.cookies.get('interview_token')?.value || request.nextUrl.searchParams.get('token');
     let isValid = false;
 
     if (interviewToken) {

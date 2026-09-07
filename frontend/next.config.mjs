@@ -111,13 +111,19 @@ const nextConfig = {
         permanent: false,
         basePath: false,
       },
+      {
+        source: '/api/:path*',
+        destination: '/calrims/api/:path*',
+        permanent: false,
+        basePath: false,
+      },
     ]
   },
   async rewrites() {
     const backendUrl = (process.env.BACKEND_URL || 'http://127.0.0.1:10000').replace(/\/$/, '');
     return [
       {
-        source: '/api/:path((?!generate-pdf|health).*)',
+        source: '/api/:path((?!generate-pdf|health|geocode).*)',
         destination: `${backendUrl}/api/:path`,
       },
     ]

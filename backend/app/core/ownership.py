@@ -34,6 +34,9 @@ def validate_hr_ownership_for_interview(interview, current_user, *, resource_nam
 
     application = getattr(interview, "application", None)
     if application is None:
+        # If this is a demo interview, allow HR access within the tenant
+        if getattr(interview, "is_demo", False):
+            return
         # If application was deleted or is missing, treat as not found for safety
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interview context not found")
 

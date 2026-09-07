@@ -227,7 +227,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
             logger.warning(f"Failed to version old interview report: {e}")
 
     try:
-        job = interview.application.job
+        job = interview.application.job if interview.application else None
         primary_skills = []
         if getattr(job, 'primary_evaluated_skills', None):
             try:
@@ -251,7 +251,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
         for attempt in range(1, 4):
             try:
                 report_data = await generate_interview_report(
-                    job_title=job.title,
+                    job_title=job.title if job else "Demo Interview",
                     all_qa_pairs=qa_pairs,
                     overall_score=interview_score,
                     primary_evaluated_skills=primary_skills,
@@ -282,6 +282,10 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
             detailed_feedback_val = json.dumps(detailed_feedback_val)
             
         rec_val = str(report_data.get("recommendation", "consider")).lower()
+        is_demo = getattr(interview, "is_demo", False) or interview.application is None
+        base_summary = str(report_data.get("summary", ""))
+        formatted_summary = f"[DEMO INTERVIEW] {base_summary}" if is_demo and not base_summary.startswith("[DEMO INTERVIEW]") else base_summary
+
         if existing_report:
             report = existing_report
             report.overall_score = report_data["overall_score"]
@@ -289,7 +293,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
             report.technical_skills_score = report_data.get("technical_skills_score") or technical_score_val
             report.communication_score = report_data.get("communication_score") or behavioral_score
             report.problem_solving_score = report_data.get("problem_solving_score") or ((technical_score_val + behavioral_score) / 2)
-            report.summary = str(report_data.get("summary", ""))
+            report.summary = formatted_summary
             report.detailed_feedback = detailed_feedback_val
             report.recommendation = rec_val
             report.reasoning = {"ai_summary": report_data.get("reasoning")}
@@ -297,11 +301,11 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
         else:
             report = InterviewReport(
                 interview_id=interview_id,
-                application_id=interview.application.id if interview.application else None,
-                job_id=job.id if job else None,
-                candidate_name=interview.application.candidate_name if interview.application else "Candidate",
-                candidate_email=interview.application.candidate_email if interview.application else "Email N/A",
-                applied_role=job.title if job else "N/A",
+                application_id=None if is_demo else (interview.application.id if interview.application else None),
+                job_id=None if is_demo else (job.id if job else None),
+                candidate_name="Demo Candidate" if is_demo else (interview.application.candidate_name if interview.application else "Candidate"),
+                candidate_email="demo@calrims.local" if is_demo else (interview.application.candidate_email if interview.application else "Email N/A"),
+                applied_role="Demo Interview" if is_demo else (job.title if job else "N/A"),
                 overall_score=report_data["overall_score"],
                 # Fallback to calculated scores if AI didn't provide them
                 technical_skills_score=report_data.get("technical_skills_score") or technical_score_val,
@@ -309,7 +313,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
                 problem_solving_score=report_data.get("problem_solving_score") or ((technical_score_val + behavioral_score) / 2),
                 strengths=str(report_data.get("strengths", "[]")),
                 weaknesses=str(report_data.get("weaknesses", "[]")),
-                summary=str(report_data.get("summary", "")),
+                summary=formatted_summary,
                 recommendation=rec_val,
                 detailed_feedback=detailed_feedback_val,
                 aptitude_score=interview.aptitude_score,
@@ -341,14 +345,16 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
             apt_info = f" | Aptitude: {apt_score:.1f}" if apt_score is not None else ""
             status_desc = "completed" if interview.status == "completed" else "terminated early"
             hr_id = job.hr_id if job else None
+            cand_name = "Demo Candidate" if is_demo else (interview.application.candidate_name if interview.application else "Candidate")
+            job_name = "Demo Interview" if is_demo else (job.title if job else "Job")
             if hr_id:
                 from app.core.websocket import trigger_realtime_notification
                 trigger_realtime_notification(
                     db=db,
                     user_id=hr_id,
                     notification_type="INTERVIEW_COMPLETED",
-                    title=f"Interview {status_desc.capitalize()}: {interview.application.candidate_name if interview.application else 'Candidate'}",
-                    message_content=f"{interview.application.candidate_name if interview.application else 'Candidate'} {status_desc} for {job.title if job else 'Job'}. Score: {interview_score:.1f}{apt_info}",
+                    title=f"Interview {status_desc.capitalize()}: {cand_name}",
+                    message_content=f"{cand_name} {status_desc} for {job_name}. Score: {interview_score:.1f}{apt_info}",
                     related_application_id=interview.application_id,
                     related_interview_id=interview_id
                 )
@@ -358,7 +364,7 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
 
         # 5. Send Automated Candidate Email
         try:
-            if interview.application:
+            if not is_demo and interview.application:
                 if interview.status == "terminated":
                     await send_interview_terminated_email(interview.application, term_reason or "policy violations")
                 else:
@@ -370,4 +376,124 @@ async def _finalize_interview_and_report_internal(db: Session, interview_id: int
     except Exception as e:
         logger.error(f"Error in _finalize_interview_and_report_internal: {e}")
         return None
+
+
+def delete_report_and_interview_data(
+    db: Session,
+    report_id: str,
+    current_user,
+    tenant_ctx=None
+) -> dict:
+    """
+    Permanently delete an interview report and all associated interview child records:
+    - InterviewReport and InterviewReportVersion
+    - InterviewQuestion and InterviewAnswer
+    - InterviewAnswerVersion and AIEvaluation
+    - InterviewMonitoringEvent (snapshots) + stored image files
+    - CodingSubmission
+    - InterviewIssue and InterviewFeedback
+    - Notifications referencing this interview
+    - Interview itself
+    
+    MUST NOT delete:
+    - Candidate (User)
+    - Candidate profile (ResumeExtraction, CandidateSkill)
+    - Application
+    - Job
+    """
+    from fastapi import HTTPException, status
+    from app.core.ownership import validate_hr_ownership
+    from app.core.storage import delete_file
+    from app.domain.models import InterviewReport, Interview, Application, InterviewMonitoringEvent
+
+    clean_id = str(report_id).strip()
+    report = None
+    interview = None
+
+    if clean_id.startswith("skel_"):
+        iv_id_str = clean_id.replace("skel_", "")
+        interview_id = int(iv_id_str) if iv_id_str.isdigit() else None
+        interview = db.query(Interview).filter(Interview.id == interview_id).first() if interview_id else None
+        if interview:
+            report = interview.report
+    elif clean_id.startswith("app_"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete report: No interview session exists for this candidate application."
+        )
+    else:
+        rep_id_int = int(clean_id) if clean_id.isdigit() else None
+        if rep_id_int:
+            report = db.query(InterviewReport).filter(InterviewReport.id == rep_id_int).first()
+            if not report:
+                # Also check by interview_id
+                report = db.query(InterviewReport).filter(InterviewReport.interview_id == rep_id_int).first()
+            interview = report.interview if report else db.query(Interview).filter(Interview.id == rep_id_int).first()
+
+    if not report and not interview:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interview report not found."
+        )
+
+    # 1. Authorization: Role check
+    is_admin = getattr(current_user, "role", "").lower() in ("root-admin", "root_admin", "super_admin")
+
+    # 2. Multi-tenant Authorization
+    if not is_admin and tenant_ctx:
+        res_tenant_id = getattr(interview, "tenant_id", None)
+        if not res_tenant_id and report and report.interview:
+            res_tenant_id = getattr(report.interview, "tenant_id", None)
+        if res_tenant_id and str(res_tenant_id) != str(tenant_ctx.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Report belongs to another organization."
+            )
+
+    # 3. HR Ownership Check
+    if not is_admin:
+        app = getattr(interview, "application", None) or (report and getattr(report, "application", None))
+        if app:
+            validate_hr_ownership(app, current_user, resource_name="interview report")
+
+    # 4. Storage cleanup for snapshots and recordings
+    if interview:
+        try:
+            events = db.query(InterviewMonitoringEvent).filter(
+                InterviewMonitoringEvent.interview_id == interview.id
+            ).all()
+            for ev in events:
+                if ev.frame_image_path:
+                    try:
+                        delete_file(settings.supabase_bucket_resumes, ev.frame_image_path)
+                    except Exception as fe:
+                        logger.warning(f"Failed to delete frame image file {ev.frame_image_path}: {fe}")
+
+            if interview.video_recording_path:
+                try:
+                    delete_file(settings.supabase_bucket_videos, interview.video_recording_path)
+                except Exception as ve:
+                    logger.warning(f"Failed to delete video recording {interview.video_recording_path}: {ve}")
+        except Exception as se:
+            logger.warning(f"Storage cleanup encountered error for interview {interview.id}: {se}")
+
+    # 5. Database Cascade Deletion
+    # Unlink Application so Application, Candidate, and Job are strictly preserved
+    if interview:
+        app_record = interview.application
+        if app_record:
+            app_record.interview = None
+        db.delete(interview)
+    elif report:
+        db.delete(report)
+
+    db.commit()
+    logger.info(f"[Reports] Permanently deleted report {report_id} and associated interview data.")
+
+    return {
+        "success": True,
+        "message": "Interview report and all associated data permanently deleted.",
+        "deleted_report_id": report_id,
+    }
+
 
