@@ -1,4 +1,7 @@
-Set-Location $PSScriptRoot
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $ScriptDir) { $ScriptDir = $PSScriptRoot }
+if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
+Set-Location $ScriptDir
 
 $PORT = 10000
 $PID_FILE = ".\.backend.pid"
@@ -150,8 +153,38 @@ function Start-Backend {
     # SO_REUSEADDR in run_server.py, so we don't abort if the port "looks" busy.
     Clear-Port
 
+    # Load configuration from .env (Single Source of Truth)
+    $EnvFile = Join-Path $ScriptDir ".env"
+    if (Test-Path $EnvFile) {
+        Get-Content $EnvFile | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -and -not $line.StartsWith("#") -and $line -match "^([^=]+)=(.*)$") {
+                $k = $matches[1].Trim()
+                $v = $matches[2].Trim().Trim('"').Trim("'")
+                [System.Environment]::SetEnvironmentVariable($k, $v, "Process")
+            }
+        }
+    }
+
     # Guard: backend must only be started via this script.
     $env:BACKEND_START_MODE = "script"
+    if (-not $env:DATABASE_URL) {
+        $env:DATABASE_URL = "postgresql://postgres:00000000@127.0.0.1:5432/rims_db"
+    }
+
+    # Verify native PostgreSQL availability
+    $maskedUrl = $env:DATABASE_URL -replace ':[^@/]+@', ':****@'
+    Write-Host "Connecting to PostgreSQL ($maskedUrl)..." -ForegroundColor Cyan
+    $pyCheck = "import sys, psycopg2; conn = psycopg2.connect('" + $env:DATABASE_URL + "'); cur = conn.cursor(); cur.execute('SELECT 1'); conn.close()"
+    $checkOut = & ".\venv\Scripts\python.exe" -c $pyCheck 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] Could not authenticate with PostgreSQL ($maskedUrl):" -ForegroundColor Red
+        Write-Host "  $checkOut" -ForegroundColor Yellow
+        Write-Host "  Check DB credentials in backend\.env." -ForegroundColor Yellow
+        exit 1
+    } else {
+        Write-Host "[OK] Connected to PostgreSQL ($maskedUrl)." -ForegroundColor Green
+    }
 
     if (Test-Path ".\venv\Scripts\Activate.ps1") {
         & ".\venv\Scripts\Activate.ps1"

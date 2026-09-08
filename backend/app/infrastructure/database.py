@@ -40,13 +40,12 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 db_echo = False if settings.env == "production" else settings.debug
 
-db_url = settings.database_url or "sqlite:///./rims.db"
+db_url = settings.database_url or "postgresql://postgres:00000000@127.0.0.1:5432/rims_db"
 
 if db_url.startswith("sqlite"):
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
-        echo=db_echo,
+    raise RuntimeError(
+        "SQLite is not supported because CALRIMS models contain PostgreSQL-specific JSONB and UUID types. "
+        "Please provide a valid PostgreSQL connection string in DATABASE_URL."
     )
 else:
     # PgBouncer detection: standard port is 6543 or we can check port/key in URL

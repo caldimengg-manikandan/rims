@@ -9,14 +9,14 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
 
-    // In local development (localhost, 127.0.0.1, *.localhost, *.local, or port 3000)
-    if (
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host.endsWith('.localhost') ||
-      host.endsWith('.local') ||
-      window.location.port === '3000'
-    ) {
+    // If accessing via LAN IP or hostname (e.g. 192.168.x.x), route API calls to that host's port 10000
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+    if (!isLocalhost && (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.endsWith('.local'))) {
+      return `${window.location.protocol}//${host}:10000`;
+    }
+
+    // In local development on localhost or tenant subdomains (e.g. amazon.localhost)
+    if (isLocalhost || window.location.port === '3000') {
       return url || 'http://127.0.0.1:10000';
     }
 

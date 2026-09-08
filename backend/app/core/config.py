@@ -27,7 +27,7 @@ if os.path.exists(_base_env_path):
 class Settings(BaseSettings):
     base_dir: Path = BASE_DIR
     # Database
-    database_url: str = "sqlite:///./rims.db" # Mandatory via validate_config
+    database_url: str = "postgresql://postgres:00000000@127.0.0.1:5432/rims_db"
     db_pool_size: Optional[int] = None
     db_max_overflow: Optional[int] = None
 
@@ -242,12 +242,13 @@ class Settings(BaseSettings):
         import logging
         logger = logging.getLogger(__name__)
 
-        # 0. Production Safety Guards
+        # 0. Safety Guards: Reject SQLite as models require PostgreSQL (JSONB, UUID)
+        if not self.database_url or "sqlite" in self.database_url.lower():
+            error_msg = "CONFIGURATION ERROR: SQLite is not supported because CALRIMS models contain PostgreSQL JSONB/UUID types. Please set DATABASE_URL to a valid PostgreSQL connection."
+            logger.critical(error_msg)
+            raise ValueError(error_msg)
+
         if (self.env or "").strip().lower() == "production":
-            if not self.database_url or "sqlite" in self.database_url:
-                error_msg = "SECURITY ERROR: SQLite database is not allowed in production."
-                logger.critical(error_msg)
-                raise ValueError(error_msg)
             if not self.jwt_secret or self.jwt_secret == "dev_jwt_secret_key_must_be_at_least_32_chars_long":
                 error_msg = "SECURITY ERROR: Default development JWT secret is not allowed in production."
                 logger.critical(error_msg)

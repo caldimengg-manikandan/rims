@@ -540,15 +540,51 @@ if settings.env == "development":
         "http://localhost:10000",
         "http://127.0.0.1:10000"
     ]))
+    cors_origin_regex = r"^https?://(([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com)|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$"
+else:
+    cors_origin_regex = r"^https?://([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com)(:\d+)?$"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"^https?://([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com)(:\d+)?$",
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if settings.env == "development":
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    class PrivateNetworkAccessMiddleware:
+        """Injects access-control-allow-private-network for Chromium PNA preflight."""
+        def __init__(self, app: ASGIApp) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+
+            is_pna = False
+            for k, v in scope.get("headers", []):
+                if k.lower() == b"access-control-request-private-network" and v.lower() == b"true":
+                    is_pna = True
+                    break
+
+            if not is_pna:
+                await self.app(scope, receive, send)
+                return
+
+            async def send_wrapper(message):
+                if message["type"] == "http.response.start":
+                    headers = message.setdefault("headers", [])
+                    headers.append((b"access-control-allow-private-network", b"true"))
+                await send(message)
+
+            await self.app(scope, receive, send_wrapper)
+
+    app.add_middleware(PrivateNetworkAccessMiddleware)
 
 
 def check_tcp_connection(host: str, port: int, timeout: float = 2.0) -> str:

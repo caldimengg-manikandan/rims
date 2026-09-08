@@ -235,8 +235,16 @@ Start-Backend() {
     # SO_REUSEADDR in run_server.py, so we don't abort if the port "looks" busy.
     Clear-Port
 
+    # Load environment variables from .env if present
+    if [ -f "$SCRIPT_DIR/.env" ]; then
+        set -a
+        source "$SCRIPT_DIR/.env"
+        set +a
+    fi
+
     # Guard: backend must only be started via this script.
     export BACKEND_START_MODE="script"
+    export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:password@127.0.0.1:5432/rims_db}"
 
     # Activate virtual environment
     if [ -f "$VENV_DIR/bin/activate" ]; then
