@@ -278,3 +278,133 @@ def test_get_offer_letter_data_logo_resolution():
         called_url = mock_fetch.call_args[0][0]
         assert called_url.endswith("/logo.png")
 
+
+@patch("smtplib.SMTP")
+@patch("app.services.email_service.settings")
+def test_dynamic_tenant_sender_name_gk(mock_settings, mock_smtp):
+    """Verify that a tenant (such as GK) dynamically produces From: GK <...> and not CAL-RIMS."""
+    mock_settings.env = "production"
+    mock_settings.smtp_host = "smtp.test.com"
+    mock_settings.smtp_port = 587
+    mock_settings.smtp_user = "user@test.com"
+    mock_settings.smtp_password = "password"
+    mock_settings.smtp_from = "support@caldimproducts.com"
+
+    smtp_instance = MagicMock()
+    mock_smtp.return_value.__enter__.return_value = smtp_instance
+
+    mock_tenant = MagicMock()
+    mock_tenant.name = "GK"
+    mock_tenant.slug = "gk"
+    mock_tenant.settings = {}
+
+    from app.services.email_service import get_templated_email
+    html_body = get_templated_email("<p>Welcome</p>", "Account Verification", tenant=mock_tenant)
+
+    assert '<meta name="x-sender-name" content="GK">' in html_body
+    assert '<h1 class="logo-text">GK</h1>' in html_body
+    assert '© ' in html_body and 'GK. All rights reserved.' in html_body
+
+    result = _send_via_smtp("candidate@example.com", "Test Subject", html_body, tenant=mock_tenant)
+    assert result["success"] is True
+
+    sent_msg = smtp_instance.send_message.call_args[0][0]
+    assert sent_msg["From"] == "GK <support@caldimproducts.com>"
+    assert "CAL-RIMS" not in sent_msg["From"]
+
+
+@patch("smtplib.SMTP")
+@patch("app.services.email_service.settings")
+def test_dynamic_tenant_sender_name_arbitrary_tenants(mock_settings, mock_smtp):
+    """Verify any arbitrary tenant dynamically becomes sender display name without hardcoding."""
+    mock_settings.env = "production"
+    mock_settings.smtp_host = "smtp.test.com"
+    mock_settings.smtp_port = 587
+    mock_settings.smtp_user = "user@test.com"
+    mock_settings.smtp_password = "password"
+    mock_settings.smtp_from = "support@caldimproducts.com"
+
+    smtp_instance = MagicMock()
+    mock_smtp.return_value.__enter__.return_value = smtp_instance
+
+    from app.services.email_service import get_templated_email
+
+    for org_name in ["Wayne Enterprises", "Stark Industries", "Acme Global Solutions"]:
+        mock_tenant = MagicMock()
+        mock_tenant.name = org_name
+        mock_tenant.slug = org_name.lower().replace(" ", "-")
+        mock_tenant.settings = {}
+
+        html_body = get_templated_email("<p>Update</p>", "Application Update", tenant=mock_tenant)
+        assert f'<meta name="x-sender-name" content="{org_name}">' in html_body
+        assert f'<h1 class="logo-text">{org_name}</h1>' in html_body
+
+        result = _send_via_smtp("candidate@example.com", "Application Update", html_body, tenant=mock_tenant)
+        assert result["success"] is True
+
+        sent_msg = smtp_instance.send_message.call_args[0][0]
+        assert sent_msg["From"] == f"{org_name} <support@caldimproducts.com>"
+
+
+@patch("smtplib.SMTP")
+@patch("app.services.email_service.settings")
+def test_default_tenant_falls_back_to_calrims(mock_settings, mock_smtp):
+    """Default Organization must gracefully default to CAL-RIMS without hardcoding tenant branches."""
+    mock_settings.env = "production"
+    mock_settings.smtp_host = "smtp.test.com"
+    mock_settings.smtp_port = 587
+    mock_settings.smtp_user = "user@test.com"
+    mock_settings.smtp_password = "password"
+    mock_settings.smtp_from = "support@caldimproducts.com"
+
+    smtp_instance = MagicMock()
+    mock_smtp.return_value.__enter__.return_value = smtp_instance
+
+    mock_tenant = MagicMock()
+    mock_tenant.name = "Default Organization"
+    mock_tenant.slug = "default"
+    mock_tenant.settings = {}
+
+    from app.services.email_service import get_templated_email
+    html_body = get_templated_email("<p>Platform Alert</p>", "System Notice", tenant=mock_tenant)
+
+    result = _send_via_smtp("admin@example.com", "System Notice", html_body, tenant=mock_tenant)
+    assert result["success"] is True
+
+    sent_msg = smtp_instance.send_message.call_args[0][0]
+    assert sent_msg["From"] == "CAL-RIMS <support@caldimproducts.com>"
+
+
+@patch("smtplib.SMTP")
+@patch("app.services.email_service.settings")
+def test_tenant_settings_custom_sender_name_override(mock_settings, mock_smtp):
+    """Tenants can optionally configure a custom sender_name in settings.branding."""
+    mock_settings.env = "production"
+    mock_settings.smtp_host = "smtp.test.com"
+    mock_settings.smtp_port = 587
+    mock_settings.smtp_user = "user@test.com"
+    mock_settings.smtp_password = "password"
+    mock_settings.smtp_from = "support@caldimproducts.com"
+
+    smtp_instance = MagicMock()
+    mock_smtp.return_value.__enter__.return_value = smtp_instance
+
+    mock_tenant = MagicMock()
+    mock_tenant.name = "Nexus Healthcare"
+    mock_tenant.slug = "nexus"
+    mock_tenant.settings = {
+        "branding": {
+            "sender_name": "Nexus Talent Acquisition"
+        }
+    }
+
+    from app.services.email_service import get_templated_email
+    html_body = get_templated_email("<p>Offer</p>", "Your Offer", tenant=mock_tenant)
+
+    result = _send_via_smtp("doctor@example.com", "Your Offer", html_body, tenant=mock_tenant)
+    assert result["success"] is True
+
+    sent_msg = smtp_instance.send_message.call_args[0][0]
+    assert sent_msg["From"] == "Nexus Talent Acquisition <support@caldimproducts.com>"
+
+
