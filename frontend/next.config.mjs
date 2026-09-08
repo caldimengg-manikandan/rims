@@ -1,10 +1,30 @@
-/** @type {import('next').NextConfig} */
+import os from 'os';
+import path from 'path';
+
+// Enable polling for Watchpack only if on a network drive or explicitly requested
+const isNetworkDrive = process.cwd().toUpperCase().startsWith('Z:');
+if (isNetworkDrive || process.env.WATCHPACK_POLLING === 'true') {
+  process.env.WATCHPACK_POLLING = 'true';
+}
 
 const nextConfig = {
   output: 'standalone',
-  allowedDevOrigins: ['127.0.0.1', '127.0.0.1:3000', 'localhost:3000', '192.168.1.173', '192.168.1.173:3000', '*.localhost:3000', 'amazon.localhost:3000', 'acme.localhost:3000', 'nexus.localhost:3000'],
+  allowedDevOrigins: ['127.0.0.1', '127.0.0.1:3000', 'localhost:3000', '192.168.1.78', '192.168.1.78:3000', '192.168.1.173', '192.168.1.173:3000', '*.localhost:3000', 'amazon.localhost:3000', 'acme.localhost:3000', 'nexus.localhost:3000'],
   basePath: '/calrims',
   trailingSlash: true,
+  experimental: {
+    optimizePackageImports: [
+      '@mui/material',
+      '@mui/x-date-pickers',
+      'recharts',
+      'framer-motion',
+      'lucide-react',
+      'date-fns',
+      'dayjs',
+      '@radix-ui/react-icons',
+      'radix-ui',
+    ],
+  },
   devIndicators: {
     appIsrStatus: false,
     buildActivity: false,
@@ -19,6 +39,24 @@ const nextConfig = {
   },
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false,
+  },
+  webpack: (config, { dev }) => {
+    if (dev) {
+      // Direct Webpack compilation cache to local NVMe SSD (os.tmpdir() on C:\)
+      // instead of writing thousands of small cache files across network/remote shares
+      config.cache = {
+        type: 'filesystem',
+        cacheDirectory: path.join(os.tmpdir(), 'calrims-next-webpack'),
+      };
+
+      const usePolling = process.env.WATCHPACK_POLLING === 'true';
+      config.watchOptions = {
+        ...(usePolling ? { poll: 1500 } : {}),
+        aggregateTimeout: 400,
+        ignored: ['**/node_modules/**', '**/.next/**', '**/.git/**', '**/logs/**', '**/coverage/**'],
+      };
+    }
+    return config;
   },
   async headers() {
     return [
