@@ -134,7 +134,7 @@ def build_application_summary_response(application: Application, current_user_id
         )
 
     # 2. Ownership Calculation (Simplified per Senior Backend Engineer request)
-    is_owner = (application.hr_id == current_user_id) if current_user_id else False
+    is_owner = (application.hr_id is not None and application.hr_id == current_user_id) if current_user_id else False
 
     # Generate full photo URL from path — use public URL (no network call) for list view.
     # Signed URLs (which require a Supabase round-trip) are only needed on the detail page.
@@ -200,8 +200,10 @@ def build_application_detail_response(application: Application, current_user_id:
     detail.extraction_degraded = degraded
 
     # Ownership Calculation (Simplified)
-    if current_user_id:
+    if current_user_id and application.hr_id is not None:
         detail.is_owner = (application.hr_id == current_user_id)
+    else:
+        detail.is_owner = False
     detail.assigned_hr_id = application.hr_id
     detail.assigned_hr_name = application.hr.full_name if application.hr else None
 

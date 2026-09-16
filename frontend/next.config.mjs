@@ -150,8 +150,14 @@ const nextConfig = {
         basePath: false,
       },
       {
-        source: '/api/:path*',
-        destination: '/calrims/api/:path*',
+        source: '/demo/:path*',
+        destination: '/calrims/demo/:path*',
+        permanent: false,
+        basePath: false,
+      },
+      {
+        source: '/demo',
+        destination: '/calrims/demo/',
         permanent: false,
         basePath: false,
       },
@@ -161,7 +167,7 @@ const nextConfig = {
     const backendUrl = (process.env.BACKEND_URL || 'http://127.0.0.1:10000').replace(/\/$/, '');
     return [
       {
-        source: '/api/:path((?!generate-pdf|health|geocode).*)',
+        source: '/api/:path((?!generate-pdf|health).*)',
         destination: `${backendUrl}/api/:path`,
       },
     ]

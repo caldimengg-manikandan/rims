@@ -27,6 +27,7 @@ class JudgeVerdict:
     passed_tests: int
     total_tests: int
     results: List[TestCaseResult]
+    error: Optional[str] = None
 
 
 class Judge:
@@ -133,10 +134,15 @@ class Judge:
 
         score = round((earned_weight / total_weight) * 100.0, 2)
 
+        first_error = next((r.error for r in case_results if r.error and r.error != "Output mismatch"), None)
+        if not first_error:
+            first_error = next((r.error for r in case_results if r.error), None)
+
         return JudgeVerdict(
             verdict=overall_verdict,
             score=score,
             passed_tests=passed_count,
             total_tests=len(test_cases),
             results=case_results,
+            error=first_error,
         )

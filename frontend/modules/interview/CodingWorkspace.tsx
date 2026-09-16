@@ -28,6 +28,7 @@ import {
     RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { getApiBaseUrl } from '@/lib/config'
 
 // Dynamically import Monaco Editor to prevent SSR issues
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false })
@@ -72,12 +73,29 @@ interface CodingSession {
 interface CodingWorkspaceProps {
     sessionId: string
     token: string
-    onCompleted?: () => void
+    onCompleted?: (result?: any) => void
 }
 
 const LANGUAGE_LABELS: Record<string, { label: string; monacoLang: string }> = {
     python3: { label: 'Python 3', monacoLang: 'python' },
     java21: { label: 'Java 21', monacoLang: 'java' },
+}
+
+const getVerdictBadge = (verdict?: string) => {
+    switch (verdict?.toLowerCase()) {
+        case 'accepted':
+            return <Badge className="border-emerald-500/40 text-emerald-500 bg-emerald-500/10 font-bold">ACCEPTED</Badge>
+        case 'wrong_answer':
+            return <Badge className="border-rose-500/40 text-rose-500 bg-rose-500/10 font-bold">WRONG ANSWER</Badge>
+        case 'compilation_error':
+            return <Badge className="border-amber-500/40 text-amber-500 bg-amber-500/10 font-bold">COMPILE ERROR</Badge>
+        case 'runtime_error':
+            return <Badge className="border-rose-500/40 text-rose-500 bg-rose-500/10 font-bold">RUNTIME ERROR</Badge>
+        case 'time_limit_exceeded':
+            return <Badge className="border-amber-500/40 text-amber-500 bg-amber-500/10 font-bold">TIME LIMIT EXCEEDED</Badge>
+        default:
+            return <Badge variant="outline">{verdict?.toUpperCase().replace('_', ' ') || 'UNKNOWN'}</Badge>
+    }
 }
 
 export default function CodingWorkspace({ sessionId, token, onCompleted }: CodingWorkspaceProps) {
@@ -100,9 +118,6 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
     // Timer
     const [secondsRemaining, setSecondsRemaining] = useState(3600)
 
-    const getApiBaseUrl = () => {
-        return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-    }
 
     const authHeaders = useCallback(() => ({
         'Content-Type': 'application/json',
@@ -220,7 +235,19 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
             } else {
                 setActiveOutputTab('tests')
             }
-            toast.success('Run complete')
+            if (data.verdict === 'accepted') {
+                toast.success('Sample tests passed!')
+            } else if (data.verdict === 'compilation_error') {
+                toast.error('Compilation Error')
+            } else if (data.verdict === 'runtime_error') {
+                toast.error('Runtime Error')
+            } else if (data.verdict === 'time_limit_exceeded') {
+                toast.error('Time Limit Exceeded')
+            } else if (data.verdict === 'wrong_answer') {
+                toast.warning('Wrong Answer on sample tests')
+            } else {
+                toast.success('Run complete')
+            }
         } catch (err: any) {
             toast.error(err.message || 'Failed to run code')
         } finally {
@@ -283,7 +310,7 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
             const result = await res.json()
             toast.success('Coding Assessment submitted successfully!')
             if (onCompleted) {
-                onCompleted()
+                onCompleted(result)
             }
         } catch (err: any) {
             toast.error(err.message || 'Failed to complete coding round')
@@ -530,8 +557,8 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
                     </div>
 
                     {/* Collapsible Output Console */}
-                    <div className={`border-t border-border/80 bg-card/90 backdrop-blur-md flex flex-col transition-all duration-200 ${
-                        consoleOpen ? 'h-64' : 'h-10'
+                    <div className={`border-t border-border/80 bg-card/95 backdrop-blur-md flex flex-col transition-all duration-200 ${
+                        consoleOpen ? 'h-80 sm:h-96' : 'h-10'
                     }`}>
                         {/* Console Header Bar */}
                         <div className="h-10 px-4 border-b border-border/60 flex items-center justify-between shrink-0">
@@ -563,7 +590,7 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
 
                         {/* Console Content */}
                         {consoleOpen && (
-                            <div className="flex-1 min-h-0 p-4 overflow-y-auto font-mono text-xs">
+                            <div className="flex-1 min-h-0 p-4 overflow-y-auto font-mono text-xs space-y-4">
                                 {activeOutputTab === 'custom' ? (
                                     <div className="space-y-3 h-full flex flex-col">
                                         <div className="space-y-1">
@@ -577,18 +604,23 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
                                             />
                                         </div>
                                         {runOutput?.is_custom_input && (
-                                            <div className="space-y-1.5 flex-1 min-h-0">
+                                            <div className="space-y-2 flex-1 min-h-0">
                                                 <div className="flex items-center justify-between">
                                                     <span className="font-semibold text-foreground">Standard Output:</span>
-                                                    <span className="text-[11px] text-muted-foreground">{runOutput.time_ms}ms</span>
+                                                    {runOutput.time_ms !== undefined && (
+                                                        <span className="text-[11px] text-muted-foreground">{runOutput.time_ms}ms</span>
+                                                    )}
                                                 </div>
-                                                <pre className="p-3 bg-muted/40 rounded-lg border border-border/80 text-foreground overflow-x-auto max-h-24">
+                                                <pre className="p-3 bg-muted/40 rounded-lg border border-border/80 text-foreground overflow-x-auto max-h-32">
                                                     {runOutput.stdout || '(no output)'}
                                                 </pre>
-                                                {runOutput.stderr && (
-                                                    <pre className="p-3 bg-rose-500/10 text-rose-600 rounded-lg border border-rose-500/20 overflow-x-auto max-h-20">
-                                                        {runOutput.stderr}
-                                                    </pre>
+                                                {(runOutput.error || runOutput.compilation_error || runOutput.stderr) && (
+                                                    <div className="space-y-1">
+                                                        <span className="text-[11px] font-bold text-rose-500">Error / Stderr:</span>
+                                                        <pre className="p-3 bg-rose-500/10 text-rose-300 rounded-lg border border-rose-500/30 overflow-x-auto max-h-36 whitespace-pre-wrap">
+                                                            {runOutput.error || runOutput.compilation_error || runOutput.stderr}
+                                                        </pre>
+                                                    </div>
                                                 )}
                                             </div>
                                         )}
@@ -597,20 +629,11 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
                                     /* Test Results tab */
                                     <div>
                                         {submitResult ? (
-                                            <div className="space-y-3">
+                                            <div className="space-y-4">
                                                 <div className="flex items-center justify-between p-3 bg-muted/40 rounded-xl border border-border">
-                                                    <div className="flex items-center gap-2">
-                                                        <Badge
-                                                            variant="outline"
-                                                            className={
-                                                                submitResult.verdict === 'accepted'
-                                                                    ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10'
-                                                                    : 'border-rose-500/30 text-rose-600 bg-rose-500/10'
-                                                            }
-                                                        >
-                                                            {submitResult.verdict.toUpperCase().replace('_', ' ')}
-                                                        </Badge>
-                                                        <span className="text-muted-foreground">
+                                                    <div className="flex items-center gap-2.5">
+                                                        {getVerdictBadge(submitResult.verdict)}
+                                                        <span className="text-muted-foreground text-xs font-medium">
                                                             Passed {submitResult.passed_tests} of {submitResult.total_tests} test cases
                                                         </span>
                                                     </div>
@@ -619,68 +642,145 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
                                                     </span>
                                                 </div>
 
-                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                {/* Prominent Submission Error Banner */}
+                                                {submitResult.error && (
+                                                    <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl space-y-2">
+                                                        <div className="flex items-center gap-2 text-xs font-bold text-rose-500">
+                                                            <AlertCircle className="h-4 w-4 shrink-0" />
+                                                            <span>{submitResult.verdict === 'compilation_error' ? 'Compilation Error' : 'Runtime Error / Traceback'}</span>
+                                                        </div>
+                                                        <pre className="p-3 bg-black/70 rounded-lg text-xs font-mono text-rose-300 overflow-x-auto whitespace-pre-wrap max-h-48 border border-rose-500/20 leading-relaxed select-text">
+                                                            {submitResult.error}
+                                                        </pre>
+                                                    </div>
+                                                )}
+
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                                     {submitResult.test_results?.map((tr: any, idx: number) => (
                                                         <div
                                                             key={idx}
-                                                            className={`p-2.5 rounded-lg border text-xs flex items-center justify-between ${
+                                                            className={`p-3 rounded-xl border text-xs flex flex-col gap-1.5 ${
                                                                 tr.passed ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-rose-500/30 bg-rose-500/5'
                                                             }`}
                                                         >
-                                                            <div className="flex items-center gap-2">
-                                                                {tr.passed ? (
-                                                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
-                                                                ) : (
-                                                                    <X className="h-3.5 w-3.5 text-rose-500" />
-                                                                )}
-                                                                <span>Test Case {idx + 1} {tr.is_hidden && '(Hidden)'}</span>
+                                                            <div className="flex items-center justify-between">
+                                                                <div className="flex items-center gap-2">
+                                                                    {tr.passed ? (
+                                                                        <Check className="h-4 w-4 text-emerald-500" />
+                                                                    ) : (
+                                                                        <X className="h-4 w-4 text-rose-500" />
+                                                                    )}
+                                                                    <span className="font-semibold text-foreground">
+                                                                        Test Case {idx + 1} {tr.is_hidden && '(Hidden)'}
+                                                                    </span>
+                                                                </div>
+                                                                <span className="text-[11px] text-muted-foreground font-mono">{tr.execution_time_ms}ms</span>
                                                             </div>
-                                                            <span className="text-[11px] text-muted-foreground">{tr.execution_time_ms}ms</span>
+                                                            {tr.error && (
+                                                                <pre className="p-2 bg-rose-500/10 border border-rose-500/20 rounded text-[11px] font-mono text-rose-400 whitespace-pre-wrap">
+                                                                    {tr.error}
+                                                                </pre>
+                                                            )}
                                                         </div>
                                                     ))}
                                                 </div>
                                             </div>
                                         ) : runOutput && !runOutput.is_custom_input ? (
-                                            <div className="space-y-3">
-                                                <div className="flex items-center justify-between p-2.5 bg-muted/40 rounded-lg">
-                                                    <Badge
-                                                        variant="outline"
-                                                        className={
-                                                            runOutput.verdict === 'accepted'
-                                                                ? 'border-emerald-500/30 text-emerald-600'
-                                                                : 'border-rose-500/30 text-rose-600'
-                                                        }
-                                                    >
-                                                        {runOutput.verdict?.toUpperCase().replace('_', ' ')}
-                                                    </Badge>
-                                                    <span className="text-xs text-muted-foreground">
-                                                        Sample Tests: {runOutput.passed_tests}/{runOutput.total_tests} Passed
-                                                    </span>
+                                            <div className="space-y-4">
+                                                <div className="flex items-center justify-between p-3 bg-muted/40 rounded-xl border border-border">
+                                                    <div className="flex items-center gap-2.5">
+                                                        {getVerdictBadge(runOutput.verdict)}
+                                                        <span className="text-xs text-muted-foreground font-medium">
+                                                            Sample Tests: {runOutput.passed_tests}/{runOutput.total_tests} Passed
+                                                        </span>
+                                                    </div>
+                                                    {runOutput.time_ms !== undefined && (
+                                                        <span className="text-xs text-muted-foreground font-mono">
+                                                            {runOutput.time_ms}ms
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                <div className="space-y-2">
-                                                    {runOutput.test_results?.map((tr: any, idx: number) => (
-                                                        <div key={idx} className="p-2 border border-border rounded text-xs space-y-1">
-                                                            <div className="flex items-center justify-between font-semibold">
-                                                                <span>Sample Case #{idx + 1}</span>
-                                                                <Badge variant={tr.passed ? 'default' : 'destructive'} className="text-[10px]">
-                                                                    {tr.passed ? 'PASSED' : 'FAILED'}
-                                                                </Badge>
-                                                            </div>
-                                                            {!tr.passed && (
-                                                                <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
-                                                                    <div>
-                                                                        <span className="text-muted-foreground">Expected:</span>
-                                                                        <pre className="p-1 bg-background rounded">{tr.expected_stdout}</pre>
-                                                                    </div>
-                                                                    <div>
-                                                                        <span className="text-muted-foreground">Actual:</span>
-                                                                        <pre className="p-1 bg-background rounded text-rose-500">{tr.actual_stdout}</pre>
-                                                                    </div>
-                                                                </div>
-                                                            )}
+
+                                                {/* LeetCode-style prominent error banner */}
+                                                {(runOutput.error || runOutput.compilation_error || runOutput.stderr) && (
+                                                    <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl space-y-2">
+                                                        <div className="flex items-center gap-2 text-xs font-bold text-rose-500">
+                                                            <AlertCircle className="h-4 w-4 shrink-0" />
+                                                            <span>{runOutput.verdict === 'compilation_error' ? 'Compilation Error' : 'Runtime Error / Traceback'}</span>
                                                         </div>
-                                                    ))}
-                                                </div>
+                                                        <pre className="p-3 bg-black/70 rounded-lg text-xs font-mono text-rose-300 overflow-x-auto whitespace-pre-wrap max-h-48 border border-rose-500/20 leading-relaxed select-text">
+                                                            {runOutput.error || runOutput.compilation_error || runOutput.stderr}
+                                                        </pre>
+                                                    </div>
+                                                )}
+
+                                                {/* Detailed Sample Test Results */}
+                                                {runOutput.test_results && runOutput.test_results.length > 0 && (
+                                                    <div className="space-y-3">
+                                                        {runOutput.test_results.map((tr: any, idx: number) => {
+                                                            const sampleCases = currentProblem?.test_cases?.filter(tc => !tc.is_hidden) || [];
+                                                            const tc = sampleCases[idx];
+                                                            return (
+                                                                <div key={idx} className="p-3.5 border border-border/80 rounded-xl space-y-2.5 bg-background/50">
+                                                                    <div className="flex items-center justify-between font-semibold text-xs">
+                                                                        <div className="flex items-center gap-2">
+                                                                            {tr.passed ? (
+                                                                                <Check className="h-4 w-4 text-emerald-500" />
+                                                                            ) : (
+                                                                                <X className="h-4 w-4 text-rose-500" />
+                                                                            )}
+                                                                            <span>Case {idx + 1}</span>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <Badge
+                                                                                variant="outline"
+                                                                                className={tr.passed
+                                                                                    ? 'border-emerald-500/30 text-emerald-600 bg-emerald-500/10'
+                                                                                    : 'border-rose-500/30 text-rose-600 bg-rose-500/10'
+                                                                                }
+                                                                            >
+                                                                                {tr.passed ? 'PASSED' : (tr.error ? 'RUNTIME ERROR' : 'WRONG ANSWER')}
+                                                                            </Badge>
+                                                                            {tr.execution_time_ms !== undefined && (
+                                                                                <span className="text-[11px] text-muted-foreground font-mono">{tr.execution_time_ms}ms</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs pt-1">
+                                                                        {tc && (
+                                                                            <div>
+                                                                                <span className="text-[10px] uppercase font-bold text-muted-foreground">Input</span>
+                                                                                <pre className="p-2 mt-1 bg-muted/40 rounded border border-border/60 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap">{tc.input || '(empty)'}</pre>
+                                                                            </div>
+                                                                        )}
+                                                                        <div>
+                                                                            <span className="text-[10px] uppercase font-bold text-muted-foreground">Your Output</span>
+                                                                            <pre className={`p-2 mt-1 bg-muted/40 rounded border border-border/60 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap ${tr.passed ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                                                {tr.actual_stdout ?? '(no output)'}
+                                                                            </pre>
+                                                                        </div>
+                                                                        <div>
+                                                                            <span className="text-[10px] uppercase font-bold text-muted-foreground">Expected</span>
+                                                                            <pre className="p-2 mt-1 bg-muted/40 rounded border border-border/60 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap text-muted-foreground">
+                                                                                {tr.expected_stdout ?? tc?.expected_output ?? '(empty)'}
+                                                                            </pre>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {tr.error && (
+                                                                        <div className="mt-1">
+                                                                            <span className="text-[10px] uppercase font-bold text-rose-500">Error / Stderr</span>
+                                                                            <pre className="p-2.5 mt-1 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg font-mono text-[11px] whitespace-pre-wrap overflow-x-auto">
+                                                                                {tr.error}
+                                                                            </pre>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (
                                             <div className="h-full flex items-center justify-center text-muted-foreground text-xs">

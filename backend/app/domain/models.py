@@ -144,6 +144,10 @@ class Job(Base):
     coding_problem_count = Column(Integer, nullable=True)  # Number of problems from question set
     coding_repo_set_id = Column(Integer, ForeignKey('coding_question_sets.id', ondelete='SET NULL'), nullable=True)
     coding_allowed_languages = Column(JSON, nullable=True)  # e.g. ["python3", "java21"]
+    # Interview rounds configuration (JSON array of round objects).
+    # When present, this supersedes the legacy flat flags (aptitude_enabled, first_level_enabled, etc.)
+    # for display/config purposes. The flat flags are kept in sync for backward compatibility.
+    interview_rounds = Column(Text, nullable=True)
     duration_minutes = Column(Integer, default=60) # Global interview duration
     hr_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     # Multi-tenancy: tenant_id is stamped by the API layer and enforced by DB RLS.
@@ -507,7 +511,7 @@ class Interview(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     test_id = Column(String(50), unique=True, index=True, nullable=True)  # New Test ID field
-    application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=True, unique=True, index=True)
+    application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=False, unique=True, index=True)
     status = Column(String(50), default='not_started', index=True)  # 'not_started', 'in_progress', 'completed', 'cancelled'
     locked_skill = Column(String(50))  # e.g. 'backend', 'frontend'
     total_questions = Column(Integer, default=20)

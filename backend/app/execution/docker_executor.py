@@ -80,21 +80,21 @@ class DockerExecutor(Executor):
             os.chmod(src_path, 0o666)
             os.chmod(stdin_path, 0o666)
 
-            # 3. Assemble command
+            # 3. Assemble command with in-container timeout enforcement
+            timeout_sec = max(int(time_limit_ms / 1000), 1)
             if lang_config.compile_cmd:
                 compile_str = " ".join(lang_config.compile_cmd)
                 run_str = " ".join(lang_config.run_cmd)
                 cmd = (
                     f"sh -c \"{compile_str} 2> compile_err.txt && "
-                    f"{run_str} < stdin.txt || "
+                    f"timeout -s KILL {timeout_sec}s {run_str} < stdin.txt || "
                     "{ exit_c=$?; if [ -s compile_err.txt ]; then cat compile_err.txt >&2; exit 2; else exit $exit_c; fi; }\""
                 )
             else:
                 run_str = " ".join(lang_config.run_cmd)
-                cmd = f"sh -c \"{run_str} < stdin.txt\""
+                cmd = f"sh -c \"timeout -s KILL {timeout_sec}s {run_str} < stdin.txt\""
 
             # 4. Prepare container constraints
-            wall_timeout_seconds = max(int(time_limit_ms / 1000) + 2, 4)
             cpu_quota = 50000  # 0.5 core out of 100000 period
             mem_limit = f"{max(memory_limit_mb, 64)}m"
 
@@ -116,11 +116,9 @@ class DockerExecutor(Executor):
             }
 
             start_time = time.perf_counter()
-            timed_out = False
 
             try:
                 # Run container synchronously
-                # docker.containers.run() with remove=True returns container output bytes
                 output = self.client.containers.run(**container_kwargs)
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 stdout = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output)
@@ -128,7 +126,7 @@ class DockerExecutor(Executor):
                     stdout=stdout,
                     stderr="",
                     exit_code=0,
-                    time_ms=elapsed_ms,
+                    time_ms=min(elapsed_ms, time_limit_ms),
                     memory_kb=0,
                     timed_out=False,
                 )
@@ -140,19 +138,33 @@ class DockerExecutor(Executor):
                 stderr_text = ce_stderr.decode("utf-8", errors="replace") if isinstance(ce_stderr, bytes) else str(ce_stderr or "")
                 stdout_text = ce_stdout.decode("utf-8", errors="replace") if isinstance(ce_stdout, bytes) else str(ce_stdout or "")
 
-                is_compilation = (
-                    (ce.exit_status == 2 and lang_config.compile_cmd is not None)
-                    or "javac" in stderr_text
-                    or "compilation" in stderr_text.lower()
-                    or "error:" in stderr_text.lower()
-                )
+                # 124 or 137 from linux timeout command indicates user code timed out
+                is_timeout = ce.exit_status in (124, 137)
+
+                if is_timeout:
+                    is_compilation = False
+                    if not stderr_text:
+                        stderr_text = f"Time Limit Exceeded: Process terminated after exceeding {time_limit_ms}ms limit."
+                elif lang_config.compile_cmd is not None:
+                    # Compiled languages (Java, C++, etc.)
+                    is_compilation = (
+                        ce.exit_status == 2
+                        or "javac" in stderr_text.lower()
+                        or "g++" in stderr_text.lower()
+                        or "compilation error" in stderr_text.lower()
+                    )
+                else:
+                    # Interpreted languages (Python, JS)
+                    err_low = stderr_text.lower()
+                    is_compilation = "syntaxerror:" in err_low or "indentationerror:" in err_low
+
                 return ExecutionResult(
                     stdout=stdout_text,
                     stderr=stderr_text,
                     exit_code=ce.exit_status,
-                    time_ms=elapsed_ms,
+                    time_ms=time_limit_ms if is_timeout else min(elapsed_ms, time_limit_ms),
                     memory_kb=0,
-                    timed_out=False,
+                    timed_out=is_timeout,
                     compilation_failed=is_compilation,
                     compilation_error=stderr_text if is_compilation else None,
                 )
@@ -160,13 +172,13 @@ class DockerExecutor(Executor):
             except Exception as exc:
                 elapsed_ms = int((time.perf_counter() - start_time) * 1000)
                 err_msg = str(exc).lower()
-                is_timeout = "timeout" in err_msg or "timed out" in err_msg or elapsed_ms >= (time_limit_ms + 1000)
+                is_timeout = "timeout" in err_msg or "timed out" in err_msg
 
                 return ExecutionResult(
                     stdout="",
                     stderr=str(exc),
                     exit_code=124 if is_timeout else 1,
-                    time_ms=elapsed_ms,
+                    time_ms=time_limit_ms if is_timeout else elapsed_ms,
                     memory_kb=0,
                     timed_out=is_timeout,
                 )

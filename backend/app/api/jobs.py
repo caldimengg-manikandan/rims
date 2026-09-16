@@ -113,17 +113,20 @@ def _validate_interview_pipeline(job_data, experience_level: str, db: Session = 
     Raises HTTPException(400) on invalid combinations.
     """
     aptitude_enabled = getattr(job_data, 'aptitude_enabled', False) or False
-    # Auto-enable first_level if an interview mode is selected
     interview_mode = getattr(job_data, 'interview_mode', None)
     initial_first_level = getattr(job_data, 'first_level_enabled', None)
-    
-    first_level_enabled = initial_first_level
-    if first_level_enabled is None:
-        first_level_enabled = True if interview_mode else False
-    
-    # If a valid mode is picked, force first_level to True (UX sanity)
-    if interview_mode in VALID_INTERVIEW_MODES:
-        first_level_enabled = True
+
+    # Determine first_level_enabled:
+    # - If explicitly provided (True/False) by the caller, honour it.
+    # - If None (not provided), default to True when interview_mode is set, else False.
+    # We deliberately do NOT force first_level_enabled=True when interview_mode is set —
+    # the new multi-round form may include a first-level round while also explicitly setting
+    # first_level_enabled via the derived flat field.
+    if initial_first_level is None:
+        first_level_enabled = bool(interview_mode and interview_mode in VALID_INTERVIEW_MODES)
+    else:
+        first_level_enabled = bool(initial_first_level)
+
     uploaded_question_file = getattr(job_data, 'uploaded_question_file', None)
     aptitude_config = getattr(job_data, 'aptitude_config', None)
 
@@ -226,7 +229,9 @@ def _validate_interview_pipeline(job_data, experience_level: str, db: Session = 
         "coding_problem_count": coding_problem_count,
         "coding_repo_set_id": coding_repo_set_id,
         "coding_allowed_languages": coding_allowed_languages,
+        "interview_rounds": getattr(job_data, 'interview_rounds', None),
     }
+
 
 
 @router.post("/upload-questions")
@@ -526,6 +531,8 @@ def create_job(
         coding_problem_count=pipeline.get("coding_problem_count"),
         coding_repo_set_id=pipeline.get("coding_repo_set_id"),
         coding_allowed_languages=pipeline.get("coding_allowed_languages"),
+        # Multi-round config
+        interview_rounds=pipeline.get("interview_rounds"),
     )
     
     try:
@@ -791,6 +798,7 @@ def update_job(
         job_data.coding_problem_count is not None,
         job_data.coding_repo_set_id is not None,
         job_data.coding_allowed_languages is not None,
+        job_data.interview_rounds is not None,
     ])
 
     if pipeline_fields_sent:
@@ -816,6 +824,7 @@ def update_job(
             coding_problem_count = job_data.coding_problem_count if job_data.coding_problem_count is not None else job.coding_problem_count
             coding_repo_set_id = job_data.coding_repo_set_id if job_data.coding_repo_set_id is not None else job.coding_repo_set_id
             coding_allowed_languages = job_data.coding_allowed_languages if job_data.coding_allowed_languages is not None else job.coding_allowed_languages
+            interview_rounds = job_data.interview_rounds if job_data.interview_rounds is not None else job.interview_rounds
 
         pipeline = _validate_interview_pipeline(_Combined(), effective_exp, db=db)
         job.aptitude_enabled = pipeline["aptitude_enabled"]
@@ -832,6 +841,8 @@ def update_job(
         job.coding_problem_count = pipeline.get("coding_problem_count")
         job.coding_repo_set_id = pipeline.get("coding_repo_set_id")
         job.coding_allowed_languages = pipeline.get("coding_allowed_languages")
+        if pipeline.get("interview_rounds") is not None:
+            job.interview_rounds = pipeline["interview_rounds"]
         
         if pipeline["aptitude_config"] is not None:
             job.aptitude_config = pipeline["aptitude_config"]

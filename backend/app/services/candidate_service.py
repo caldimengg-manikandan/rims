@@ -92,6 +92,9 @@ class CandidateService:
         self.db.flush()
         return stage
 
+    # Alias for compatibility with callers expecting update_stage
+    update_stage = advance_stage
+
     def update_composite_score(self, application_id: int):
         """
         Calculate composite score based on job configuration:
@@ -172,7 +175,14 @@ class CandidateService:
         ).with_for_update().first()
 
         if not existing_interview:
-            interview_stage = 'aptitude' if application.job.aptitude_enabled else 'first_level'
+            if application.job.aptitude_enabled and getattr(application.job, 'experience_level', '').lower() in ('junior', 'intern'):
+                interview_stage = 'aptitude'
+            elif getattr(application.job, 'first_level_enabled', True):
+                interview_stage = 'first_level'
+            elif getattr(application.job, 'coding_round_enabled', False):
+                interview_stage = 'coding'
+            else:
+                interview_stage = 'first_level'
             unique_test_id = f"TEST-{uuid.uuid4().hex[:8].upper()}"
 
             new_interview = Interview(

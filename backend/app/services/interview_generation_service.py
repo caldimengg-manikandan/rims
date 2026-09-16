@@ -99,6 +99,7 @@ async def background_generate_questions(interview_id: int, job_id_db: int, appli
 # ─── Stage Constants ──────────────────────────────────────────────────────────
 STAGE_APTITUDE = "aptitude"
 STAGE_FIRST_LEVEL = "first_level"
+STAGE_CODING = "coding"
 STAGE_COMPLETED = "completed"
 VALID_INTERVIEW_STATUSES = {"not_started", "in_progress", "completed", "cancelled", "terminated", "expired"}
 
@@ -115,8 +116,12 @@ def _set_interview_status(interview: Interview, value: str) -> None:
 
 def _determine_initial_stage(job: Job) -> str:
     """Determine the initial interview stage based on job configuration."""
-    if job.aptitude_enabled and job.experience_level.lower() == "junior":
+    if job.aptitude_enabled and getattr(job, "experience_level", "").lower() in ("junior", "intern"):
         return STAGE_APTITUDE
+    if getattr(job, "first_level_enabled", True):
+        return STAGE_FIRST_LEVEL
+    if getattr(job, "coding_round_enabled", False):
+        return STAGE_CODING
     return STAGE_FIRST_LEVEL
 
 
@@ -788,8 +793,14 @@ async def _generate_fallback_questions_direct(interview_id: int):
     try:
         interview = db.query(Interview).filter(Interview.id == interview_id).first()
         if interview:
-            # Re-use existing fallback logic
-            await _generate_first_level_questions(interview, None, None, db)
+            job = interview.application.job if interview.application else None
+            # Generate aptitude questions if aptitude is enabled for this session
+            if interview.interview_stage == STAGE_APTITUDE or (job and job.aptitude_enabled):
+                if job:
+                    await _generate_aptitude_questions(interview, job, db)
+            # Generate first-level questions if first-level is enabled
+            if not job or getattr(job, "first_level_enabled", True):
+                await _generate_first_level_questions(interview, job, getattr(interview, "application", None), db)
     finally:
         db.close()
 

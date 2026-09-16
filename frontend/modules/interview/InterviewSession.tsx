@@ -62,13 +62,11 @@ async function apiFetch(path: string, token: string, opts: RequestInit = {}) {
     headers: { ...authHeaders(token), ...(opts.headers || {}) },
   });
   if (!res.ok) {
-    if (res.status === 401) {
-      const e = new Error('Session token has been revoked due to proctoring strikes.');
-      (e as any).status = 401;
-      throw e;
-    }
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || err.error || 'Request failed');
+    const errorMsg = err.detail || err.error || (res.status === 401 ? 'Session token has been revoked or expired.' : 'Request failed');
+    const e = new Error(errorMsg);
+    (e as any).status = res.status;
+    throw e;
   }
   return res.json();
 }
@@ -676,6 +674,8 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
       } catch (e: any) {
         const errorMsg = e.message || '';
         const isPermanentError =
+          e.status === 401 ||
+          e.status === 403 ||
           errorMsg.includes('credentials') ||
           errorMsg.includes('required') ||
           errorMsg.includes('not found') ||
@@ -683,6 +683,9 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
           errorMsg.includes('terminated') ||
           errorMsg.includes('no longer active') ||
           errorMsg.includes('expired') ||
+          errorMsg.includes('invalidated') ||
+          errorMsg.includes('revoked') ||
+          errorMsg.includes('another device') ||
           errorMsg.includes('mismatch');
 
         if (isPermanentError) {
@@ -757,7 +760,13 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
 
       if (allAptitudeCompleted && currentQuestion.question_type === 'aptitude') {
         // Complete the aptitude round
-        await apiFetch(`/api/interviews/${interviewId}/complete-aptitude`, token, { method: 'POST' }).catch(() => null);
+        const aptRes: any = await apiFetch(`/api/interviews/${interviewId}/complete-aptitude`, token, { method: 'POST' }).catch(() => null);
+
+        if (aptRes?.new_stage === 'coding') {
+          toast.success("Aptitude round completed! Transitioning to Coding Round.");
+          setCurrentStage('coding');
+          return;
+        }
 
         // Refresh question list to get the new technical questions
         const updatedQuestions: any[] = await apiFetch(`/api/interviews/${interviewId}/questions`, token);
@@ -831,13 +840,40 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
   const handleFinalSubmit = async () => {
     setShowAllDoneModal(false);
     try {
-      await apiFetch(`/api/interviews/${interviewId}/end`, token, {
+      const res: any = await apiFetch(`/api/interviews/${interviewId}/end`, token, {
         method: 'POST',
         body: JSON.stringify({ force: true, ended_early: false }),
       });
+      if (res?.new_stage === 'coding') {
+        toast.success("Interview round completed! Transitioning to Coding Round.");
+        setCurrentStage('coding');
+        return;
+      }
     } catch { /* ignore — show completion screen regardless */ }
     setIsFinished(true);
     setShowFeedbackPanel(true);
+  };
+
+  const handleCodingCompleted = async (result?: any) => {
+    if (result?.new_stage === 'first_level') {
+      toast.success("Coding round completed! Transitioning to Technical Interview.");
+      setCurrentStage('first_level');
+      try {
+        const all: any[] = await apiFetch(`/api/interviews/${interviewId}/questions`, token);
+        setAllQuestions(all);
+        setTotalQuestions(all.length);
+        const answered = all.filter((x: any) => x.is_answered).map((x: any) => x.question_number);
+        const incorrect = all.filter((x: any) => x.is_answered && x.answer_score !== null && x.answer_score < 5).map((x: any) => x.question_number);
+        setCompletedQuestions(answered);
+        setIncorrectQuestions(incorrect);
+        await loadCurrentQuestion();
+      } catch (e) {
+        console.error("Failed to load technical questions:", e);
+      }
+    } else {
+      setIsFinished(true);
+      setShowFeedbackPanel(true);
+    }
   };
 
   // ─── END SESSION (early) ──────────────────────────────────────────────────
@@ -1253,7 +1289,7 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
       }
       floatingVideo.play().catch((e) => console.warn("Floating video play error:", e));
     }
-  }, [isStarted, isCameraConnected]);
+  }, [isStarted, isCameraConnected, currentStage]);
 
   // Fullscreen tracking
   useEffect(() => {
@@ -1957,138 +1993,135 @@ function InterviewSession({ sessionId, token }: InterviewSessionProps) {
     );
   }
 
-  if (currentStage === 'coding') {
-    return (
-      <div className="w-full">
-        <CodingWorkspace
-          sessionId={sessionId}
-          token={token}
-          onCompleted={() => {
-            setIsFinished(true);
-          }}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col min-h-screen bg-background/50">
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Left Sidebar */}
-        <div className="w-[320px] hidden lg:block border-r border-border/60 bg-card/45 backdrop-blur-md">
-          <InterviewSidebar
-            currentQuestion={currentQuestionNumber}
-            completedQuestions={completedQuestions}
-            incorrectQuestions={incorrectQuestions}
-            skippedQuestions={skippedQuestions}
-            onSelectQuestion={jumpToQuestion}
-            strikes={focusStrikes}
-            allQuestions={allQuestions}
-          />
-        </div>
+        {/* Left Sidebar - only for Q&A / Aptitude rounds */}
+        {currentStage !== 'coding' && (
+          <div className="w-[320px] hidden lg:block border-r border-border/60 bg-card/45 backdrop-blur-md">
+            <InterviewSidebar
+              currentQuestion={currentQuestionNumber}
+              completedQuestions={completedQuestions}
+              incorrectQuestions={incorrectQuestions}
+              skippedQuestions={skippedQuestions}
+              onSelectQuestion={jumpToQuestion}
+              strikes={focusStrikes}
+              allQuestions={allQuestions}
+            />
+          </div>
+        )}
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto p-8 lg:p-12 relative no-scrollbar bg-background/20">
-          <div className="max-w-5xl mx-auto space-y-10">
-
-            {/* Header */}
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-4">
-                <div className="p-3 rounded-2xl bg-card/85 border border-border/80 shadow-sm">
-                  <BrainCircuit className="w-6 h-6 text-primary" />
-                </div>
-                <div>
-
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Secure Protocol</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-4 py-2 bg-card/85 border border-border/80 rounded-xl shadow-sm">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-[10px] font-black text-foreground uppercase tracking-widest">Live Session</span>
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => setShowIssueDialog(true)}
-                  className="text-xs font-black uppercase tracking-widest bg-amber-500/10 hover:bg-amber-500 text-amber-600 hover:text-white border border-amber-500/30 hover:border-amber-500 rounded-xl px-4 py-2 transition-all duration-200 flex items-center gap-2 active:scale-[0.99] cursor-pointer"
-                >
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  Report Issue
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleEndSession}
-                  className="text-xs font-black uppercase tracking-widest bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/30 hover:border-red-500 rounded-xl px-4 py-2 transition-all duration-200 flex items-center gap-2 active:scale-[0.99] cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  End Session
-                </Button>
-              </div>
+        <main className={`flex-1 overflow-y-auto relative no-scrollbar bg-background/20 ${currentStage === 'coding' ? 'p-1 sm:p-2' : 'p-8 lg:p-12'}`}>
+          {currentStage === 'coding' ? (
+            <div className="w-full h-full">
+              <CodingWorkspace
+                sessionId={sessionId}
+                token={token}
+                onCompleted={handleCodingCompleted}
+              />
             </div>
+          ) : (
+            <div className="max-w-5xl mx-auto space-y-10">
 
-            {(() => {
-              let relNum = currentQuestionNumber;
-              if (allQuestions && currentQuestion) {
-                const sameType = allQuestions.filter(q => q.question_type === currentQuestion.question_type)
-                  .sort((a, b) => a.question_number - b.question_number);
-                const idx = sameType.findIndex(q => q.question_number === currentQuestionNumber);
-                if (idx >= 0) relNum = idx + 1;
-              }
-              return (
-                <QuestionPanel
-                  question={currentQuestion}
-                  isLoading={!currentQuestion || isEvaluating || isQuestionSwapping}
-                  currentQuestionNumber={relNum}
-                />
-              );
-            })()}
-
-            <AnswerInput
-              onSubmit={handleSubmitAnswer}
-              onPrev={([...allQuestions].sort((a, b) => a.question_number - b.question_number)[0]?.question_number < currentQuestionNumber) ? handlePrev : undefined}
-              onNext={([...allQuestions].sort((a, b) => b.question_number - a.question_number)[0]?.question_number > currentQuestionNumber) ? handleNext : undefined}
-              disabled={!currentQuestion || isEvaluating || isQuestionSwapping}
-              isEvaluating={isEvaluating}
-              interviewId={interviewId}
-              isListening={isListening}
-              isTranscribing={isTranscribing}
-              onStartRecording={startRecording}
-              onStopRecording={stopRecording}
-              isStuck={false}
-              onRetry={() => { }}
-              options={currentQuestion?.options}
-              initialValue={currentQuestion?.answer_text}
-              isSubmitted={completedQuestions.includes(currentQuestionNumber)}
-              questionId={currentQuestion?.id}
-              onClipboardViolation={handleClipboardViolation}
-            />
-
-            {/* Status bar */}
-            <div className="flex justify-between items-center pt-8 border-t border-border/40">
-              <div className="flex items-center gap-8">
-                <div className="flex items-center gap-3">
-                  <UserCheck className={`w-5 h-5 ${isFaceDetected ? 'text-green-500' : 'text-slate-300'}`} />
+              {/* Header */}
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 rounded-2xl bg-card/85 border border-border/80 shadow-sm">
+                    <BrainCircuit className="w-6 h-6 text-primary" />
+                  </div>
                   <div>
-                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Identity</div>
-                    <div className="text-xs font-bold text-slate-700">{isFaceDetected ? 'Verified' : 'Searching...'}</div>
+                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Secure Protocol</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Eye className={`w-5 h-5 ${isFocusingOnMonitor ? 'text-green-500' : 'text-amber-500'}`} />
-                  <div>
-                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Engagement</div>
-                    <div className="text-xs font-bold text-slate-700">{isFocusingOnMonitor ? 'Optimal' : 'Flagged'}</div>
+                  <div className="flex items-center gap-2 px-4 py-2 bg-card/85 border border-border/80 rounded-xl shadow-sm">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    <span className="text-[10px] font-black text-foreground uppercase tracking-widest">Live Session</span>
                   </div>
+                  <Button
+                    size="sm"
+                    onClick={() => setShowIssueDialog(true)}
+                    className="text-xs font-black uppercase tracking-widest bg-amber-500/10 hover:bg-amber-500 text-amber-600 hover:text-white border border-amber-500/30 hover:border-amber-500 rounded-xl px-4 py-2 transition-all duration-200 flex items-center gap-2 active:scale-[0.99] cursor-pointer"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    Report Issue
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleEndSession}
+                    className="text-xs font-black uppercase tracking-widest bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/30 hover:border-red-500 rounded-xl px-4 py-2 transition-all duration-200 flex items-center gap-2 active:scale-[0.99] cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    End Session
+                  </Button>
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Evaluation Engine</div>
-                <div className="text-xs font-bold text-primary">{isEvaluating ? 'Analyzing Protocol...' : 'Standby'}</div>
-              </div>
-            </div>
 
-          </div>
+              {(() => {
+                let relNum = currentQuestionNumber;
+                if (allQuestions && currentQuestion) {
+                  const sameType = allQuestions.filter(q => q.question_type === currentQuestion.question_type)
+                    .sort((a, b) => a.question_number - b.question_number);
+                  const idx = sameType.findIndex(q => q.question_number === currentQuestionNumber);
+                  if (idx >= 0) relNum = idx + 1;
+                }
+                return (
+                  <QuestionPanel
+                    question={currentQuestion}
+                    isLoading={!currentQuestion || isEvaluating || isQuestionSwapping}
+                    currentQuestionNumber={relNum}
+                  />
+                );
+              })()}
+
+              <AnswerInput
+                onSubmit={handleSubmitAnswer}
+                onPrev={([...allQuestions].sort((a, b) => a.question_number - b.question_number)[0]?.question_number < currentQuestionNumber) ? handlePrev : undefined}
+                onNext={([...allQuestions].sort((a, b) => b.question_number - a.question_number)[0]?.question_number > currentQuestionNumber) ? handleNext : undefined}
+                disabled={!currentQuestion || isEvaluating || isQuestionSwapping}
+                isEvaluating={isEvaluating}
+                interviewId={interviewId}
+                isListening={isListening}
+                isTranscribing={isTranscribing}
+                onStartRecording={startRecording}
+                onStopRecording={stopRecording}
+                isStuck={false}
+                onRetry={() => { }}
+                options={currentQuestion?.options}
+                initialValue={currentQuestion?.answer_text}
+                isSubmitted={completedQuestions.includes(currentQuestionNumber)}
+                questionId={currentQuestion?.id}
+                onClipboardViolation={handleClipboardViolation}
+              />
+
+              {/* Status bar */}
+              <div className="flex justify-between items-center pt-8 border-t border-border/40">
+                <div className="flex items-center gap-8">
+                  <div className="flex items-center gap-3">
+                    <UserCheck className={`w-5 h-5 ${isFaceDetected ? 'text-green-500' : 'text-slate-300'}`} />
+                    <div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Identity</div>
+                      <div className="text-xs font-bold text-slate-700">{isFaceDetected ? 'Verified' : 'Searching...'}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Eye className={`w-5 h-5 ${isFocusingOnMonitor ? 'text-green-500' : 'text-amber-500'}`} />
+                    <div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Engagement</div>
+                      <div className="text-xs font-bold text-slate-700">{isFocusingOnMonitor ? 'Optimal' : 'Flagged'}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Evaluation Engine</div>
+                  <div className="text-xs font-bold text-primary">{isEvaluating ? 'Analyzing Protocol...' : 'Standby'}</div>
+                </div>
+              </div>
+
+            </div>
+          )}
         </main>
       </div>
 

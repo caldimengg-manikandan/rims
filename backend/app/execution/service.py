@@ -291,6 +291,7 @@ class SubmissionService:
                 "timed_out": exec_res.timed_out,
                 "compilation_failed": exec_res.compilation_failed,
                 "compilation_error": exec_res.compilation_error,
+                "error": exec_res.compilation_error or (exec_res.stderr if exec_res.exit_code != 0 else None),
             }
 
         # 2. Public / Sample test cases branch
@@ -319,6 +320,7 @@ class SubmissionService:
                 "timed_out": exec_res.timed_out,
                 "compilation_failed": exec_res.compilation_failed,
                 "compilation_error": exec_res.compilation_error,
+                "error": exec_res.compilation_error or (exec_res.stderr if exec_res.exit_code != 0 else None),
             }
 
         verdict: JudgeVerdict = self.execution_service.run_test_cases(
@@ -335,6 +337,7 @@ class SubmissionService:
             "verdict": verdict.verdict,
             "passed_tests": verdict.passed_tests,
             "total_tests": verdict.total_tests,
+            "error": verdict.error,
             "test_results": [
                 {
                     "test_case_id": r.test_case_id,
@@ -423,6 +426,7 @@ class SubmissionService:
             "passed_tests": verdict.passed_tests,
             "total_tests": verdict.total_tests,
             "execution_time_ms": max_exec_time,
+            "error": verdict.error,
             "test_results": [
                 {
                     "test_case_id": r.test_case_id,
@@ -472,14 +476,15 @@ class SubmissionService:
         interview.coding_score = aggregate_score
 
         # Update ApplicationStage via CandidateService
-        from app.services.candidate_service import CandidateService
-        cand_service = CandidateService(self.db)
-        stage_status = "pass" if aggregate_score >= 50.0 else "fail"
-        cand_service.update_stage(
-            application_id=interview.application_id,
-            stage_name="Coding Round",
-            status=stage_status,
-            score=aggregate_score,
-            notes=f"Coding Assessment score: {aggregate_score}% ({len([s for s in problem_scores if s > 0])}/{len(problem_ids)} problems attempted).",
-        )
-        self.db.flush()
+        if interview.application_id:
+            from app.services.candidate_service import CandidateService
+            cand_service = CandidateService(self.db)
+            stage_status = "pass" if aggregate_score >= 50.0 else "fail"
+            cand_service.advance_stage(
+                application_id=interview.application_id,
+                stage_name="Coding Round",
+                status=stage_status,
+                score=aggregate_score,
+                notes=f"Coding Assessment score: {aggregate_score}% ({len([s for s in problem_scores if s > 0])}/{len(problem_ids)} problems attempted).",
+            )
+            self.db.flush()

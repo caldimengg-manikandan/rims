@@ -246,6 +246,9 @@ class JobCreate(BaseModel):
     coding_problem_count: Optional[int] = None
     coding_repo_set_id: Optional[int] = None
     coding_allowed_languages: Optional[List[str]] = None
+    # New multi-round config: JSON array string of round objects.
+    # When provided, the flat flags above are derived from this array by the API.
+    interview_rounds: Optional[str] = None
 
     @field_validator('title')
     def validate_title(cls, v):
@@ -327,6 +330,7 @@ class JobUpdate(BaseModel):
     aptitude_mode: Optional[str] = None
     coding_round_enabled: Optional[bool] = None
     coding_round_duration_minutes: Optional[int] = None
+    interview_rounds: Optional[str] = None
     coding_problem_count: Optional[int] = None
     coding_repo_set_id: Optional[int] = None
     coding_allowed_languages: Optional[List[str]] = None
@@ -405,6 +409,7 @@ class JobResponse(BaseModel):
     coding_problem_count: Optional[int] = None
     coding_repo_set_id: Optional[int] = None
     coding_allowed_languages: Optional[List[str]] = None
+    interview_rounds: Optional[str] = None
     is_applied: bool = False
     hr_id: int
     created_at: datetime
@@ -474,13 +479,14 @@ class ApplicationResponse(BaseModel):
     candidate_name: str
     candidate_email: str
     candidate_phone: Optional[str] = None
-    resume_file_name: Optional[str]
-    resume_file_path: Optional[str]
+    resume_file_name: Optional[str] = None
+    resume_file_path: Optional[str] = None
     candidate_photo_path: Optional[str] = None
     candidate_phone_raw: Optional[str] = None
     status: str
-    hr_id: int
+    hr_id: Optional[int] = None
     hr_notes: Optional[str] = None
+    tenant_id: Optional[Union[UUID, str]] = None
     resume_status: str = "pending"
     file_status: Optional[str] = 'active'
     
@@ -654,16 +660,16 @@ class AuditLogResponse(BaseModel):
 class ResumeExtractionResponse(BaseModel):
     id: int
     application_id: int
-    extracted_text: Optional[str]  # Full text
+    extracted_text: Optional[str] = None  # Full text
     candidate_name: Optional[str] = None
     email: Optional[str] = None
     phone_number: Optional[str] = None
-    summary: Optional[str]  # AI summary
-    extracted_skills: Optional[str]
-    years_of_experience: Optional[float]
-    education: Optional[str]
-    previous_roles: Optional[str]
-    experience_level: Optional[str]
+    summary: Optional[str] = None  # AI summary
+    extracted_skills: Optional[str] = None
+    years_of_experience: Optional[float] = None
+    education: Optional[str] = None
+    previous_roles: Optional[str] = None
+    experience_level: Optional[str] = None
     reasoning: Optional[dict] = None
     resume_score: float = 0.0
     skill_match_percentage: float = 0.0
@@ -837,9 +843,9 @@ class InterviewResponse(BaseModel):
     locked_skill: Optional[str] = None
     total_questions: int
     questions_asked: int
-    overall_score: Optional[float]
-    started_at: Optional[datetime]
-    ended_at: Optional[datetime]
+    overall_score: Optional[float] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
     # Sequential pipeline fields
     interview_stage: Optional[str] = 'first_level'
     aptitude_score: Optional[float] = None
@@ -1318,6 +1324,7 @@ class CodeRunResponse(BaseModel):
     timed_out: Optional[bool] = None
     compilation_failed: Optional[bool] = None
     compilation_error: Optional[str] = None
+    error: Optional[str] = None
     verdict: Optional[str] = None
     passed_tests: Optional[int] = None
     total_tests: Optional[int] = None
@@ -1337,6 +1344,7 @@ class CodeSubmitResponse(BaseModel):
     passed_tests: int
     total_tests: int
     execution_time_ms: Optional[int] = None
+    error: Optional[str] = None
     test_results: List[dict] = []
 
 

@@ -493,13 +493,20 @@ def get_current_interview(
             )
 
         # Single Session Enforcement: Validate that JTI matches the active one
-        if jti and interview.active_session_jti != jti:
-            logger.warning(f"Interview auth failed: JTI mismatch for interview {interview.id}. Token JTI={jti}, active_session_jti={interview.active_session_jti}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="This session has been invalidated because the interview was started or resumed on another device.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        if jti:
+            if interview.active_session_jti is None:
+                interview.active_session_jti = jti
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            elif interview.active_session_jti != jti:
+                logger.warning(f"Interview auth failed: JTI mismatch for interview {interview.id}. Token JTI={jti}, active_session_jti={interview.active_session_jti}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="This session has been invalidated because the interview was started or resumed on another device.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         # Check allowed interview duration limit
         if interview.status == "in_progress" and interview.started_at:
@@ -712,13 +719,20 @@ def get_current_interview_any_status(
             )
 
         # Single Session Enforcement: Validate that JTI matches the active one
-        if jti and interview.active_session_jti != jti:
-            logger.warning(f"Interview auth failed (any status): JTI mismatch for interview {interview.id}. Token JTI={jti}, active_session_jti={interview.active_session_jti}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="This session has been invalidated because the interview was started or resumed on another device.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        if jti:
+            if interview.active_session_jti is None:
+                interview.active_session_jti = jti
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            elif interview.active_session_jti != jti:
+                logger.warning(f"Interview auth failed (any status): JTI mismatch for interview {interview.id}. Token JTI={jti}, active_session_jti={interview.active_session_jti}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="This session has been invalidated because the interview was started or resumed on another device.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         # Check allowed interview duration limit
         if interview.status == "in_progress" and interview.started_at:

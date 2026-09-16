@@ -24,3 +24,4 @@ export async function generateMetadata(): Promise<Metadata> {
 export default function Layout({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
+   
