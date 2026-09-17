@@ -398,6 +398,20 @@ class SubmissionService:
 
         max_exec_time = max((r.execution_time_ms for r in verdict.results), default=0)
 
+        test_results_data = [
+            {
+                "test_case_id": r.test_case_id,
+                "is_hidden": r.is_hidden,
+                "passed": r.passed,
+                "weight": r.weight,
+                "actual_stdout": r.actual_stdout,
+                "expected_stdout": r.expected_stdout,
+                "execution_time_ms": r.execution_time_ms,
+                "error": r.error,
+            }
+            for r in verdict.results
+        ]
+
         # Record submission
         submission = CodingSubmission(
             tenant_id=interview.tenant_id,
@@ -411,6 +425,8 @@ class SubmissionService:
             total_tests=verdict.total_tests,
             score=verdict.score,
             execution_time_ms=max_exec_time,
+            error_output=verdict.error,
+            test_results=test_results_data,
             submitted_at=get_ist_now(),
         )
         self.db.add(submission)

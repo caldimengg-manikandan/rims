@@ -1129,6 +1129,7 @@ class CodingSubmission(Base):
     execution_time_ms = Column(Integer, nullable=True)
     memory_used_kb = Column(Integer, nullable=True)
     error_output = Column(Text, nullable=True)
+    test_results = Column(JSON, nullable=True)
     submitted_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now())
 
     # Relationships

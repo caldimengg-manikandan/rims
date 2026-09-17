@@ -284,6 +284,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                     <TableHead>Applied For</TableHead>
                     <TableHead className="text-right">Aptitude</TableHead>
                     <TableHead className="text-right">Behavioral</TableHead>
+                    <TableHead className="text-right">Coding</TableHead>
                     <TableHead className="text-right">Score</TableHead>
                     <TableHead className="text-center">Suggestion</TableHead>
                     <TableHead className="w-16 text-center">Action</TableHead>
@@ -313,6 +314,9 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         {report.behavioral_score !== undefined && report.behavioral_score !== null ? report.behavioral_score.toFixed(1) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {report.coding_score !== undefined && report.coding_score !== null ? `${Math.round(report.coding_score)}%` : '-'}
                       </TableCell>
                       <TableCell className="text-right font-bold text-primary">{report.overall_score.toFixed(1)}</TableCell>
                       <TableCell className="text-center">
@@ -345,7 +349,7 @@ export const ReportDashboard = React.memo(function ReportDashboard({
                   ))}
                   {filteredReports.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="h-24 text-center">
+                      <TableCell colSpan={9} className="h-24 text-center">
                         No reports found.
                       </TableCell>
                     </TableRow>

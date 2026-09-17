@@ -3,14 +3,142 @@ from sqlalchemy.orm import Session, joinedload, contains_eager
 from sqlalchemy import func, and_, or_
 from typing import Optional
 from app.infrastructure.database import get_db
-from app.domain.models import User, Job, Application, Interview, InterviewReport, InterviewQuestion, InterviewAnswer
+from app.domain.models import (
+    User, Job, Application, Interview, InterviewReport, InterviewQuestion, InterviewAnswer,
+    CodingSubmission, CodingProblem, CodingTestCase, CodingQuestionSetItem
+)
 from app.core.auth import get_current_hr
 import json
 import traceback
 from datetime import datetime
+from typing import Any, Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _build_coding_evaluations_for_interview(
+    interview: Optional[Interview],
+    job: Optional[Job],
+    coding_submissions_map: Dict[int, List[CodingSubmission]],
+    job_problems_map: Dict[int, List[CodingProblem]]
+) -> List[Dict[str, Any]]:
+    """
+    Constructs detailed coding evaluation report for an interview including:
+    - All problems assigned to the job or submitted by candidate
+    - All test cases (public and hidden)
+    - Candidate answer vs correct reference solution
+    - Test execution results
+    """
+    if not interview:
+        return []
+
+    evaluations = []
+    submissions = coding_submissions_map.get(interview.id, [])
+
+    problems = []
+    seen_problem_ids = set()
+
+    job_set_id = getattr(job, "coding_repo_set_id", None) if job else None
+    if job_set_id and job_set_id in job_problems_map:
+        for p in job_problems_map[job_set_id]:
+            if p and p.id not in seen_problem_ids:
+                problems.append(p)
+                seen_problem_ids.add(p.id)
+
+    for sub in submissions:
+        if sub.problem and sub.problem.id not in seen_problem_ids:
+            problems.append(sub.problem)
+            seen_problem_ids.add(sub.problem.id)
+
+    for p in problems:
+        sub = next((s for s in submissions if s.problem_id == p.id), None)
+
+        cand_code = getattr(sub, "source_code", "") if sub else ""
+        cand_lang = getattr(sub, "language", "python3") if sub else (
+            (job.coding_allowed_languages[0] if (job and getattr(job, "coding_allowed_languages", None)) else "python3")
+        )
+
+        sol_codes = p.get_solution_codes() if hasattr(p, "get_solution_codes") else {}
+        correct_code = (
+            sol_codes.get(cand_lang)
+            or sol_codes.get("python3")
+            or (next(iter(sol_codes.values())) if sol_codes else (getattr(p, "solution_code", "") or ""))
+        )
+
+        sub_test_results = getattr(sub, "test_results", None) or []
+        tr_map = {}
+        if isinstance(sub_test_results, list):
+            for tr in sub_test_results:
+                if isinstance(tr, dict) and "test_case_id" in tr:
+                    tr_map[tr["test_case_id"]] = tr
+
+        test_cases_data = []
+        p_test_cases = sorted(p.test_cases, key=lambda x: x.display_order or 0) if p.test_cases else []
+        for tc in p_test_cases:
+            tr = tr_map.get(tc.id)
+            if tr:
+                passed = tr.get("passed")
+                actual_stdout = tr.get("actual_stdout")
+                err = tr.get("error")
+                exec_time = tr.get("execution_time_ms")
+            elif sub:
+                if sub.verdict == "accepted":
+                    passed = True
+                    actual_stdout = tc.expected_output
+                    err = None
+                    exec_time = None
+                else:
+                    passed = False if (sub.passed_tests == 0) else None
+                    actual_stdout = None
+                    err = sub.error_output
+                    exec_time = None
+            else:
+                passed = None
+                actual_stdout = None
+                err = None
+                exec_time = None
+
+            test_cases_data.append({
+                "id": tc.id,
+                "input": tc.input,
+                "expected_output": tc.expected_output,
+                "weight": float(tc.weight) if tc.weight is not None else 1.0,
+                "is_hidden": bool(tc.is_hidden),
+                "display_order": tc.display_order or 0,
+                "passed": passed,
+                "actual_stdout": actual_stdout,
+                "error": err,
+                "execution_time_ms": exec_time,
+            })
+
+        evaluations.append({
+            "problem_id": p.id,
+            "title": p.title,
+            "description": p.description,
+            "difficulty": p.difficulty or "medium",
+            "input_format": p.input_format or "",
+            "output_format": p.output_format or "",
+            "constraints": p.constraints or "",
+            "supported_languages": p.supported_languages or ["python3"],
+            "time_limit_ms": p.time_limit_ms or 2000,
+            "memory_limit_mb": p.memory_limit_mb or 256,
+            "candidate_code": cand_code,
+            "candidate_language": cand_lang,
+            "correct_code": correct_code,
+            "correct_solutions": sol_codes,
+            "verdict": sub.verdict if sub else ("not_attempted" if interview.status in ("completed", "terminated") else "pending"),
+            "score": float(sub.score) if (sub and sub.score is not None) else 0.0,
+            "passed_tests": sub.passed_tests if sub else 0,
+            "total_tests": sub.total_tests if (sub and sub.total_tests) else len(p_test_cases),
+            "execution_time_ms": sub.execution_time_ms if sub else None,
+            "memory_used_kb": sub.memory_used_kb if sub else None,
+            "error_output": sub.error_output if sub else None,
+            "submitted_at": sub.submitted_at.isoformat() if (sub and sub.submitted_at) else None,
+            "test_cases": test_cases_data,
+        })
+
+    return evaluations
 
 
 def _hr_can_see_application(current_user: User):
@@ -53,6 +181,10 @@ def _build_reports_query(
         .outerjoin(InterviewReport, Interview.id == InterviewReport.interview_id)
         .outerjoin(Job, Application.job_id == Job.id)
         .filter(
+            or_(
+                Interview.id.isnot(None),
+                InterviewReport.id.isnot(None),
+            ),
             or_(
                 Interview.status.in_(["completed", "terminated", "expired"]),
                 Application.status.in_(REPORTABLE_APPLICATION_STATUSES),
@@ -550,10 +682,13 @@ def get_interview_reports(
                     pass
 
             m_total_applied = base_app_query.count()
-            m_total_finished = base_app_query.outerjoin(Interview, Application.id == Interview.application_id).filter(or_(
-                Interview.status.in_(["completed", "terminated", "expired"]),
-                Application.status.in_(REPORTABLE_APPLICATION_STATUSES)
-            )).with_entities(func.count(Application.id.distinct())).scalar() or 0
+            m_total_finished = base_app_query.outerjoin(Interview, Application.id == Interview.application_id).filter(
+                Interview.id.isnot(None),
+                or_(
+                    Interview.status.in_(["completed", "terminated", "expired"]),
+                    Application.status.in_(REPORTABLE_APPLICATION_STATUSES)
+                )
+            ).with_entities(func.count(Application.id.distinct())).scalar() or 0
         except Exception as e:
             logger.warning(f"[REPORTS] Global applied/finished metrics failed: {e}")
             m_total_applied = 0
@@ -623,6 +758,8 @@ def get_interview_reports(
         interview_ids = [app.interview.id for app in applications if app.interview]
         all_questions_map = {}
         all_answers_map = {}
+        coding_submissions_map = {}
+        job_problems_map = {}
         
         if interview_ids:
             questions = db.query(InterviewQuestion).filter(
@@ -636,6 +773,39 @@ def get_interview_reports(
                 answers = db.query(InterviewAnswer).filter(InterviewAnswer.question_id.in_(q_ids)).all()
                 for a in answers:
                     all_answers_map[a.question_id] = a
+
+            try:
+                submissions = (
+                    db.query(CodingSubmission)
+                    .options(
+                        joinedload(CodingSubmission.problem).joinedload(CodingProblem.test_cases)
+                    )
+                    .filter(CodingSubmission.interview_id.in_(interview_ids))
+                    .order_by(CodingSubmission.interview_id, CodingSubmission.score.desc(), CodingSubmission.submitted_at.desc())
+                    .all()
+                )
+                for sub in submissions:
+                    coding_submissions_map.setdefault(sub.interview_id, []).append(sub)
+            except Exception as se:
+                logger.warning(f"[REPORTS] Coding submissions pre-fetch error: {se}")
+
+        job_set_ids = list({app.job.coding_repo_set_id for app in applications if app.job and getattr(app.job, 'coding_repo_set_id', None)})
+        if job_set_ids:
+            try:
+                set_items = (
+                    db.query(CodingQuestionSetItem)
+                    .options(
+                        joinedload(CodingQuestionSetItem.problem).joinedload(CodingProblem.test_cases)
+                    )
+                    .filter(CodingQuestionSetItem.question_set_id.in_(job_set_ids))
+                    .order_by(CodingQuestionSetItem.question_set_id, CodingQuestionSetItem.display_order)
+                    .all()
+                )
+                for item in set_items:
+                    if item.problem:
+                        job_problems_map.setdefault(item.question_set_id, []).append(item.problem)
+            except Exception as jpe:
+                logger.warning(f"[REPORTS] Job question set items pre-fetch error: {jpe}")
 
         for app in applications:
             try:
@@ -801,6 +971,11 @@ def get_interview_reports(
                 r_beh = getattr(report, 'behavioral_score', None)
                 r_apt = getattr(report, 'aptitude_score', None)
 
+                coding_score = getattr(interview, 'coding_score', None) if interview else None
+                coding_evaluations = _build_coding_evaluations_for_interview(
+                    interview, job, coding_submissions_map, job_problems_map
+                )
+
                 reports.append({
                     "id": str(report_id),
                     "interview_id": interview_id,
@@ -815,10 +990,12 @@ def get_interview_reports(
                     "technical_score": float(tech_avg if tech_s else (r_tech if r_tech is not None else 0)),
                     "behavioral_score": float(beh_avg if beh_s else (r_beh if r_beh is not None else 0)),
                     "aptitude_score": float(apt_score if apt_qty > 0 else (r_apt if r_apt is not None else 0)),
+                    "coding_score": float(coding_score) if coding_score is not None else None,
                     "total_questions_answered": len([e for e in question_evaluations if e.get("answer")]),
                     "aptitude_questions_answered": apt_qty,
                     "question_evaluations": question_evaluations,
                     "aptitude_question_evaluations": aptitude_evals,
+                    "coding_evaluations": coding_evaluations,
                     "candidate_profile": candidate_profile,
                     "recommendation": getattr(report, 'recommendation', 'consider') if report else "consider",
                     "video_url": video_url,
@@ -904,7 +1081,7 @@ def get_interview_reports(
                     joinedload(InterviewReport.interview)
                 ).order_by(InterviewReport.created_at.desc()).all()
 
-                # Pre-fetch questions/answers for demo interviews if not already loaded
+                # Pre-fetch questions/answers and coding submissions for demo interviews if not already loaded
                 demo_iv_ids = [dr.interview_id for dr in demo_reports_list if dr.interview_id and dr.interview_id not in all_questions_map]
                 if demo_iv_ids:
                     d_questions = db.query(InterviewQuestion).filter(
@@ -917,6 +1094,21 @@ def get_interview_reports(
                         d_answers = db.query(InterviewAnswer).filter(InterviewAnswer.question_id.in_(d_q_ids)).all()
                         for a in d_answers:
                             all_answers_map[a.question_id] = a
+
+                    try:
+                        d_submissions = (
+                            db.query(CodingSubmission)
+                            .options(
+                                joinedload(CodingSubmission.problem).joinedload(CodingProblem.test_cases)
+                            )
+                            .filter(CodingSubmission.interview_id.in_(demo_iv_ids))
+                            .order_by(CodingSubmission.interview_id, CodingSubmission.score.desc(), CodingSubmission.submitted_at.desc())
+                            .all()
+                        )
+                        for sub in d_submissions:
+                            coding_submissions_map.setdefault(sub.interview_id, []).append(sub)
+                    except Exception as dse:
+                        logger.warning(f"[REPORTS] Demo coding submissions pre-fetch error: {dse}")
 
                 for d_rep in demo_reports_list:
                     try:
@@ -965,6 +1157,11 @@ def get_interview_reports(
                         d_apt_correct = sum(1 for q in d_apt_evals if q.get("correct") is True)
                         d_apt_score = (d_apt_correct / len(d_apt_evals) * 10) if d_apt_evals else (d_rep.aptitude_score or 0)
 
+                        d_coding_score = getattr(d_iv, 'coding_score', None) if d_iv else None
+                        d_coding_evals = _build_coding_evaluations_for_interview(
+                            d_iv, None, coding_submissions_map, job_problems_map
+                        )
+
                         reports.append({
                             "id": str(d_rep.id),
                             "interview_id": d_rep.interview_id,
@@ -979,10 +1176,12 @@ def get_interview_reports(
                             "technical_score": float(d_tech_avg),
                             "behavioral_score": float(d_beh_avg),
                             "aptitude_score": float(d_apt_score),
+                            "coding_score": float(d_coding_score) if d_coding_score is not None else None,
                             "total_questions_answered": len([e for e in d_q_evals if e.get("answer")]),
                             "aptitude_questions_answered": len(d_apt_evals),
                             "question_evaluations": d_q_evals,
                             "aptitude_question_evaluations": d_apt_evals,
+                            "coding_evaluations": d_coding_evals,
                             "candidate_profile": {
                                 "candidate_name": d_rep.candidate_name or "Demo Candidate",
                                 "candidate_email": d_rep.candidate_email or "demo@rims.local",

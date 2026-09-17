@@ -409,6 +409,7 @@ def delete_report_and_interview_data(
     clean_id = str(report_id).strip()
     report = None
     interview = None
+    app_record = None
 
     if clean_id.startswith("skel_"):
         iv_id_str = clean_id.replace("skel_", "")
@@ -416,11 +417,16 @@ def delete_report_and_interview_data(
         interview = db.query(Interview).filter(Interview.id == interview_id).first() if interview_id else None
         if interview:
             report = interview.report
+            app_record = interview.application
     elif clean_id.startswith("app_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete report: No interview session exists for this candidate application."
-        )
+        aid_str = clean_id.replace("app_", "")
+        app_id = int(aid_str) if aid_str.isdigit() else None
+        if app_id:
+            app_record = db.query(Application).filter(Application.id == app_id).first()
+            if app_record:
+                if app_record.interview:
+                    interview = app_record.interview
+                    report = interview.report
     else:
         rep_id_int = int(clean_id) if clean_id.isdigit() else None
         if rep_id_int:
@@ -429,8 +435,12 @@ def delete_report_and_interview_data(
                 # Also check by interview_id
                 report = db.query(InterviewReport).filter(InterviewReport.interview_id == rep_id_int).first()
             interview = report.interview if report else db.query(Interview).filter(Interview.id == rep_id_int).first()
+            if interview:
+                app_record = interview.application
+            elif report:
+                app_record = report.application
 
-    if not report and not interview:
+    if not report and not interview and not app_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Interview report not found."
@@ -444,6 +454,8 @@ def delete_report_and_interview_data(
         res_tenant_id = getattr(interview, "tenant_id", None)
         if not res_tenant_id and report and report.interview:
             res_tenant_id = getattr(report.interview, "tenant_id", None)
+        if not res_tenant_id and app_record:
+            res_tenant_id = getattr(app_record, "tenant_id", None)
         if res_tenant_id and str(res_tenant_id) != str(tenant_ctx.id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -452,9 +464,9 @@ def delete_report_and_interview_data(
 
     # 3. HR Ownership Check
     if not is_admin:
-        app = getattr(interview, "application", None) or (report and getattr(report, "application", None))
-        if app:
-            validate_hr_ownership(app, current_user, resource_name="interview report")
+        target_app = app_record or getattr(interview, "application", None) or (report and getattr(report, "application", None))
+        if target_app:
+            validate_hr_ownership(target_app, current_user, resource_name="interview report")
 
     # 4. Storage cleanup for snapshots and recordings
     if interview:
@@ -478,14 +490,21 @@ def delete_report_and_interview_data(
             logger.warning(f"Storage cleanup encountered error for interview {interview.id}: {se}")
 
     # 5. Database Cascade Deletion
-    # Unlink Application so Application, Candidate, and Job are strictly preserved
+    # Reset Application status to 'applied' and unlink interview so candidate pipeline remains intact
+    # without lingering in reportable interview statuses.
     if interview:
-        app_record = interview.application
-        if app_record:
-            app_record.interview = None
+        target_app = app_record or interview.application
+        if target_app:
+            target_app.interview = None
+            target_app.status = "applied"
         db.delete(interview)
     elif report:
+        target_app = app_record or report.application
+        if target_app:
+            target_app.status = "applied"
         db.delete(report)
+    elif app_record:
+        app_record.status = "applied"
 
     db.commit()
     logger.info(f"[Reports] Permanently deleted report {report_id} and associated interview data.")

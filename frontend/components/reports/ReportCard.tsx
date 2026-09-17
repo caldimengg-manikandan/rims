@@ -54,6 +54,12 @@ const ReportCardImpl = ({ report, onClick, onDelete }: ReportCardProps) => {
                         {typeof report?.behavioral_score === 'number' ? report.behavioral_score.toFixed(1) : '-'}
                     </div>
                 </div>
+                <div className="text-right w-20 hidden lg:block border-l pl-4 border-slate-100 dark:border-slate-800">
+                    <div className="text-[10px] text-slate-400 uppercase tracking-[0.2em] font-bold">Coding</div>
+                    <div className="font-bold text-lg text-slate-700 dark:text-slate-300 tabular-nums">
+                        {typeof report?.coding_score === 'number' ? `${Math.round(report.coding_score)}%` : '-'}
+                    </div>
+                </div>
 
                 <div className="text-right w-28 border-l pl-6 border-slate-100 dark:border-slate-800">
                     <div className="text-[10px] text-slate-400 uppercase tracking-[0.2em] font-bold">Suggestion</div>

@@ -62,7 +62,7 @@ import {
   Tooltip as RechartsTooltip,
   ResponsiveContainer
 } from 'recharts'
-import { Download, FileText, Filter, Search, AlertCircle, CheckCircle2, XCircle, RotateCcw, Activity, Video, CameraOff, BarChart, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
+import { Download, FileText, Filter, Search, AlertCircle, CheckCircle2, XCircle, RotateCcw, Activity, Video, CameraOff, BarChart, ChevronLeft, ChevronRight, Trash2, Code2 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { cn } from '@/app/dashboard/lib/utils'
 
@@ -70,6 +70,7 @@ import { StatusChart, DetailedMetricsChart, SkillProficiencyChart } from '@/comp
 import { MetricCard } from '@/components/reports/MetricCard'
 import { ReportCard } from '@/components/reports/ReportCard'
 import { CategoryScoreCard } from '@/components/reports/CategoryScoreCard'
+import { CodingReportView, CodingEvaluation } from '@/components/reports/CodingReportView'
 import {
   isAnswerEmpty,
   getDisplayedQuestionScore,
@@ -147,9 +148,11 @@ export interface Report {
   aptitude_score?: number | null
   behavioral_score?: number | null
   technical_score?: number | null
+  coding_score?: number | null
   first_level_score?: number | null
   aptitude_question_evaluations?: QuestionEvaluation[]
   aptitude_questions_answered?: number
+  coding_evaluations?: CodingEvaluation[]
   video_url?: string | null
   termination_reason?: string | null
   interview_id?: string | number | null
@@ -325,7 +328,7 @@ export default function ReportsPage() {
   const isInitialLoading = isSWRDashboardLoading && !reportsResponse
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionEvaluation | null>(null)
   const [viewingReport, setViewingReport] = useState<Report | null>(null)
-  const [reportView, setReportView] = useState<'technical' | 'aptitude' | 'behavioral'>('technical');
+  const [reportView, setReportView] = useState<'technical' | 'aptitude' | 'behavioral' | 'coding'>('technical');
 
   // Effect to auto-open report if reportId is in URL
   React.useEffect(() => {
@@ -500,9 +503,25 @@ export default function ReportsPage() {
         text += `  Strengths:\n${evalData.strengths.map((s: string) => `    - ${s}`).join('\n')}\n`
       }
       if (evalData.weaknesses?.length) {
-        text += `  Weaknesses:\n${evalData.weaknesses.map((w: string) => `    - ${w}`).join('\n')}\n`
+        text += `  Weaknesses:\n${evalData.weaknesses.map((s: string) => `    - ${s}`).join('\n')}\n`
       }
     })
+
+    if (report.coding_evaluations && report.coding_evaluations.length > 0) {
+      text += `\nCODING ROUND ANALYSIS\n`
+      text += `----------------------------------------\n`
+      if (report.coding_score !== undefined && report.coding_score !== null) {
+        text += `Coding Score: ${Math.round(report.coding_score)}%\n\n`
+      }
+      report.coding_evaluations.forEach((prob, i) => {
+        text += `Problem ${i + 1}: ${prob.title || 'Untitled'}\n`
+        text += `Difficulty: ${prob.difficulty}\n`
+        text += `Verdict: ${prob.verdict}\n`
+        text += `Score: ${prob.score}%\n`
+        text += `Tests Passed: ${prob.passed_tests}/${prob.total_tests}\n`
+        text += `Language: ${prob.candidate_language}\n\n`
+      })
+    }
 
     return text
   }
@@ -567,16 +586,19 @@ export default function ReportsPage() {
         reportsApiUrl,
         (current: any) => {
           if (!current) return current
+          const matches = (r: any) =>
+            String(r.id) === String(reportToDelete.id) ||
+            (reportToDelete.interview_id && String(r.interview_id) === String(reportToDelete.interview_id)) ||
+            (r.interview_id && String(r.interview_id) === String(reportToDelete.id).replace('skel_', ''))
+
           if (Array.isArray(current)) {
-            return current.filter((r: any) => String(r.id) !== String(reportToDelete.id))
+            return current.filter((r: any) => !matches(r))
           }
-          const updatedReports = (current.reports || []).filter(
-            (r: any) => String(r.id) !== String(reportToDelete.id)
-          )
+          const updatedReports = (current.reports || []).filter((r: any) => !matches(r))
           return {
             ...current,
             reports: updatedReports,
-            total: Math.max(0, (current.total || 0) - 1),
+            total: Math.max(0, (current.total || 0) - Math.max(1, (current.reports?.length || 0) - updatedReports.length)),
             count: updatedReports.length,
           }
         },
@@ -857,6 +879,16 @@ export default function ReportsPage() {
                         )}
                       </div>
                     </div>
+                    <div className="text-right border-l pl-6 border-border hidden sm:block">
+                      <div className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Coding</div>
+                      <div className="font-bold text-2xl text-slate-700 dark:text-slate-200">
+                        {viewingReport.coding_score !== undefined && viewingReport.coding_score !== null ? (
+                          <>{Math.round(viewingReport.coding_score)}<span className="text-sm text-slate-400 font-normal">%</span></>
+                        ) : (
+                          <span className="text-2xl font-semibold text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </div>
                     <div className="text-right border-l pl-6 border-border">
                       <div className="text-xs text-primary/80 uppercase tracking-wider font-semibold">Technical Score</div>
                       <div className="font-bold text-3xl text-primary">{viewingReport.overall_score.toFixed(1)}<span className="text-base text-primary/60 font-normal">/10</span></div>
@@ -1075,9 +1107,28 @@ export default function ReportsPage() {
                     >
                       Aptitude Questions
                     </Button>
+                    <Button
+                      variant={reportView === 'coding' ? 'default' : 'outline'}
+                      onClick={() => setReportView('coding')}
+                      size="sm"
+                      className="rounded-full flex items-center gap-1.5"
+                    >
+                      <Code2 className="w-3.5 h-3.5" />
+                      Coding Questions
+                      {(viewingReport.coding_evaluations?.length ?? 0) > 0 && (
+                        <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-primary/20 text-primary font-bold">
+                          {viewingReport.coding_evaluations?.length}
+                        </span>
+                      )}
+                    </Button>
                   </div>
-                  <ScrollArea className="h-[400px] w-full pr-4 border border-border/80 rounded-2xl bg-card/45 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.02)]">
-                    {reportView === 'aptitude' ? (
+                  <ScrollArea className={`${reportView === 'coding' ? 'h-[520px]' : 'h-[400px]'} w-full pr-4 border border-border/80 rounded-2xl bg-card/45 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.02)]`}>
+                    {reportView === 'coding' ? (
+                      <CodingReportView
+                        evaluations={viewingReport.coding_evaluations}
+                        codingScore={viewingReport.coding_score}
+                      />
+                    ) : reportView === 'aptitude' ? (
                       <div className="p-0">
                         <table className="w-full text-sm text-left">
                           <thead className="bg-muted/30 sticky top-0 z-10 border-b border-border/40">

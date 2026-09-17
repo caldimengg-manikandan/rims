@@ -91,6 +91,10 @@ def _ensure_coding_schema():
                         ALTER TABLE public.interviews ADD COLUMN coding_score DOUBLE PRECISION;
                         ALTER TABLE public.interviews ADD COLUMN coding_completed_at TIMESTAMPTZ;
                     END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'coding_submissions' AND column_name = 'test_results') THEN
+                        ALTER TABLE public.coding_submissions ADD COLUMN test_results JSONB NULL;
+                    END IF;
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'tenant_id') THEN
                         ALTER TABLE public.users ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
                         CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON public.users(tenant_id);
