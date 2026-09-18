@@ -14,7 +14,7 @@ class AnalyticsService:
         Multi-tenant: strictly scoped to tenant_id.
         """
         import logging
-        from datetime import datetime
+        from datetime import datetime, timedelta
         logger = logging.getLogger(__name__)
 
         try:
@@ -31,18 +31,17 @@ class AnalyticsService:
                 if from_date:
                     try:
                         sd = datetime.strptime(from_date, "%Y-%m-%d").date()
-                        # Use applied_at for Application, created_at for Interview
+                        start_dt = datetime.combine(sd, datetime.min.time())
                         date_col = Application.applied_at if model_for_date == Application else model_for_date.created_at
-                        from sqlalchemy import func as sqlfunc
-                        q = q.filter(sqlfunc.date(date_col) >= sd)
-                    except: pass
+                        q = q.filter(date_col >= start_dt)
+                    except Exception: pass
                 if to_date:
                     try:
                         ed = datetime.strptime(to_date, "%Y-%m-%d").date()
+                        end_dt = datetime.combine(ed + timedelta(days=1), datetime.min.time())
                         date_col = Application.applied_at if model_for_date == Application else model_for_date.created_at
-                        from sqlalchemy import func as sqlfunc
-                        q = q.filter(sqlfunc.date(date_col) <= ed)
-                    except: pass
+                        q = q.filter(date_col < end_dt)
+                    except Exception: pass
                 return q
 
             # Combine all core metrics into a single row fetch to minimize network round-trips

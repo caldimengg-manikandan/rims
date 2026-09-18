@@ -166,22 +166,41 @@ def build_application_summary_response(application: Application, current_user_id
 
 def build_application_detail_response(application: Application, current_user_id: Optional[int] = None) -> ApplicationDetailResponse:
     from app.core.storage import get_signed_url, get_public_url
+    from concurrent.futures import ThreadPoolExecutor
     
-    resume_url = None
+    # Collect storage targets that need signed URLs and fetch concurrently
+    targets = []
     if application.resume_file_path:
-        resume_url = get_signed_url(settings.supabase_bucket_resumes, application.resume_file_path, expires_in=900)
-    
-    photo_url = None
+        targets.append(('resume', settings.supabase_bucket_resumes, application.resume_file_path))
     if application.candidate_photo_path:
-        photo_url = get_signed_url(settings.supabase_bucket_id_photos, application.candidate_photo_path, expires_in=900)
-             
-    id_card_url = None
+        targets.append(('photo', settings.supabase_bucket_id_photos, application.candidate_photo_path))
     if getattr(application, 'id_card_url', None):
-        id_card_url = get_signed_url(settings.supabase_bucket_id_cards, application.id_card_url, expires_in=900)
-
-    video_url = None
+        targets.append(('id_card', settings.supabase_bucket_id_cards, application.id_card_url))
     if application.interview and application.interview.video_recording_path:
-        video_url = get_signed_url(settings.supabase_bucket_videos, application.interview.video_recording_path, expires_in=900)
+        targets.append(('video', settings.supabase_bucket_videos, application.interview.video_recording_path))
+
+    signed_results = {}
+    if len(targets) == 1:
+        k, b, p = targets[0]
+        signed_results[k] = get_signed_url(b, p, expires_in=900)
+    elif len(targets) > 1:
+        with ThreadPoolExecutor(max_workers=len(targets)) as executor:
+            future_to_key = {
+                executor.submit(get_signed_url, b, p, 900): k
+                for k, b, p in targets
+            }
+            for future in future_to_key:
+                k = future_to_key[future]
+                try:
+                    signed_results[k] = future.result()
+                except Exception as ex:
+                    logger.warning(f"Failed to generate signed URL for {k}: {ex}")
+                    signed_results[k] = None
+
+    resume_url = signed_results.get('resume')
+    photo_url = signed_results.get('photo')
+    id_card_url = signed_results.get('id_card')
+    video_url = signed_results.get('video')
 
     detail = ApplicationDetailResponse.model_validate(application, from_attributes=True)
     raw_notes = application.hr_notes or ""
@@ -1219,7 +1238,8 @@ def get_hr_applications(
             sd = parse_date(from_date)
             if sd:
                 logger.info(f"Applying from_date filter (IST): {sd}")
-                base_query = base_query.filter(func.date(Application.applied_at) >= sd)
+                start_dt = datetime.combine(sd, datetime.min.time())
+                base_query = base_query.filter(Application.applied_at >= start_dt)
             else:
                 logger.warning(f"Invalid from_date format: {from_date}")
 
@@ -1227,7 +1247,8 @@ def get_hr_applications(
             ed = parse_date(to_date)
             if ed:
                 logger.info(f"Applying to_date filter (IST): {ed}")
-                base_query = base_query.filter(func.date(Application.applied_at) <= ed)
+                end_dt = datetime.combine(ed + timedelta(days=1), datetime.min.time())
+                base_query = base_query.filter(Application.applied_at < end_dt)
             else:
                 logger.warning(f"Invalid to_date format: {to_date}")
 

@@ -604,6 +604,74 @@ def check_tcp_connection(host: str, port: int, timeout: float = 2.0) -> str:
     except Exception:
         return "error"
 
+import threading
+
+_ext_services_cache = {
+    "timestamp": 0.0,
+    "supabase": "not_configured",
+    "smtp": "not_configured",
+    "ai_provider": "not_configured",
+    "redis": "not_configured",
+}
+_ext_services_lock = threading.Lock()
+_EXT_HEALTH_CACHE_TTL = 30.0  # seconds
+
+def _get_cached_external_health() -> dict:
+    """Check external network-bound dependencies with a 30s cache to avoid socket/API churn."""
+    now = time.time()
+    with _ext_services_lock:
+        if now - _ext_services_cache["timestamp"] < _EXT_HEALTH_CACHE_TTL:
+            return dict(_ext_services_cache)
+
+        # 1. Supabase check
+        supabase_status = "not_configured"
+        if settings.supabase_url:
+            try:
+                from app.core.storage import get_supabase_client
+                client = get_supabase_client()
+                if client:
+                    client.storage.list_buckets()
+                    supabase_status = "ok"
+                else:
+                    supabase_status = "unavailable"
+            except Exception as _supa_err:
+                logger.warning(f"Supabase health probe failed: {_supa_err}")
+                supabase_status = "error"
+
+        # 2. SMTP check
+        smtp_status = "not_configured"
+        if settings.smtp_host:
+            smtp_status = check_tcp_connection(settings.smtp_host, settings.smtp_port)
+
+        # 3. AI provider check
+        ai_provider_status = "not_configured"
+        has_groq = bool((getattr(settings, "groq_api_key", None) or "").strip() or (getattr(settings, "groq_keys", []) != []))
+        if has_groq:
+            ai_provider_status = check_tcp_connection("api.groq.com", 443)
+
+        # 4. Redis check
+        redis_status = "not_configured"
+        if settings.redis_url:
+            try:
+                from app.core.redis_store import get_redis_client
+                redis_client = get_redis_client()
+                if redis_client:
+                    redis_client.ping()
+                    redis_status = "ok"
+                else:
+                    redis_status = "unavailable"
+            except Exception:
+                redis_status = "error"
+
+        _ext_services_cache.update({
+            "timestamp": now,
+            "supabase": supabase_status,
+            "smtp": smtp_status,
+            "ai_provider": ai_provider_status,
+            "redis": redis_status,
+        })
+        return dict(_ext_services_cache)
+
 @app.get("/health", tags=["System"])
 def health_check():
     uptime_seconds = round(time.time() - app.state.start_time, 2)
@@ -638,34 +706,11 @@ def health_check():
     except Exception:
         db_status = "error"
     
-    redis_status = "not_configured"
-    if settings.redis_url:
-        try:
-            from app.core.redis_store import get_redis_client
-            redis_client = get_redis_client()
-            if redis_client:
-                redis_client.ping()
-                redis_status = "ok"
-            else:
-                redis_status = "unavailable"
-        except Exception:
-            redis_status = "error"
-    
-    supabase_status = "not_configured"
-    if settings.supabase_url:
-        try:
-            from app.core.storage import get_supabase_client
-            client = get_supabase_client()
-            if client:
-                # Use storage bucket listing — avoids RLS-protected tables.
-                # If the service role key is valid, this always succeeds regardless of RLS policies.
-                client.storage.list_buckets()
-                supabase_status = "ok"
-            else:
-                supabase_status = "unavailable"
-        except Exception as _supa_err:
-            logger.warning(f"Supabase health probe failed: {_supa_err}")
-            supabase_status = "error"
+    ext_health = _get_cached_external_health()
+    redis_status = ext_health["redis"]
+    supabase_status = ext_health["supabase"]
+    smtp_status = ext_health["smtp"]
+    ai_provider_status = ext_health["ai_provider"]
 
     rate_limiter_status = "active" if getattr(app.state, "limiter", None) else "inactive"
 
@@ -692,15 +737,6 @@ def health_check():
             imap_status = "stuck_or_delayed"
         else:
             imap_status = "ok"
-
-    smtp_status = "not_configured"
-    if settings.smtp_host:
-        smtp_status = check_tcp_connection(settings.smtp_host, settings.smtp_port)
-
-    ai_provider_status = "not_configured"
-    has_groq = bool((getattr(settings, "groq_api_key", None) or "").strip() or (getattr(settings, "groq_keys", []) != []))
-    if has_groq:
-        ai_provider_status = check_tcp_connection("api.groq.com", 443)
 
     is_healthy = (
         db_status == "ok" and
@@ -742,29 +778,10 @@ def readiness_check():
     except Exception:
         db_status = "error"
 
-    supabase_status = "not_configured"
-    if settings.supabase_url:
-        try:
-            from app.core.storage import get_supabase_client
-            client = get_supabase_client()
-            if client:
-                # Use storage bucket listing — avoids RLS-protected tables.
-                client.storage.list_buckets()
-                supabase_status = "ok"
-            else:
-                supabase_status = "unavailable"
-        except Exception as _supa_err:
-            logger.warning(f"Supabase readiness probe failed: {_supa_err}")
-            supabase_status = "error"
-
-    smtp_status = "not_configured"
-    if settings.smtp_host:
-        smtp_status = check_tcp_connection(settings.smtp_host, settings.smtp_port)
-
-    ai_provider_status = "not_configured"
-    has_groq = bool((getattr(settings, "groq_api_key", None) or "").strip() or (getattr(settings, "groq_keys", []) != []))
-    if has_groq:
-        ai_provider_status = check_tcp_connection("api.groq.com", 443)
+    ext_health = _get_cached_external_health()
+    supabase_status = ext_health["supabase"]
+    smtp_status = ext_health["smtp"]
+    ai_provider_status = ext_health["ai_provider"]
 
     is_ready = (
         db_status == "ok" and

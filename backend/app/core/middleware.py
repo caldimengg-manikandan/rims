@@ -219,6 +219,21 @@ def _cached_set(cache_key: str, data: Optional[dict]) -> None:
     _cache_set(cache_key, data)
 
 
+_NOT_FOUND: dict = {"__not_found__": True}
+
+
+def _get_or_lookup(cache_key: str, lookup_fn, *args) -> Optional[dict]:
+    """Retrieve tenant from cache, or look up from DB and cache result (including negative hits)."""
+    cached = _cached_get(cache_key)
+    if cached is not None:
+        if isinstance(cached, dict) and cached.get("__not_found__"):
+            return None
+        return cached
+    data = lookup_fn(*args)
+    _cached_set(cache_key, data if data is not None else _NOT_FOUND)
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Tenant DB lookup
 # ---------------------------------------------------------------------------
@@ -427,20 +442,14 @@ class TenantResolutionMiddleware:
         slug = _resolve_slug_from_host(host)
         if slug:
             cache_key = f"tenant:slug:{slug}"
-            tenant_data = _cached_get(cache_key)
-            if tenant_data is None:
-                tenant_data = _lookup_tenant_by_slug(slug)
-                _cached_set(cache_key, tenant_data)
+            tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_slug, slug)
 
         # 2. X-Tenant-Slug header
         if tenant_data is None:
             slug_header = headers.get("x-tenant-slug", "").strip()
             if slug_header:
                 cache_key = f"tenant:slug:{slug_header}"
-                tenant_data = _cached_get(cache_key)
-                if tenant_data is None:
-                    tenant_data = _lookup_tenant_by_slug(slug_header)
-                    _cached_set(cache_key, tenant_data)
+                tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_slug, slug_header)
                 if tenant_data is None:
                     resolve_error = f"Tenant slug '{slug_header}' not found"
 
@@ -449,10 +458,7 @@ class TenantResolutionMiddleware:
             tid_header = headers.get("x-tenant-id", "").strip()
             if tid_header:
                 cache_key = f"tenant:id:{tid_header}"
-                tenant_data = _cached_get(cache_key)
-                if tenant_data is None:
-                    tenant_data = _lookup_tenant_by_id(tid_header)
-                    _cached_set(cache_key, tenant_data)
+                tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_id, tid_header)
                 if tenant_data is None:
                     resolve_error = f"Tenant ID '{tid_header}' not found"
 
@@ -465,17 +471,11 @@ class TenantResolutionMiddleware:
                 try:
                     uuid.UUID(jwt_tenant_ref)  # it's a UUID
                     cache_key = f"tenant:id:{jwt_tenant_ref}"
-                    tenant_data = _cached_get(cache_key)
-                    if tenant_data is None:
-                        tenant_data = _lookup_tenant_by_id(jwt_tenant_ref)
-                        _cached_set(cache_key, tenant_data)
+                    tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_id, jwt_tenant_ref)
                 except ValueError:
                     # Treat as slug
                     cache_key = f"tenant:slug:{jwt_tenant_ref}"
-                    tenant_data = _cached_get(cache_key)
-                    if tenant_data is None:
-                        tenant_data = _lookup_tenant_by_slug(jwt_tenant_ref)
-                        _cached_set(cache_key, tenant_data)
+                    tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_slug, jwt_tenant_ref)
 
         # 5. Default tenant fallback (dev/single-tenant deployments)
         if tenant_data is None and not resolve_error:
@@ -483,10 +483,7 @@ class TenantResolutionMiddleware:
             _settings = _get_settings()
             if _settings.env != "production":
                 cache_key = "tenant:slug:default"
-                tenant_data = _cached_get(cache_key)
-                if tenant_data is None:
-                    tenant_data = _lookup_tenant_by_slug("default")
-                    _cached_set(cache_key, tenant_data)
+                tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_slug, "default")
 
         # ── Enforce on protected routes ──────────────────────────────────────
         tenant_required = _is_tenant_required(path) and not _is_exempt(path)
