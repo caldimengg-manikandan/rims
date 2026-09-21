@@ -59,33 +59,55 @@ const nextConfig = {
     return config;
   },
   async headers() {
+    const isProd = process.env.NODE_ENV === 'production';
+    const securityHeaders = [
+      {
+        key: 'X-Frame-Options',
+        value: 'DENY',
+      },
+      {
+        key: 'X-Content-Type-Options',
+        value: 'nosniff',
+      },
+      {
+        key: 'X-XSS-Protection',
+        value: '1; mode=block',
+      },
+      {
+        key: 'Referrer-Policy',
+        value: 'strict-origin-when-cross-origin',
+      },
+      {
+        key: 'Strict-Transport-Security',
+        value: 'max-age=31536000; includeSubDomains',
+      },
+    ];
+
+    // Apply CSP in production only — avoids breaking Webpack HMR in development.
+    if (isProd) {
+      const backendOrigin = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://caldimproducts.com';
+      const csp = [
+        `default-src 'self'`,
+        `script-src 'self' 'unsafe-inline' blob:`,
+        // unsafe-inline required for Monaco editor; blob: for its worker threads.
+        `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
+        `font-src 'self' https://fonts.gstatic.com`,
+        `img-src 'self' data: blob: https:`,
+        `connect-src 'self' ${backendOrigin} wss:`,
+        `worker-src 'self' blob:`,
+        `frame-ancestors 'none'`,
+        `base-uri 'self'`,
+        `form-action 'self'`,
+      ].join('; ');
+      securityHeaders.push({ key: 'Content-Security-Policy', value: csp });
+    }
+
     return [
       {
         source: '/:path*',
-        headers: [
-          {
-            key: 'X-Frame-Options',
-            value: 'DENY',
-          },
-          {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
-          },
-          {
-            key: 'X-XSS-Protection',
-            value: '1; mode=block',
-          },
-          {
-            key: 'Referrer-Policy',
-            value: 'strict-origin-when-cross-origin',
-          },
-          {
-            key: 'Strict-Transport-Security',
-            value: 'max-age=31536000; includeSubDomains',
-          },
-        ],
+        headers: securityHeaders,
       },
-    ]
+    ];
   },
   async redirects() {
     return [

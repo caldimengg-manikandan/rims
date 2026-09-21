@@ -1314,6 +1314,21 @@ class CodeRunRequest(BaseModel):
     source_code: str
     custom_stdin: Optional[str] = None
 
+    @field_validator('language')
+    @classmethod
+    def validate_run_language(cls, v: str) -> str:
+        from app.core.language_registry import REMOVED_LANGUAGE_IDS, ALL_LANGUAGE_IDS
+        normalized = v.strip().lower()
+        if normalized in REMOVED_LANGUAGE_IDS:
+            raise ValueError(
+                f"Language '{normalized}' is no longer supported for coding assessments."
+            )
+        if normalized not in ALL_LANGUAGE_IDS:
+            raise ValueError(
+                f"Unsupported language '{normalized}'."
+            )
+        return normalized
+
 
 class CodeRunResponse(BaseModel):
     is_custom_input: bool
@@ -1336,6 +1351,21 @@ class CodeSubmitRequest(BaseModel):
     language: str
     source_code: str
 
+    @field_validator('language')
+    @classmethod
+    def validate_submit_language(cls, v: str) -> str:
+        from app.core.language_registry import REMOVED_LANGUAGE_IDS, ALL_LANGUAGE_IDS
+        normalized = v.strip().lower()
+        if normalized in REMOVED_LANGUAGE_IDS:
+            raise ValueError(
+                f"Language '{normalized}' is no longer supported for coding assessments."
+            )
+        if normalized not in ALL_LANGUAGE_IDS:
+            raise ValueError(
+                f"Unsupported language '{normalized}'."
+            )
+        return normalized
+
 
 class CodeSubmitResponse(BaseModel):
     submission_id: int
@@ -1353,6 +1383,10 @@ class CodingSessionResponse(BaseModel):
     duration_minutes: int
     coding_score: Optional[float] = None
     coding_completed: bool = False
+    # Server-authoritative deadline for the coding round.
+    # Frontend MUST derive its countdown from this value, not from duration_minutes alone.
+    # None if the round has not yet started.
+    coding_deadline: Optional[datetime] = None
     problems: List[CodingProblemResponse] = []
     submissions_summary: List[dict] = []
 

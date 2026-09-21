@@ -1,6 +1,9 @@
 """
 Central Language Registry for CALRIMS Coding Assessment Module.
 Defines supported programming languages, docker images, execution commands, and templates.
+
+Supported languages: python3, java21, cpp, javascript, golang, rust
+Removed (server-side rejected): csharp, typescript
 """
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
@@ -127,32 +130,8 @@ SUPPORTED_LANGUAGES: Dict[str, LanguageConfig] = {
             "solve();\n"
         ),
     ),
-    "typescript": LanguageConfig(
-        id="typescript",
-        display_name="TypeScript (Node.js 20)",
-        docker_image="node:20-alpine",
-        source_filename="solution.ts",
-        compile_cmd=["npx", "-y", "typescript", "solution.ts", "--target", "es2022", "--module", "commonjs"],
-        run_cmd=["node", "solution.js"],
-        monaco_language="typescript",
-        extension="ts",
-        default_starter_code=(
-            "import * as fs from 'fs';\n\n"
-            "function solve(): void {\n"
-            "    const input = fs.readFileSync(0, 'utf-8');\n"
-            "    // Implement solution\n"
-            "}\n\n"
-            "solve();\n"
-        ),
-        default_solution_template=(
-            "import * as fs from 'fs';\n\n"
-            "function solve(): void {\n"
-            "    const input = fs.readFileSync(0, 'utf-8');\n"
-            "    // Reference solution logic\n"
-            "}\n\n"
-            "solve();\n"
-        ),
-    ),
+    # NOTE: TypeScript is intentionally NOT supported. Use javascript instead.
+    # TypeScript submissions are rejected server-side.
     "golang": LanguageConfig(
         id="golang",
         display_name="Go 1.22",
@@ -177,32 +156,7 @@ SUPPORTED_LANGUAGES: Dict[str, LanguageConfig] = {
             "}\n"
         ),
     ),
-    "csharp": LanguageConfig(
-        id="csharp",
-        display_name="C# (.NET 8)",
-        docker_image="mcr.microsoft.com/dotnet/sdk:8.0-alpine",
-        source_filename="Program.cs",
-        compile_cmd=["dotnet", "new", "console", "-o", "app", "--force"],
-        run_cmd=["dotnet", "run", "--project", "app"],
-        monaco_language="csharp",
-        extension="cs",
-        default_starter_code=(
-            "using System;\n\n"
-            "class Program {\n"
-            "    static void Main(string[] args) {\n"
-            "        // Implement solution\n"
-            "    }\n"
-            "}\n"
-        ),
-        default_solution_template=(
-            "using System;\n\n"
-            "class Program {\n"
-            "    static void Main(string[] args) {\n"
-            "        // Reference solution logic\n"
-            "    }\n"
-            "}\n"
-        ),
-    ),
+    # NOTE: C# is intentionally NOT supported. C# submissions are rejected server-side.
     "rust": LanguageConfig(
         id="rust",
         display_name="Rust 1.77",
@@ -231,12 +185,17 @@ ALL_LANGUAGE_IDS = frozenset(SUPPORTED_LANGUAGES.keys())
 # Keep backwards-compatible alias
 V1_LANGUAGE_IDS = ALL_LANGUAGE_IDS
 
+# Languages that have been explicitly removed and must be rejected server-side
+# even if a client manually crafts a request with these identifiers.
+REMOVED_LANGUAGE_IDS = frozenset({"csharp", "typescript"})
+
 
 def validate_supported_languages(languages: List[str]) -> List[str]:
     """
     Validates that the provided list of language IDs is non-empty
     and only contains supported language identifiers.
     Returns normalized lowercase language list or raises ValueError.
+    Explicitly rejects removed languages (csharp, typescript) with a clear error.
     """
     if not languages:
         raise ValueError("At least one supported language must be specified.")
@@ -244,6 +203,14 @@ def validate_supported_languages(languages: List[str]) -> List[str]:
     normalized = [str(lang).strip().lower() for lang in languages if lang and str(lang).strip()]
     if not normalized:
         raise ValueError("At least one valid supported language must be specified.")
+
+    # Explicitly reject removed languages first for a clear error message
+    removed = [lang for lang in normalized if lang in REMOVED_LANGUAGE_IDS]
+    if removed:
+        raise ValueError(
+            f"Language(s) {', '.join(removed)} are no longer supported. "
+            f"Supported languages: {', '.join(sorted(ALL_LANGUAGE_IDS))}."
+        )
 
     invalid = [lang for lang in normalized if lang not in ALL_LANGUAGE_IDS]
     if invalid:

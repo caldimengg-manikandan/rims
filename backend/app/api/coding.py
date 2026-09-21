@@ -1,21 +1,32 @@
 """
 Coding Assessment REST API.
 Provides HR management endpoints and Candidate sandbox execution endpoints.
+
+Security guarantees enforced by this module:
+- Payload size limits: source code, stdin, and output are bounded server-side (Item 6).
+- Language enforcement: csharp and typescript are rejected at schema + API layers (Items 7, 8).
+- Coding deadline: derived from coding_started_at + duration; enforced on run/submit/complete (Item 9).
+- Tenant isolation: all resource lookups are explicitly scoped to tenant_id (Item 13).
+- Problem ownership: cross-tenant problem IDs are rejected when building question sets (Item 14).
+- Rate limiting: run and submit endpoints are rate-limited to prevent abuse (Item 15).
+- Completion validation: /complete enforces stage, coding-enabled, deadline, and score (Item 11).
 """
 import logging
+from datetime import datetime, timedelta, timezone as _tz
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 
 import json
 from app.infrastructure.database import get_db
 from app.core.auth import get_current_hr, get_current_interview
-from app.core.ownership import get_tenant_context
+from app.core.ownership import get_tenant_context, validate_tenant_ownership
 from app.core.tenant_context import TenantContext
 from app.core.rate_limiter import limiter
 from app.core.timezone import get_ist_now
-from app.core.language_registry import get_all_languages_metadata, validate_supported_languages
+from app.core.config import get_settings
+from app.core.language_registry import get_all_languages_metadata, validate_supported_languages, REMOVED_LANGUAGE_IDS
 from app.domain.models import (
     User,
     Job,
@@ -46,8 +57,78 @@ from app.domain.schemas import (
 from app.execution.service import ExecutionService, SubmissionService
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/api/coding", tags=["Coding Assessment"])
+
+
+# ============================================================================
+# Helpers — Payload limits
+# ============================================================================
+
+def _check_source_code_size(source_code: str) -> None:
+    """Raise HTTP 413 if source_code exceeds the configured maximum size."""
+    encoded = source_code.encode("utf-8", errors="replace")
+    if len(encoded) > settings.coding_max_source_code_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Source code exceeds maximum size limit",
+        )
+
+
+def _check_stdin_size(stdin: Optional[str]) -> None:
+    """Raise HTTP 413 if custom stdin exceeds the configured maximum size."""
+    if stdin is None:
+        return
+    encoded = stdin.encode("utf-8", errors="replace")
+    if len(encoded) > settings.coding_max_stdin_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Custom input (stdin) exceeds maximum size limit",
+        )
+
+
+def _check_removed_language(language: str) -> None:
+    """Defense-in-depth: explicitly reject removed languages at the API layer."""
+    normalized = (language or "").strip().lower()
+    if normalized in REMOVED_LANGUAGE_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Language '{normalized}' is no longer supported. Use a supported language.",
+        )
+
+
+# ============================================================================
+# Helpers — Coding deadline enforcement
+# ============================================================================
+
+def _get_coding_deadline(interview: Interview, job: Job):
+    """
+    Returns the server-authoritative coding deadline for this interview.
+    Deadline = coding_started_at + coding_round_duration_minutes.
+    Returns None if coding has not yet started (coding_started_at is None).
+    """
+    if not interview.coding_started_at:
+        return None
+    duration = getattr(job, "coding_round_duration_minutes", None) or 60
+    return interview.coding_started_at + timedelta(minutes=duration)
+
+
+def _assert_coding_not_expired(interview: Interview, job: Job) -> None:
+    """Raise HTTP 403 if the coding round deadline has passed."""
+    deadline = _get_coding_deadline(interview, job)
+    if deadline is None:
+        return  # Not started yet — no deadline to enforce
+    # Use timezone-aware UTC now to compare with the (potentially timezone-aware) deadline
+    now = datetime.now(_tz.utc)
+    # Normalise deadline to UTC if it is naive (coding_started_at stored without tz)
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=_tz.utc)
+    if now > deadline:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Coding round has expired. No further submissions are accepted.",
+        )
 
 
 # ============================================================================
@@ -102,10 +183,12 @@ def list_coding_problems(
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """List all coding problems for the active tenant."""
+    """List coding problems scoped to the active tenant only."""
     query = db.query(CodingProblem)
     if tenant_ctx.id:
-        query = query.filter(or_(CodingProblem.tenant_id == tenant_ctx.id, CodingProblem.tenant_id.is_(None)))
+        # Tenant isolation: only return problems owned by this tenant.
+        # Intentionally exclude NULL-tenant (global) problems unless no tenant is set.
+        query = query.filter(CodingProblem.tenant_id == tenant_ctx.id)
     return query.order_by(CodingProblem.id.desc()).all()
 
 
@@ -179,7 +262,11 @@ def get_coding_problem_detail(
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """Get problem detail including reference solution code (HR only)."""
-    problem = db.query(CodingProblem).filter(CodingProblem.id == problem_id).first()
+    # Tenant isolation: scope lookup to current tenant
+    problem = db.query(CodingProblem).filter(
+        CodingProblem.id == problem_id,
+        CodingProblem.tenant_id == tenant_ctx.id,
+    ).first()
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found.")
     return _format_problem_hr_detail(problem)
@@ -194,7 +281,11 @@ def update_coding_problem(
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """Update coding problem and replace test cases if supplied."""
-    problem = db.query(CodingProblem).filter(CodingProblem.id == problem_id).first()
+    # Tenant isolation: scope lookup to current tenant
+    problem = db.query(CodingProblem).filter(
+        CodingProblem.id == problem_id,
+        CodingProblem.tenant_id == tenant_ctx.id,
+    ).first()
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found.")
 
@@ -250,8 +341,12 @@ def delete_coding_problem(
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """Delete a coding problem."""
-    problem = db.query(CodingProblem).filter(CodingProblem.id == problem_id).first()
+    """Delete a coding problem owned by the current tenant."""
+    # Tenant isolation: scope lookup to current tenant
+    problem = db.query(CodingProblem).filter(
+        CodingProblem.id == problem_id,
+        CodingProblem.tenant_id == tenant_ctx.id,
+    ).first()
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found.")
     db.delete(problem)
@@ -274,7 +369,11 @@ def validate_problem_solution(
     - Generates and stores missing expected outputs.
     - Verifies existing outputs without silently overwriting.
     """
-    problem = db.query(CodingProblem).filter(CodingProblem.id == problem_id).first()
+    # Tenant isolation
+    problem = db.query(CodingProblem).filter(
+        CodingProblem.id == problem_id,
+        CodingProblem.tenant_id == tenant_ctx.id,
+    ).first()
     if not problem:
         raise HTTPException(status_code=404, detail="Coding problem not found.")
 
@@ -294,16 +393,45 @@ def validate_problem_solution(
 # HR Endpoints — Question Sets Management
 # ============================================================================
 
+def _validate_problem_ownership(problem_ids: List[int], tenant_ctx: TenantContext, db: Session) -> None:
+    """
+    Validates that every problem_id in the list belongs to the current tenant.
+    Raises HTTP 400 if any problem is missing or belongs to another tenant.
+    This prevents cross-tenant join records in CodingQuestionSetItem.
+    """
+    if not problem_ids:
+        return
+    if not tenant_ctx.id:
+        return  # No tenant context — skip (dev/root-admin scenarios)
+
+    # Fetch all problems that belong to this tenant
+    owned_problems = db.query(CodingProblem.id).filter(
+        CodingProblem.id.in_(problem_ids),
+        CodingProblem.tenant_id == tenant_ctx.id,
+    ).all()
+    owned_ids = {row[0] for row in owned_problems}
+
+    not_owned = [pid for pid in problem_ids if pid not in owned_ids]
+    if not_owned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Problem ID(s) {not_owned} do not exist or belong to a different tenant. "
+                "All problems must be owned by the current tenant."
+            ),
+        )
+
+
 @router.get("/question-sets", response_model=List[CodingQuestionSetResponse])
 def list_coding_question_sets(
     current_user: User = Depends(get_current_hr),
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """List all coding question sets for the active tenant."""
+    """List coding question sets scoped to the active tenant."""
     query = db.query(CodingQuestionSet)
     if tenant_ctx.id:
-        query = query.filter(or_(CodingQuestionSet.tenant_id == tenant_ctx.id, CodingQuestionSet.tenant_id.is_(None)))
+        query = query.filter(CodingQuestionSet.tenant_id == tenant_ctx.id)
     return query.order_by(CodingQuestionSet.id.desc()).all()
 
 
@@ -314,7 +442,11 @@ def create_coding_question_set(
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """Create a new coding question set defining supported languages and ordered problems."""
+    """Create a new coding question set. Validates that all problem IDs belong to this tenant."""
+    # Cross-tenant problem ownership validation (Item 14)
+    if data.problem_ids:
+        _validate_problem_ownership(data.problem_ids, tenant_ctx, db)
+
     new_set = CodingQuestionSet(
         tenant_id=tenant_ctx.id,
         title=data.title.strip(),
@@ -346,8 +478,11 @@ def get_coding_question_set(
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """Get a question set by ID."""
-    q_set = db.query(CodingQuestionSet).filter(CodingQuestionSet.id == set_id).first()
+    """Get a question set by ID (tenant-scoped)."""
+    q_set = db.query(CodingQuestionSet).filter(
+        CodingQuestionSet.id == set_id,
+        CodingQuestionSet.tenant_id == tenant_ctx.id,
+    ).first()
     if not q_set:
         raise HTTPException(status_code=404, detail="Coding question set not found.")
     return q_set
@@ -364,8 +499,12 @@ def update_coding_question_set(
     """
     Update a question set.
     Enforces language change protection for active jobs.
+    Validates problem ownership before creating join records.
     """
-    q_set = db.query(CodingQuestionSet).filter(CodingQuestionSet.id == set_id).first()
+    q_set = db.query(CodingQuestionSet).filter(
+        CodingQuestionSet.id == set_id,
+        CodingQuestionSet.tenant_id == tenant_ctx.id,
+    ).first()
     if not q_set:
         raise HTTPException(status_code=404, detail="Coding question set not found.")
 
@@ -375,8 +514,12 @@ def update_coding_question_set(
         removed_langs = old_langs - new_langs
 
         if removed_langs:
-            # Check for active open jobs referencing this question set
-            active_jobs = db.query(Job).filter(Job.coding_repo_set_id == set_id, Job.status == "open").all()
+            # Check for active open jobs referencing this question set (tenant-scoped)
+            active_jobs = db.query(Job).filter(
+                Job.coding_repo_set_id == set_id,
+                Job.status == "open",
+                Job.tenant_id == tenant_ctx.id,
+            ).all()
             for job in active_jobs:
                 job_langs = set(job.coding_allowed_languages or [])
                 conflict = removed_langs.intersection(job_langs)
@@ -397,6 +540,8 @@ def update_coding_question_set(
         q_set.description = data.description.strip() if data.description else None
 
     if data.problem_ids is not None:
+        # Cross-tenant problem ownership validation (Item 14)
+        _validate_problem_ownership(data.problem_ids, tenant_ctx, db)
         db.query(CodingQuestionSetItem).filter(CodingQuestionSetItem.question_set_id == set_id).delete()
         for order, pid in enumerate(data.problem_ids, start=1):
             item = CodingQuestionSetItem(
@@ -418,8 +563,11 @@ def delete_coding_question_set(
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """Delete a coding question set."""
-    q_set = db.query(CodingQuestionSet).filter(CodingQuestionSet.id == set_id).first()
+    """Delete a coding question set (tenant-scoped)."""
+    q_set = db.query(CodingQuestionSet).filter(
+        CodingQuestionSet.id == set_id,
+        CodingQuestionSet.tenant_id == tenant_ctx.id,
+    ).first()
     if not q_set:
         raise HTTPException(status_code=404, detail="Coding question set not found.")
     db.delete(q_set)
@@ -434,10 +582,21 @@ def get_interview_coding_submissions(
     db: Session = Depends(get_db),
     tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
-    """HR inspects all coding submissions and execution details for an interview."""
+    """HR inspects all coding submissions for an interview (tenant-scoped)."""
+    # Verify the interview belongs to this tenant before returning submissions
+    interview = db.query(Interview).filter(
+        Interview.id == interview_id,
+        Interview.tenant_id == tenant_ctx.id,
+    ).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+
     submissions = (
         db.query(CodingSubmission)
-        .filter(CodingSubmission.interview_id == interview_id)
+        .filter(
+            CodingSubmission.interview_id == interview_id,
+            CodingSubmission.tenant_id == tenant_ctx.id,
+        )
         .order_by(CodingSubmission.submitted_at.desc())
         .all()
     )
@@ -469,10 +628,14 @@ def get_candidate_coding_session(
     db: Session = Depends(get_db),
 ):
     """
-    Candidate workspace setup:
+    Candidate workspace setup.
     Resolves Interview -> Application -> Job -> CodingQuestionSet.
-    Returns allowed languages, ordered problems, and starter code strictly filtered
-    to Job.coding_allowed_languages. Never exposes solution_code.
+    Returns allowed languages, ordered problems, server-authoritative deadline,
+    and starter code strictly filtered to Job.coding_allowed_languages.
+    Never exposes solution_code.
+
+    Sets coding_started_at on first call so the server-authoritative deadline
+    can be derived: deadline = coding_started_at + coding_round_duration_minutes.
     """
     if not current_interview.application or not current_interview.application.job:
         raise HTTPException(status_code=404, detail="Interview is not linked to an active job posting.")
@@ -484,6 +647,11 @@ def get_candidate_coding_session(
     q_set = db.query(CodingQuestionSet).filter(CodingQuestionSet.id == job.coding_repo_set_id).first()
     if not q_set:
         raise HTTPException(status_code=404, detail="Coding question set assigned to this job not found.")
+
+    # Record coding start time on first access (server-authoritative deadline anchor)
+    if not current_interview.coding_started_at:
+        current_interview.coding_started_at = get_ist_now()
+        db.flush()
 
     allowed_languages = job.coding_allowed_languages or q_set.supported_languages or []
 
@@ -509,7 +677,7 @@ def get_candidate_coding_session(
         raw_starter = p.starter_code or {}
         filtered_starter = {lang: code for lang, code in raw_starter.items() if lang in allowed_languages}
 
-        # Public test cases only
+        # Public test cases only — never expose hidden test cases to candidates
         public_test_cases = [
             CodingTestCaseResponse(
                 id=tc.id,
@@ -558,26 +726,50 @@ def get_candidate_coding_session(
         for s in subs
     ]
 
+    # Compute server-authoritative deadline
+    coding_deadline = _get_coding_deadline(current_interview, job)
+
+    db.commit()
+
     return CodingSessionResponse(
         allowed_languages=allowed_languages,
         duration_minutes=job.coding_round_duration_minutes or 60,
         coding_score=current_interview.coding_score,
         coding_completed=current_interview.coding_completed or False,
+        coding_deadline=coding_deadline,
         problems=problems_response,
         submissions_summary=submissions_summary,
     )
 
 
 @router.post("/run", response_model=CodeRunResponse)
+@limiter.limit(settings.coding_run_rate_limit)
 def candidate_run_code(
+    request: Request,
     payload: CodeRunRequest,
     current_interview: Interview = Depends(get_current_interview),
     db: Session = Depends(get_db),
 ):
     """
     Run candidate code against public/sample test cases or custom stdin.
-    Enforces Job.coding_allowed_languages. Never exposes hidden tests.
+    Enforces:
+    - Language allowlist (Job.coding_allowed_languages)
+    - Removed language rejection (csharp, typescript)
+    - Payload size limits (source code, stdin)
+    - Server-authoritative coding deadline
+    Never exposes hidden tests.
     """
+    # Defense-in-depth: reject removed languages even if schema validation was bypassed
+    _check_removed_language(payload.language)
+    # Payload size enforcement
+    _check_source_code_size(payload.source_code)
+    _check_stdin_size(payload.custom_stdin)
+
+    # Deadline enforcement
+    if not current_interview.application or not current_interview.application.job:
+        raise HTTPException(status_code=404, detail="Job association not found for interview.")
+    _assert_coding_not_expired(current_interview, current_interview.application.job)
+
     submission_service = SubmissionService(db)
     result = submission_service.handle_run(
         interview=current_interview,
@@ -586,19 +778,42 @@ def candidate_run_code(
         source_code=payload.source_code,
         custom_stdin=payload.custom_stdin,
     )
+
+    # Output size enforcement
+    stdout = result.get("stdout") or ""
+    if isinstance(stdout, str) and len(stdout.encode("utf-8", errors="replace")) > settings.coding_max_output_bytes:
+        result["stdout"] = stdout[: settings.coding_max_output_bytes // 4] + "\n...[output truncated: exceeds maximum size limit]"
+
     return result
 
 
 @router.post("/submit", response_model=CodeSubmitResponse)
+@limiter.limit(settings.coding_submit_rate_limit)
 def candidate_submit_code(
+    request: Request,
     payload: CodeSubmitRequest,
     current_interview: Interview = Depends(get_current_interview),
     db: Session = Depends(get_db),
 ):
     """
     Submit candidate code for evaluation against all test cases.
+    Enforces:
+    - Language allowlist
+    - Removed language rejection
+    - Source code size limit
+    - Server-authoritative coding deadline
     Records submission, updates Interview.coding_score, and updates ApplicationStage.
     """
+    # Defense-in-depth: reject removed languages
+    _check_removed_language(payload.language)
+    # Payload size enforcement
+    _check_source_code_size(payload.source_code)
+
+    # Deadline enforcement
+    if not current_interview.application or not current_interview.application.job:
+        raise HTTPException(status_code=404, detail="Job association not found for interview.")
+    _assert_coding_not_expired(current_interview, current_interview.application.job)
+
     submission_service = SubmissionService(db)
     result = submission_service.handle_submit(
         interview=current_interview,
@@ -617,20 +832,83 @@ def candidate_complete_coding_round(
 ):
     """
     Mark coding round as completed.
+
+    Server-side validations (Item 11):
+    1. Interview must be in the 'coding' stage.
+    2. Coding round must be enabled for this job.
+    3. Coding deadline must not have expired.
+    4. Calculates final coding score from persisted submissions.
+
     Advances interview pipeline or triggers final interview completion.
     """
+    # 1. Verify interview is in coding stage
+    if current_interview.interview_stage != "coding":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot complete coding round: interview is in stage '{current_interview.interview_stage}', not 'coding'.",
+        )
+
+    # 2. Verify coding is enabled
+    if not current_interview.application or not current_interview.application.job:
+        raise HTTPException(status_code=404, detail="Job association not found for interview.")
+    job = current_interview.application.job
+
+    if not job.coding_round_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Coding round is not enabled for this job.",
+        )
+
+    # 3. Verify deadline has not expired
+    _assert_coding_not_expired(current_interview, job)
+
+    # 4. Already completed guard
+    if current_interview.coding_completed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Coding round has already been completed.",
+        )
+
+    # 5. Calculate final coding score from persisted submissions
+    if job.coding_repo_set_id:
+        set_items = db.query(CodingQuestionSetItem).filter(
+            CodingQuestionSetItem.question_set_id == job.coding_repo_set_id
+        ).all()
+        problem_ids = [item.problem_id for item in set_items]
+
+        if problem_ids:
+            problem_scores = []
+            for pid in problem_ids:
+                best_sub = (
+                    db.query(CodingSubmission)
+                    .filter(
+                        CodingSubmission.interview_id == current_interview.id,
+                        CodingSubmission.problem_id == pid,
+                    )
+                    .order_by(CodingSubmission.score.desc())
+                    .first()
+                )
+                problem_scores.append(best_sub.score if best_sub else 0.0)
+
+            final_score = round(sum(problem_scores) / len(problem_scores), 2)
+            current_interview.coding_score = final_score
+
     current_interview.coding_completed = True
     current_interview.coding_completed_at = get_ist_now()
 
     # Determine if next stage exists
     from app.api.interviews import get_next_interview_stage, STAGE_COMPLETED
-    job = current_interview.application.job if current_interview.application else None
-    next_stage = get_next_interview_stage(job, "coding") if job else None
+    next_stage = get_next_interview_stage(job, "coding")
 
     if next_stage:
         current_interview.interview_stage = next_stage
         db.commit()
-        return {"success": True, "message": f"Coding round completed. Next stage: {next_stage}.", "completed": False, "new_stage": next_stage}
+        return {
+            "success": True,
+            "message": f"Coding round completed. Next stage: {next_stage}.",
+            "completed": False,
+            "new_stage": next_stage,
+        }
     else:
         # Finalize interview
         current_interview.interview_stage = STAGE_COMPLETED
@@ -647,4 +925,8 @@ def candidate_complete_coding_round(
                 current_interview.application.status = "interview_completed"
 
         db.commit()
-        return {"success": True, "message": "Interview and coding round completed successfully.", "completed": True}
+        return {
+            "success": True,
+            "message": "Interview and coding round completed successfully.",
+            "completed": True,
+        }

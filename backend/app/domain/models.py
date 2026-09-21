@@ -422,6 +422,13 @@ class Offer(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    # Explicit tenant ownership for direct isolation without traversing Application->Job->tenant.
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     offer_sent = Column(Boolean, default=False)
     offer_sent_date = Column(DateTime)
     offer_approval_status = Column(String(20), default='pending') # 'pending', 'approved', 'rejected'
@@ -451,6 +458,13 @@ class Onboarding(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    # Explicit tenant ownership
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     joining_date = Column(DateTime)
     employee_id = Column(String(50), unique=True, index=True)
     id_card_url = Column(String(500))
@@ -464,6 +478,13 @@ class ApplicationStage(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=False, index=True)
+    # Explicit tenant ownership
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     stage_name = Column(String(100), nullable=False, index=True) # e.g., 'Aptitude Round'
     stage_status = Column(String(50), default='pending', index=True) # 'pending', 'pass', 'fail', 'hold'
     score = Column(Float, nullable=True)
@@ -534,6 +555,9 @@ class Interview(Base):
     coding_completed = Column(Boolean, default=False)
     coding_score = Column(Float, nullable=True)
     coding_completed_at = Column(DateTime, nullable=True)
+    # coding_started_at: set when the candidate first opens /api/coding/session.
+    # The authoritative coding deadline = coding_started_at + Job.coding_round_duration_minutes.
+    coding_started_at = Column(DateTime(timezone=True), nullable=True)
     video_recording_path = Column(String(500), nullable=True)
     risk_score = Column(Float, default=0.0, nullable=False, server_default='0.0')
     is_terminated_by_violations = Column(Boolean, default=False, nullable=False, server_default='0')
@@ -697,6 +721,13 @@ class HiringDecision(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     application_id = Column(Integer, ForeignKey('applications.id', ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    # Explicit tenant ownership
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     hr_id = Column(Integer, ForeignKey('users.id', ondelete="SET NULL"), index=True)
     decision = Column(String(20), nullable=False)  # 'hired', 'rejected'
     decision_comments = Column(EncryptedText)
@@ -779,6 +810,13 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
+    # Explicit tenant scoping for audit log isolation
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     action = Column(String(255), nullable=False) # e.g., 'RESUME_SCREENING_COMPLETED'
     resource_type = Column(String(100)) # e.g., 'Application'
     resource_id = Column(Integer)
@@ -1135,6 +1173,43 @@ class CodingSubmission(Base):
     # Relationships
     interview = relationship("Interview", back_populates="coding_submissions")
     problem = relationship("CodingProblem", back_populates="submissions")
+
+
+class ReminderLog(Base):
+    """
+    Idempotency log for onboarding reminders.
+
+    The unique constraint on (application_id, joining_date, reminder_type) ensures:
+    - Each reminder type fires at most once per (candidate, joining_date) combination.
+    - If the joining date changes, the candidate can receive the correct new 7-day reminder
+      for the new date (different joining_date → different row → new reminder allowed).
+    - Concurrent workers cannot send duplicates (INSERT ... ON CONFLICT DO NOTHING).
+    """
+    __tablename__ = "reminder_logs"
+    __table_args__ = (
+        UniqueConstraint(
+            'application_id', 'joining_date', 'reminder_type',
+            name='uq_reminder_log_candidate_date_type'
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey('applications.id', ondelete='CASCADE'), nullable=False, index=True)
+    # Explicit tenant scoping for isolation
+    tenant_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey('tenants.id', ondelete='CASCADE'),
+        nullable=True,
+        index=True,
+    )
+    # Store normalized date (date-only, not datetime) so equality checks are unambiguous
+    joining_date = Column(DateTime, nullable=False, index=True)
+    reminder_type = Column(String(50), nullable=False)  # e.g. '7_day_joining'
+    sent_at = Column(DateTime(timezone=True), default=get_ist_now, server_default=func.now())
+
+    # Relationships
+    application = relationship("Application")
+
 
 
 

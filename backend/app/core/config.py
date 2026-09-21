@@ -125,6 +125,27 @@ class Settings(BaseSettings):
     redis_url: str = ""
     # Clamp idempotency marker + ephemeral replay TTLs (seconds); Redis and in-memory fallback both honor this band.
 
+    # -------------------------------------------------------------------------
+    # Coding execution payload limits
+    # -------------------------------------------------------------------------
+    # Maximum source code size in bytes (default: 64 KB)
+    coding_max_source_code_bytes: int = 65536
+    # Maximum custom stdin size in bytes (default: 16 KB)
+    coding_max_stdin_bytes: int = 16384
+    # Maximum execution output size in bytes (default: 64 KB)
+    coding_max_output_bytes: int = 65536
+
+    # Coding execution rate limits (slowapi format: "N/period")
+    coding_run_rate_limit: str = "20/minute"
+    coding_submit_rate_limit: str = "10/minute"
+
+    # -------------------------------------------------------------------------
+    # IMAP worker flag
+    # -------------------------------------------------------------------------
+    # Set IMAP_WORKER=true on the ONE dedicated worker service that should run
+    # IMAP polling. All other workers ignore IMAP startup to prevent duplicate polling.
+    imap_worker: bool = False
+
     # LinkedIn Auto-Post Integration
     enable_linkedin_posting: bool = False
     linkedin_access_token: str = ""

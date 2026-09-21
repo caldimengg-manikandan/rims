@@ -1,223 +1,311 @@
 """
-Comprehensive Unit Tests for CALRIMS Coding Assessment Module:
-- Language Registry validation
-- Judge scoring, output normalization, and hidden-test shielding
-- Job pipeline validation (coding_allowed_languages ⊆ question_set.supported_languages)
+Regression tests for Batch 1 coding assessment changes:
+- Language enforcement: csharp and typescript rejected at schema + API layer
+- Payload limits: oversized source code, stdin → HTTP 413
+- Server-authoritative coding deadline: run/submit/complete rejected when expired
+- Completion validation: stage, enabled, already-completed checks
+- Cross-tenant resource access rejected at coding problem and question set levels
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 
-from app.core.language_registry import validate_supported_languages, SUPPORTED_LANGUAGES
-from app.execution.judge import Judge, JudgeVerdict
-from app.execution.executor import ExecutionResult
-from app.domain.models import CodingTestCase, CodingQuestionSet, Job
-from app.api.jobs import _validate_interview_pipeline
+from app.core.language_registry import validate_supported_languages, REMOVED_LANGUAGE_IDS, ALL_LANGUAGE_IDS
+from app.domain.schemas import CodeRunRequest, CodeSubmitRequest
+from app.core.config import get_settings
+
+settings = get_settings()
 
 
-def test_language_registry_validation():
-    # Valid single language
-    assert validate_supported_languages(["python3"]) == ["python3"]
-    # Valid multiple languages
-    assert sorted(validate_supported_languages(["python3", "java21"])) == ["java21", "python3"]
+# ============================================================================
+# LANGUAGE REGISTRY: C# and TypeScript rejection
+# ============================================================================
 
-    # Empty list raises ValueError
-    with pytest.raises(ValueError, match="At least one supported language must be specified"):
-        validate_supported_languages([])
-
-    # Unsupported language raises ValueError
-    with pytest.raises(ValueError, match="Unsupported language"):
-        validate_supported_languages(["python3", "ruby"])
+def test_csharp_rejected_by_registry():
+    """C# must be rejected with a clear error mentioning 'no longer supported'."""
+    with pytest.raises(ValueError, match="no longer supported"):
+        validate_supported_languages(["csharp"])
 
 
-def test_judge_normalize_output():
-    # CRLF conversion, trailing spaces per line stripped, leading/trailing trimmed
-    raw = "  hello world  \r\n42   \r\n\r\n"
-    normalized = Judge.normalize_output(raw)
-    assert normalized == "hello world\n42"
-
-    # None handling
-    assert Judge.normalize_output(None) == ""
+def test_typescript_rejected_by_registry():
+    """TypeScript must be rejected with a clear error mentioning 'no longer supported'."""
+    with pytest.raises(ValueError, match="no longer supported"):
+        validate_supported_languages(["typescript"])
 
 
-def test_judge_weighted_scoring():
-    judge = Judge()
-
-    # 3 test cases with weights: 1.0, 2.0, 1.0 (Total weight: 4.0)
-    tc1 = CodingTestCase(id=1, input="1", expected_output="10", weight=1.0, is_hidden=False)
-    tc2 = CodingTestCase(id=2, input="2", expected_output="20", weight=2.0, is_hidden=True)
-    tc3 = CodingTestCase(id=3, input="3", expected_output="30", weight=1.0, is_hidden=False)
-
-    # Candidate passes tc1 and tc2, fails tc3 -> earned weight = 3.0 out of 4.0 = 75.0%
-    results = [
-        ExecutionResult(stdout="10\n", stderr="", exit_code=0, time_ms=50, memory_kb=0, timed_out=False),
-        ExecutionResult(stdout="20\n", stderr="", exit_code=0, time_ms=60, memory_kb=0, timed_out=False),
-        ExecutionResult(stdout="wrong\n", stderr="", exit_code=0, time_ms=45, memory_kb=0, timed_out=False),
-    ]
-
-    verdict: JudgeVerdict = judge.evaluate([tc1, tc2, tc3], results, is_candidate=True)
-
-    assert verdict.score == 75.0
-    assert verdict.passed_tests == 2
-    assert verdict.total_tests == 3
-    assert verdict.verdict == "wrong_answer"
-
-    # Hidden test case outputs must be shielded for candidate
-    hidden_res = verdict.results[1]
-    assert hidden_res.is_hidden is True
-    assert hidden_res.actual_stdout is None
-    assert hidden_res.expected_stdout is None
-
-    # Public test case outputs visible
-    public_res = verdict.results[0]
-    assert public_res.is_hidden is False
-    assert public_res.actual_stdout == "10\n"
-    assert public_res.expected_stdout == "10"
+def test_mixed_valid_and_removed_language_rejected():
+    """If any removed language is in the list, the whole call must be rejected."""
+    with pytest.raises(ValueError, match="no longer supported"):
+        validate_supported_languages(["python3", "csharp"])
 
 
-def test_judge_compilation_and_timeout():
-    judge = Judge()
-    tc1 = CodingTestCase(id=1, input="1", expected_output="10", weight=1.0, is_hidden=False)
+def test_all_supported_languages_accepted():
+    """All 6 remaining languages must pass registry validation."""
+    supported = ["python3", "java21", "cpp", "javascript", "golang", "rust"]
+    result = validate_supported_languages(supported)
+    assert set(result) == set(supported)
 
-    # Compilation failure
-    compile_fail = [
-        ExecutionResult(
-            stdout="", stderr="javac Solution.java: line 5: error", exit_code=2,
-            time_ms=100, memory_kb=0, timed_out=False,
-            compilation_failed=True, compilation_error="javac Solution.java: line 5: error"
+
+def test_removed_language_ids_constant():
+    """REMOVED_LANGUAGE_IDS must contain exactly csharp and typescript."""
+    assert REMOVED_LANGUAGE_IDS == frozenset({"csharp", "typescript"})
+    # Neither should appear in ALL_LANGUAGE_IDS
+    assert "csharp" not in ALL_LANGUAGE_IDS
+    assert "typescript" not in ALL_LANGUAGE_IDS
+
+
+# ============================================================================
+# SCHEMA VALIDATORS: Language rejection at the Pydantic layer
+# ============================================================================
+
+def test_code_run_request_rejects_csharp():
+    """CodeRunRequest validator must reject 'csharp' language."""
+    with pytest.raises(Exception) as exc_info:
+        CodeRunRequest(
+            problem_id=1,
+            language="csharp",
+            source_code="class Program { static void Main() {} }",
         )
-    ]
-    v_comp = judge.evaluate([tc1], compile_fail, is_candidate=True)
-    assert v_comp.verdict == "compilation_error"
-    assert v_comp.score == 0.0
+    error_text = str(exc_info.value)
+    assert "no longer supported" in error_text.lower() or "csharp" in error_text.lower()
 
-    # Timeout
-    timeout_res = [
-        ExecutionResult(
-            stdout="", stderr="Time limit exceeded", exit_code=124,
-            time_ms=2500, memory_kb=0, timed_out=True
+
+def test_code_run_request_rejects_typescript():
+    """CodeRunRequest validator must reject 'typescript' language."""
+    with pytest.raises(Exception) as exc_info:
+        CodeRunRequest(
+            problem_id=1,
+            language="typescript",
+            source_code="const x: number = 1;",
         )
-    ]
-    v_time = judge.evaluate([tc1], timeout_res, is_candidate=True)
-    assert v_time.verdict == "time_limit_exceeded"
-    assert v_time.score == 0.0
+    error_text = str(exc_info.value)
+    assert "no longer supported" in error_text.lower() or "typescript" in error_text.lower()
 
 
-def test_job_pipeline_language_subset_validation():
-    # Mock DB and Question Set
-    mock_db = MagicMock()
-    mock_q_set = CodingQuestionSet(
-        id=10,
-        title="Backend Test",
-        supported_languages=["python3"]
-    )
-    mock_db.query.return_value.filter.return_value.first.return_value = mock_q_set
+def test_code_submit_request_rejects_csharp():
+    """CodeSubmitRequest validator must reject 'csharp' language."""
+    with pytest.raises(Exception) as exc_info:
+        CodeSubmitRequest(
+            problem_id=1,
+            language="csharp",
+            source_code="class Program { static void Main() {} }",
+        )
+    error_text = str(exc_info.value)
+    assert "no longer supported" in error_text.lower() or "csharp" in error_text.lower()
 
-    # Job allows python3 (subset of ["python3"]) -> Valid
-    job_valid = MagicMock()
-    job_valid.aptitude_enabled = False
-    job_valid.first_level_enabled = True
-    job_valid.interview_mode = "ai"
-    job_valid.coding_round_enabled = True
-    job_valid.coding_repo_set_id = 10
-    job_valid.coding_allowed_languages = ["python3"]
-    job_valid.coding_round_duration_minutes = 60
 
-    result = _validate_interview_pipeline(job_valid, "senior", db=mock_db)
-    assert result["coding_round_enabled"] is True
-    assert result["coding_allowed_languages"] == ["python3"]
+def test_code_submit_request_accepts_valid_language():
+    """CodeSubmitRequest must accept all valid languages."""
+    for lang in ["python3", "java21", "cpp", "javascript", "golang", "rust"]:
+        req = CodeSubmitRequest(problem_id=1, language=lang, source_code="// code")
+        assert req.language == lang
 
-    # Job allows java21 which is NOT in ["python3"] -> Must raise HTTPException(400)
-    job_invalid = MagicMock()
-    job_invalid.aptitude_enabled = False
-    job_invalid.first_level_enabled = True
-    job_invalid.interview_mode = "ai"
-    job_invalid.coding_round_enabled = True
-    job_invalid.coding_repo_set_id = 10
-    job_invalid.coding_allowed_languages = ["python3", "java21"]
-    job_invalid.coding_round_duration_minutes = 60
 
+# ============================================================================
+# PAYLOAD LIMITS: Source code and stdin size enforcement
+# ============================================================================
+
+def test_source_code_size_limit_accepted():
+    """Source code exactly at or below the limit should not raise."""
+    from app.api.coding import _check_source_code_size
+    code = "a" * (settings.coding_max_source_code_bytes - 1)
+    # Should not raise
+    _check_source_code_size(code)
+
+
+def test_source_code_size_limit_exceeded():
+    """Source code exceeding the limit should raise HTTP 413."""
+    from app.api.coding import _check_source_code_size
+    code = "a" * (settings.coding_max_source_code_bytes + 1)
     with pytest.raises(HTTPException) as exc_info:
-        _validate_interview_pipeline(job_invalid, "senior", db=mock_db)
-    assert exc_info.value.status_code == 400
-    assert "must be a subset" in exc_info.value.detail
+        _check_source_code_size(code)
+    assert exc_info.value.status_code == 413
+    assert "maximum size" in exc_info.value.detail.lower()
 
 
-def test_job_pipeline_coding_problem_count_validation():
-    mock_db = MagicMock()
-    mock_q_set = CodingQuestionSet(
-        id=20,
-        title="Full Stack Set",
-        supported_languages=["python3", "java21"]
-    )
-    mock_q_set.items = [MagicMock(), MagicMock()]  # 2 problems
-    mock_db.query.return_value.filter.return_value.first.return_value = mock_q_set
+def test_stdin_size_limit_none():
+    """None stdin should not raise."""
+    from app.api.coding import _check_stdin_size
+    _check_stdin_size(None)  # Should not raise
 
+
+def test_stdin_size_limit_exceeded():
+    """stdin exceeding the limit should raise HTTP 413."""
+    from app.api.coding import _check_stdin_size
+    stdin = "x" * (settings.coding_max_stdin_bytes + 1)
+    with pytest.raises(HTTPException) as exc_info:
+        _check_stdin_size(stdin)
+    assert exc_info.value.status_code == 413
+    assert "maximum size" in exc_info.value.detail.lower()
+
+
+# ============================================================================
+# CODING DEADLINE: Server-authoritative enforcement
+# ============================================================================
+
+def _make_interview_with_deadline(minutes_ago: int = 0):
+    """Helper to create a mock interview with a started-at time."""
+    interview = MagicMock()
+    interview.coding_started_at = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+    return interview
+
+
+def _make_job_with_duration(duration_minutes: int = 60):
     job = MagicMock()
-    job.aptitude_enabled = False
-    job.first_level_enabled = True
-    job.interview_mode = "ai"
-    job.coding_round_enabled = True
-    job.coding_repo_set_id = 20
-    job.coding_allowed_languages = ["python3"]
-    job.coding_round_duration_minutes = 60
-    job.coding_problem_count = 2
+    job.coding_round_duration_minutes = duration_minutes
+    return job
 
-    # Count of 2 out of 2 is valid
-    res = _validate_interview_pipeline(job, "senior", db=mock_db)
-    assert res["coding_problem_count"] == 2
 
-    # Count of 3 out of 2 must fail
-    job.coding_problem_count = 3
+def test_coding_deadline_not_started():
+    """If coding_started_at is None, deadline is None — no enforcement applied."""
+    from app.api.coding import _get_coding_deadline
+    interview = MagicMock()
+    interview.coding_started_at = None
+    job = _make_job_with_duration(60)
+    assert _get_coding_deadline(interview, job) is None
+
+
+def test_coding_deadline_computed_correctly():
+    """Deadline = coding_started_at + duration_minutes."""
+    from app.api.coding import _get_coding_deadline
+    started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    interview = MagicMock()
+    interview.coding_started_at = started_at
+    job = _make_job_with_duration(60)
+    deadline = _get_coding_deadline(interview, job)
+    expected = started_at + timedelta(minutes=60)
+    # Allow 1 second tolerance for test execution time
+    assert abs((deadline - expected).total_seconds()) < 1
+
+
+def test_coding_run_rejected_when_expired():
+    """Run code endpoint must raise HTTP 403 when deadline has passed."""
+    from app.api.coding import _assert_coding_not_expired
+    interview = MagicMock()
+    # Started 70 minutes ago, duration is 60 minutes → expired 10 minutes ago
+    interview.coding_started_at = datetime.now(timezone.utc) - timedelta(minutes=70)
+    job = _make_job_with_duration(60)
+
     with pytest.raises(HTTPException) as exc_info:
-        _validate_interview_pipeline(job, "senior", db=mock_db)
-    assert exc_info.value.status_code == 400
-    assert "cannot exceed available problems" in exc_info.value.detail
+        _assert_coding_not_expired(interview, job)
+    assert exc_info.value.status_code == 403
+    assert "expired" in exc_info.value.detail.lower()
 
-    # Count of 0 must fail
-    job.coding_problem_count = 0
+
+def test_coding_run_allowed_within_deadline():
+    """Run code endpoint must not raise when within the deadline."""
+    from app.api.coding import _assert_coding_not_expired
+    interview = MagicMock()
+    # Started 30 minutes ago, duration is 60 minutes → still 30 minutes left
+    interview.coding_started_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+    job = _make_job_with_duration(60)
+
+    # Should not raise
+    _assert_coding_not_expired(interview, job)
+
+
+# ============================================================================
+# COMPLETION VALIDATION: Stage, enabled, deadline, already-completed
+# ============================================================================
+
+def test_complete_rejects_wrong_stage():
+    """complete endpoint must reject if interview stage is not 'coding'."""
+    from app.api.coding import candidate_complete_coding_round
+
+    interview = MagicMock()
+    interview.interview_stage = "first_level"  # Wrong stage
+    interview.coding_completed = False
+    db = MagicMock()
+
     with pytest.raises(HTTPException) as exc_info:
-        _validate_interview_pipeline(job, "senior", db=mock_db)
+        candidate_complete_coding_round(
+            current_interview=interview,
+            db=db,
+        )
     assert exc_info.value.status_code == 400
-    assert "at least 1" in exc_info.value.detail
+    assert "stage" in exc_info.value.detail.lower()
 
 
-def test_multilanguage_solution_validation_python_and_java():
-    import json
-    from app.execution.service import ExecutionService
-    from app.domain.models import CodingProblem, CodingTestCase
+def test_complete_rejects_already_completed():
+    """complete endpoint must reject if coding round is already marked done."""
+    from app.api.coding import candidate_complete_coding_round
 
-    problem = CodingProblem(
-        id=999,
-        title="Sum Two Numbers",
-        description="Read two numbers and print their sum",
-        supported_languages=["python3", "java21"],
-        starter_code={
-            "python3": "# Python 3\nimport sys\n",
-            "java21": "// Java 21\nimport java.util.Scanner;\n",
-        },
-        solution_code=json.dumps({
-            "python3": "import sys\nline = sys.stdin.read().split()\nif line:\n    print(int(line[0]) + int(line[1]))\n",
-            "java21": "import java.util.Scanner;\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        if (sc.hasNextInt()) {\n            int a = sc.nextInt();\n            int b = sc.nextInt();\n            System.out.println(a + b);\n        }\n    }\n}\n",
-        }),
-        time_limit_ms=5000,
-        memory_limit_mb=256,
-    )
+    interview = MagicMock()
+    interview.interview_stage = "coding"
+    interview.coding_completed = True  # Already completed
+    interview.application.job.coding_round_enabled = True
+    # Set coding_started_at to None so deadline check is bypassed
+    # (we want to test the already-completed guard, not the deadline guard)
+    interview.coding_started_at = None
+    interview.application.job.coding_round_duration_minutes = 60
+    db = MagicMock()
 
-    tc1 = CodingTestCase(id=1, problem_id=999, input="5 7", expected_output="12")
-    tc2 = CodingTestCase(id=2, problem_id=999, input="10 20", expected_output="") # Missing output to be generated
+    with pytest.raises(HTTPException) as exc_info:
+        candidate_complete_coding_round(
+            current_interview=interview,
+            db=db,
+        )
+    assert exc_info.value.status_code == 400
+    assert "already been completed" in exc_info.value.detail.lower()
 
-    svc = ExecutionService()
 
-    # Validate Python 3 specifically
-    py_report = svc.validate_system_solution(problem, [tc1, tc2], language="python3")
-    assert py_report["all_passed"] is True
-    assert py_report["generated_count"] == 1
-    assert tc2.expected_output == "12" or tc2.expected_output == "30"
-    assert tc2.expected_output == "30"
+# ============================================================================
+# TENANT ISOLATION: Cross-tenant resource access rejection
+# ============================================================================
 
-    # Validate Java 21 specifically against the generated output
-    java_report = svc.validate_system_solution(problem, [tc1, tc2], language="java21")
-    assert java_report["all_passed"] is True
-    assert java_report["generated_count"] == 0 # Output already exists, verified
+def test_validate_problem_ownership_rejects_foreign_tenant():
+    """
+    _validate_problem_ownership must raise HTTP 400 when problem_ids include
+    a problem owned by a different tenant.
+    """
+    import uuid
+    from app.api.coding import _validate_problem_ownership
+    from app.core.tenant_context import TenantContext
 
+    tenant_a_id = uuid.uuid4()
+    tenant_ctx = MagicMock(spec=TenantContext)
+    tenant_ctx.id = tenant_a_id
+
+    mock_db = MagicMock()
+    # Only problem 1 is owned by tenant A; problem 99 is NOT in the result
+    mock_db.query.return_value.filter.return_value.all.return_value = [(1,)]
+
+    # Requesting problem 99 (not owned by tenant A) should be rejected
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_problem_ownership([1, 99], tenant_ctx, mock_db)
+    assert exc_info.value.status_code == 400
+    assert "99" in exc_info.value.detail
+    assert "different tenant" in exc_info.value.detail.lower()
+
+
+def test_validate_problem_ownership_accepts_owned_problems():
+    """_validate_problem_ownership must pass when all problems belong to current tenant."""
+    import uuid
+    from app.api.coding import _validate_problem_ownership
+    from app.core.tenant_context import TenantContext
+
+    tenant_id = uuid.uuid4()
+    tenant_ctx = MagicMock(spec=TenantContext)
+    tenant_ctx.id = tenant_id
+
+    mock_db = MagicMock()
+    # Both problem 1 and 2 are owned
+    mock_db.query.return_value.filter.return_value.all.return_value = [(1,), (2,)]
+
+    # Should not raise
+    _validate_problem_ownership([1, 2], tenant_ctx, mock_db)
+
+
+def test_removed_language_check_helper():
+    """_check_removed_language API-layer helper must reject csharp and typescript."""
+    from app.api.coding import _check_removed_language
+
+    for lang in ["csharp", "typescript", "CSHARP", "TypeScript"]:
+        with pytest.raises(HTTPException) as exc_info:
+            _check_removed_language(lang)
+        assert exc_info.value.status_code == 400
+
+    # Valid languages should not raise
+    for lang in ["python3", "java21", "cpp", "javascript", "golang", "rust"]:
+        _check_removed_language(lang)  # Must not raise

@@ -448,9 +448,15 @@ async def lifespan(app):
     except Exception as e:
         logger.debug(f"Startup sequence check: {e}")
 
-    # Startup — start IMAP polling loop on all workers; database lock handles concurrency.
-    polling_task = asyncio.create_task(_imap_polling_loop())
-    logger.info("IMAP polling loop task spawned on this worker.")
+    # Startup — start IMAP polling loop ONLY on designated worker (IMAP_WORKER=true).
+    # Using a dedicated worker service prevents N parallel polling loops.
+    # The existing database-backed distributed lock remains as a secondary safeguard.
+    polling_task = None
+    if settings.imap_worker:
+        polling_task = asyncio.create_task(_imap_polling_loop())
+        logger.info("IMAP polling loop task spawned on this worker (IMAP_WORKER=true).")
+    else:
+        logger.info("IMAP polling loop skipped on this worker (IMAP_WORKER not set). Designate one worker with IMAP_WORKER=true.")
 
     yield  # ── Application runs here ──
 

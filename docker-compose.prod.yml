@@ -7,11 +7,21 @@ services:
       - "9999:80"   # Host nginx proxies caldimproducts.com/calrims → localhost:9999
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      # SSL is terminated by the host nginx — no certs needed here
     # NOTE: No depends_on health-gate here. nginx uses Docker's internal DNS resolver
     # (resolver 127.0.0.11 valid=10s) which handles upstream changes dynamically at runtime.
     # A blue-only health gate would block restarts during green deployments and vice versa.
     restart: always
+
+  # --- REDIS (shared across all workers) ---
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # --- BLUE ENVIRONMENT ---
   frontend_blue:
@@ -46,6 +56,12 @@ services:
       - FRONTEND_BASE_URL=https://caldimproducts.com/calrims
       - TRUSTED_PROXY_HOST=nginx
       - ENABLE_DEMO=false
+      - REDIS_URL=redis://redis:6379/0
+      # IMAP polling is handled by the dedicated worker service
+      - IMAP_WORKER=false
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
       interval: 10s
@@ -53,6 +69,35 @@ services:
       retries: 10
       # Startup migrations can take 30-60s on first run; give them time before
       # the health-check loop begins to avoid premature "unhealthy" signals.
+      start_period: 60s
+    restart: always
+
+  # Dedicated IMAP/background worker (BLUE).
+  # Runs the same backend image but with IMAP_WORKER=true.
+  # Only one of worker_blue/worker_green should be active at a time during deployment.
+  worker_blue:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      - ENV=production
+      - BACKEND_START_MODE=docker
+      - FRONTEND_BASE_URL=https://caldimproducts.com/calrims
+      - TRUSTED_PROXY_HOST=nginx
+      - ENABLE_DEMO=false
+      - REDIS_URL=redis://redis:6379/0
+      # This worker owns the IMAP polling loop
+      - IMAP_WORKER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
       start_period: 60s
     restart: always
 
@@ -89,12 +134,41 @@ services:
       - FRONTEND_BASE_URL=https://caldimproducts.com/calrims
       - TRUSTED_PROXY_HOST=nginx
       - ENABLE_DEMO=false
+      - REDIS_URL=redis://redis:6379/0
+      - IMAP_WORKER=false
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
-      # Startup migrations can take 30-60s on first run; give them time before
-      # the health-check loop begins to avoid premature "unhealthy" signals.
+      start_period: 60s
+    restart: always
+
+  # Dedicated IMAP/background worker (GREEN).
+  worker_green:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      - ENV=production
+      - BACKEND_START_MODE=docker
+      - FRONTEND_BASE_URL=https://caldimproducts.com/calrims
+      - TRUSTED_PROXY_HOST=nginx
+      - ENABLE_DEMO=false
+      - REDIS_URL=redis://redis:6379/0
+      - IMAP_WORKER=true
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:10000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
       start_period: 60s
     restart: always

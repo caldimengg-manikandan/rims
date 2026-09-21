@@ -77,8 +77,12 @@ interface CodingWorkspaceProps {
 }
 
 const LANGUAGE_LABELS: Record<string, { label: string; monacoLang: string }> = {
-    python3: { label: 'Python 3', monacoLang: 'python' },
-    java21: { label: 'Java 21', monacoLang: 'java' },
+    python3:    { label: 'Python 3',             monacoLang: 'python'     },
+    java21:     { label: 'Java 21',               monacoLang: 'java'       },
+    cpp:        { label: 'C++ (GCC 13)',           monacoLang: 'cpp'        },
+    javascript: { label: 'JavaScript (Node 20)',   monacoLang: 'javascript' },
+    golang:     { label: 'Go 1.22',               monacoLang: 'go'         },
+    rust:       { label: 'Rust 1.77',             monacoLang: 'rust'       },
 }
 
 const getVerdictBadge = (verdict?: string) => {
@@ -140,7 +144,18 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
             // Select default language
             const defaultLang = data.allowed_languages[0] || 'python3'
             setSelectedLanguage(defaultLang)
-            setSecondsRemaining(data.duration_minutes * 60)
+
+            // Server-authoritative countdown: derive from coding_deadline returned by server.
+            // This prevents client-side time manipulation. Falls back to duration_minutes if
+            // no deadline has been set yet (first call seeds it server-side).
+            if (data.coding_deadline) {
+                const deadlineMs = new Date(data.coding_deadline).getTime()
+                const nowMs = Date.now()
+                const remaining = Math.max(0, Math.floor((deadlineMs - nowMs) / 1000))
+                setSecondsRemaining(remaining)
+            } else {
+                setSecondsRemaining((data.duration_minutes || 60) * 60)
+            }
 
             // Pre-seed starter codes
             const initialCodes: Record<string, string> = {}
@@ -149,10 +164,17 @@ export default function CodingWorkspace({ sessionId, token, onCompleted }: Codin
                     const key = `${p.id}_${lang}`
                     if (p.starter_code && p.starter_code[lang]) {
                         initialCodes[key] = p.starter_code[lang]
-                    } else if (lang === 'python3') {
-                        initialCodes[key] = 'def solution():\n    # Write your code here\n    pass\n\nif __name__ == "__main__":\n    solution()'
-                    } else if (lang === 'java21') {
-                        initialCodes[key] = 'import java.util.*;\n\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        // Write your solution here\n    }\n}'
+                    } else {
+                        // Default starters for each supported language
+                        const defaults: Record<string, string> = {
+                            python3:    'import sys\n\ndef solve():\n    # Write your code here\n    pass\n\nif __name__ == "__main__":\n    solve()',
+                            java21:     'import java.util.*;\n\npublic class Solution {\n    public static void main(String[] args) {\n        Scanner scanner = new Scanner(System.in);\n        // Write your solution here\n    }\n}',
+                            cpp:        '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}',
+                            javascript: 'const fs = require(\'fs\');\n\nfunction solve() {\n    const input = fs.readFileSync(0, \'utf-8\');\n    // Write your solution here\n}\n\nsolve();',
+                            golang:     'package main\n\nimport "fmt"\n\nfunc main() {\n    // Write your solution here\n}',
+                            rust:       'use std::io::{self, Read};\n\nfn main() {\n    let mut input = String::new();\n    io::stdin().read_to_string(&mut input).unwrap();\n    // Write your solution here\n}',
+                        }
+                        initialCodes[key] = defaults[lang] ?? `// ${lang} solution`
                     }
                 })
             })

@@ -131,9 +131,19 @@ class DemoConfig(BaseModel):
 
 
 @router.get("/demo/coding-options")
-def get_demo_coding_options(db: Session = Depends(get_db)):
-    """Return available coding question sets and default languages for configuring demo coding rounds."""
-    sets = db.query(CodingQuestionSet).order_by(CodingQuestionSet.id.desc()).all()
+def get_demo_coding_options(
+    current_user: User = Depends(get_current_hr),
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Return available coding question sets for configuring demo coding rounds (HR only)."""
+    if not settings.enable_demo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demo feature is disabled.")
+    # Tenant isolation: only return sets owned by this HR's tenant
+    query = db.query(CodingQuestionSet)
+    if tenant_ctx.id:
+        query = query.filter(CodingQuestionSet.tenant_id == tenant_ctx.id)
+    sets = query.order_by(CodingQuestionSet.id.desc()).all()
     result = []
     for s in sets:
         count = db.query(CodingQuestionSetItem).filter(CodingQuestionSetItem.question_set_id == s.id).count()
@@ -153,12 +163,16 @@ def get_demo_coding_options(db: Session = Depends(get_db)):
 def create_demo_interview(
     background_tasks: BackgroundTasks,
     config: DemoConfig = DemoConfig(),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_hr),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
 ):
     """
-    Private endpoint to generate a Demo Interview session.
+    HR-only endpoint to generate a Demo Interview session.
+    Requires a valid authenticated HR session (not accessible anonymously).
 
     Behaviour:
+    - Checks enable_demo flag; returns 404 if disabled.
     - Looks up the real job with job_id='JOB-05A5RV' — that job must be pre-configured in the system.
     - Creates a provisional Application + Interview with is_demo=True.
     - Accepts an optional JSON body with 'rounds' to control which stages are active.
@@ -167,6 +181,10 @@ def create_demo_interview(
     """
     import uuid, random
     from app.services.candidate_service import CandidateService
+
+    # Check demo feature flag first
+    if not settings.enable_demo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Demo feature is disabled.")
 
     # Curated pool of realistic sample applicant identities for demo sessions.
     DEMO_SAMPLE_APPLICANTS = [
@@ -182,12 +200,16 @@ def create_demo_interview(
         ("Meera Joshi", "meera.joshi"),
     ]
 
-    # 1. Resolve the designated demo job — fallback to first published or available job if JOB-05A5RV not present
-    job = db.query(Job).filter(Job.job_id == "JOB-05A5RV").first()
+    # 1. Resolve the designated demo job — tenant-scoped to prevent cross-tenant mutations.
+    # Fallback to first published or available job if JOB-05A5RV not present.
+    query = db.query(Job)
+    if tenant_ctx.id:
+        query = query.filter(Job.tenant_id == tenant_ctx.id)
+    job = query.filter(Job.job_id == "JOB-05A5RV").first()
     if not job:
         job = (
-            db.query(Job).filter(Job.status == "published").first()
-            or db.query(Job).first()
+            query.filter(Job.status == "published").first()
+            or query.first()
         )
     if not job:
         raise HTTPException(
