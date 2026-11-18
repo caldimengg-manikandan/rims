@@ -121,13 +121,15 @@ def seed_users():
         ]
 
         pwd_hash = hash_password("Password@123")
+        admin_hash = hash_password("00000000")
 
         for u_data in users_to_seed:
             user = db.query(User).filter(User.email == u_data["email"]).first()
+            user_pwd = admin_hash if u_data["email"] in ("caldiminternship@gmail.com", "caldimintership@gmail.com") else pwd_hash
             if not user:
                 user = User(
                     email=u_data["email"],
-                    password_hash=pwd_hash,
+                    password_hash=user_pwd,
                     role=u_data["role"],
                     full_name=u_data["full_name"],
                     tenant_id=u_data["tenant_id"],
@@ -138,7 +140,7 @@ def seed_users():
                 db.add(user)
                 print(f"Created user: {u_data['email']} with role {u_data['role']} and tenant {u_data['tenant_id']}")
             else:
-                user.password_hash = pwd_hash
+                user.password_hash = user_pwd
                 user.tenant_id = u_data["tenant_id"]
                 user.role = u_data["role"]
                 user.is_verified = True
