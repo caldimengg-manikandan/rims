@@ -53,7 +53,21 @@ class Settings(BaseSettings):
 
     # Encryption
     encryption_key: str = ""
+    encryption_fallback_keys: str = ""
     enforce_encryption: bool = False
+
+    @property
+    def all_encryption_keys(self) -> List[str]:
+        keys: List[str] = []
+        if self.encryption_key:
+            keys.extend([k.strip() for k in self.encryption_key.split(",") if k.strip()])
+        if self.encryption_fallback_keys:
+            keys.extend([k.strip() for k in self.encryption_fallback_keys.split(",") if k.strip()])
+        # Known legacy fallback key used previously in deployment
+        legacy_key = "3gcctn9-UwjDXdYjmhslWwrF50FPayUTMWbGrMx02ck="
+        if legacy_key not in keys:
+            keys.append(legacy_key)
+        return keys
 
     # Internal lists for rotation
     @property

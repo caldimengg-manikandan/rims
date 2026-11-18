@@ -4,7 +4,8 @@ Provides transparent encrypt/decrypt for sensitive database fields.
 
 Key is loaded from ENCRYPTION_KEY in app config (.env).
 """
-from cryptography.fernet import Fernet, InvalidToken
+from typing import Union
+from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 from sqlalchemy import Text
 from sqlalchemy.types import TypeDecorator
 import functools
@@ -22,31 +23,44 @@ _DECRYPTION_PLACEHOLDERS = frozenset({"[UNREADABLE]", "[DECRYPTION_ERROR]"})
 # ---------------------------------------------------------------------------
 
 @functools.lru_cache(maxsize=1)
-def _get_fernet() -> Fernet:
-    """Load the Fernet key from app config (.env).
+def _get_fernet() -> Union[Fernet, MultiFernet]:
+    """Load primary and fallback Fernet keys from app config (.env).
     
-    Cached via lru_cache — safe for threaded/async FastAPI use.
-    The Fernet instance itself is thread-safe for encrypt/decrypt.
+    Supports key rotation via MultiFernet:
+    - Writes always encrypt using the primary ENCRYPTION_KEY.
+    - Reads decrypt transparently using either the primary or fallback keys.
     """
     from app.core.config import get_settings
-    key = get_settings().encryption_key
-    if not key:
+    settings = get_settings()
+    all_keys = getattr(settings, "all_encryption_keys", [])
+    if not all_keys and settings.encryption_key:
+        all_keys = [settings.encryption_key.strip()]
+
+    if not all_keys:
         raise RuntimeError(
             "CRITICAL: ENCRYPTION_KEY is not set. "
             "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
             "and add ENCRYPTION_KEY=<key> to your .env file."
         )
-    try:
-        fernet = Fernet(key.encode() if isinstance(key, str) else key)
-        # Validate key works by doing a round-trip test
-        test = fernet.decrypt(fernet.encrypt(b"__key_validation__"))
-        assert test == b"__key_validation__"
-        return fernet
-    except Exception as e:
+
+    fernets = []
+    for k in all_keys:
+        try:
+            f = Fernet(k.encode() if isinstance(k, str) else k)
+            test = f.decrypt(f.encrypt(b"__key_validation__"))
+            assert test == b"__key_validation__"
+            fernets.append(f)
+        except Exception as e:
+            logger.warning(f"Invalid encryption key skipped: {e}")
+
+    if not fernets:
         raise RuntimeError(
-            f"CRITICAL: ENCRYPTION_KEY is invalid. "
-            f"Must be a valid Fernet key (base64-encoded 32 bytes). Error: {e}"
+            "CRITICAL: No valid Fernet keys found in configuration."
         )
+
+    if len(fernets) == 1:
+        return fernets[0]
+    return MultiFernet(fernets)
 
 
 # ---------------------------------------------------------------------------

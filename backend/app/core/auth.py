@@ -1,3 +1,24 @@
+import warnings
+import importlib
+import bcrypt as _bcrypt_mod
+
+if not hasattr(_bcrypt_mod, "__about__"):
+    _bcrypt_mod.__about__ = type("_about", (), {"__version__": _bcrypt_mod.__version__})()
+
+try:
+    from passlib.exc import PasslibHashWarning, PasslibSecurityWarning
+    warnings.filterwarnings("ignore", category=PasslibHashWarning)
+    warnings.filterwarnings("ignore", category=PasslibSecurityWarning)
+except ImportError:
+    pass
+
+_ph = importlib.import_module("passlib.handlers.bcrypt")
+_ph.detect_wrap_bug = lambda ident: False
+try:
+    _ph.bcrypt.set_backend("default")
+except Exception:
+    pass
+
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 from jose import JWTError, jwt

@@ -92,9 +92,15 @@ def _ensure_coding_schema():
                         ALTER TABLE public.interviews ADD COLUMN coding_completed_at TIMESTAMPTZ;
                     END IF;
 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'interviews' AND column_name = 'coding_started_at') THEN
+                        ALTER TABLE public.interviews ADD COLUMN coding_started_at TIMESTAMPTZ;
+                        CREATE INDEX IF NOT EXISTS ix_interviews_coding_started_at ON public.interviews (coding_started_at) WHERE coding_started_at IS NOT NULL;
+                    END IF;
+
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'coding_submissions' AND column_name = 'test_results') THEN
                         ALTER TABLE public.coding_submissions ADD COLUMN test_results JSONB NULL;
                     END IF;
+
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'tenant_id') THEN
                         ALTER TABLE public.users ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
                         CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON public.users(tenant_id);
@@ -103,6 +109,31 @@ def _ensure_coding_schema():
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'question_sets' AND column_name = 'tenant_id') THEN
                         ALTER TABLE public.question_sets ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE CASCADE;
                         CREATE INDEX IF NOT EXISTS idx_question_sets_tenant_id ON public.question_sets(tenant_id);
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'offers' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.offers ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+                        CREATE INDEX IF NOT EXISTS ix_offers_tenant_id ON public.offers(tenant_id);
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'onboardings' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.onboardings ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+                        CREATE INDEX IF NOT EXISTS ix_onboardings_tenant_id ON public.onboardings(tenant_id);
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'application_stages' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.application_stages ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+                        CREATE INDEX IF NOT EXISTS ix_application_stages_tenant_id ON public.application_stages(tenant_id);
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'hiring_decisions' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.hiring_decisions ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+                        CREATE INDEX IF NOT EXISTS ix_hiring_decisions_tenant_id ON public.hiring_decisions(tenant_id);
+                    END IF;
+
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'audit_logs' AND column_name = 'tenant_id') THEN
+                        ALTER TABLE public.audit_logs ADD COLUMN tenant_id UUID REFERENCES public.tenants(id) ON DELETE SET NULL;
+                        CREATE INDEX IF NOT EXISTS ix_audit_logs_tenant_id ON public.audit_logs(tenant_id);
                     END IF;
                 END $$;
             """))
