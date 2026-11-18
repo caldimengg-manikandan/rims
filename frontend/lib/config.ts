@@ -32,6 +32,18 @@ export function getApiBaseUrl(): string {
   return url;
 }
 
+/**
+ * Resolves API base URL for server-side rendering (SSR) in Node.js.
+ * In Docker containers, INTERNAL_API_URL routes directly to backend (e.g. http://backend_blue:10000),
+ * avoiding external DNS, loopback alias (127.0.1.1:443), and reverse-proxy overhead.
+ */
+export function getServerApiBaseUrl(): string {
+  if (process.env.INTERNAL_API_URL) {
+    return process.env.INTERNAL_API_URL.replace(/\/+$/, '');
+  }
+  return getApiBaseUrl();
+}
+
 
 // Safeguard: warn in production if API base URL is missing (fallback remains localhost).
 if (typeof window !== 'undefined') {

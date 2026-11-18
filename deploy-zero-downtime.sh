@@ -54,9 +54,13 @@ else
 fi
 
 # 1. Determine active environment
-# Use grep -oP to extract exactly 'blue' or 'green' from the container name
-# e.g., "rims-frontend_blue-1" → "blue"
-ACTIVE_ENV=$(docker ps --format "{{.Names}}" | grep -E "frontend_(blue|green)" | head -n 1 | grep -oP '(?<=frontend_)(blue|green)' || true)
+# Deterministically read active upstream from nginx.conf first
+ACTIVE_ENV=$(grep -oP '(?<=server frontend_)(blue|green)' nginx.conf | head -n 1 || true)
+
+# Fallback to docker ps if nginx.conf couldn't be parsed
+if [ -z "$ACTIVE_ENV" ]; then
+    ACTIVE_ENV=$(docker ps --format "{{.Names}}" | grep -E "frontend_(blue|green)" | head -n 1 | grep -oP '(?<=frontend_)(blue|green)' || true)
+fi
 
 if [ -z "$ACTIVE_ENV" ]; then
     ACTIVE_ENV="green" # Default to green so we deploy blue first
@@ -80,33 +84,57 @@ docker compose -f docker-compose.prod.yml up -d --build frontend_$DEPLOY_ENV bac
 
 # 3. Wait for Healthchecks (Wait up to 180 seconds)
 # Startup migrations can take up to 60s; 180s total gives sufficient margin.
-echo "⌛ Waiting for $DEPLOY_ENV to become healthy (up to 180s)..."
+echo "⌛ Waiting for $DEPLOY_ENV backend & frontend to become healthy (up to 180s)..."
 MAX_RETRIES=36
 RETRY_COUNT=0
-BACKEND_HEALTH="starting"
+HEALTH_OK=false
 
-# Dynamically find the actual container name to handle prefixes/suffixes correctly
-CONTAINER_NAME=$(docker ps --format '{{.Names}}' -f "name=backend_$DEPLOY_ENV" | head -n 1)
+# Dynamically find the exact container IDs created by docker compose
+BACKEND_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q backend_$DEPLOY_ENV || true)
+FRONTEND_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q frontend_$DEPLOY_ENV || true)
 
-if [ -z "$CONTAINER_NAME" ]; then
-    echo "⚠️ Warning: Could not find container for backend_$DEPLOY_ENV"
-    # Fallback to a guess if search fails
-    CONTAINER_NAME="rims-backend_$DEPLOY_ENV-1"
-fi
+echo "Watching backend: ${BACKEND_CONTAINER:-unknown}, frontend: ${FRONTEND_CONTAINER:-unknown}"
 
-echo "Watching container: $CONTAINER_NAME"
-
-while [ "$BACKEND_HEALTH" != "healthy" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     sleep 5
-    BACKEND_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' $CONTAINER_NAME 2>/dev/null || echo "unhealthy")
-    echo "Current status: $BACKEND_HEALTH ($((RETRY_COUNT * 5))s / 120s)"
     RETRY_COUNT=$((RETRY_COUNT + 1))
+
+    # Re-evaluate container IDs if they were not yet resolved
+    if [ -z "$BACKEND_CONTAINER" ]; then
+        BACKEND_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q backend_$DEPLOY_ENV || true)
+    fi
+    if [ -z "$FRONTEND_CONTAINER" ]; then
+        FRONTEND_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q frontend_$DEPLOY_ENV || true)
+    fi
+
+    # Check container status
+    BACKEND_STATUS=$(docker inspect --format='{{.State.Status}}' $BACKEND_CONTAINER 2>/dev/null || echo "starting")
+    FRONTEND_STATUS=$(docker inspect --format='{{.State.Status}}' $FRONTEND_CONTAINER 2>/dev/null || echo "starting")
+
+    echo "Status: backend=$BACKEND_STATUS, frontend=$FRONTEND_STATUS ($((RETRY_COUNT * 5))s / 180s)"
+
+    if [ "$BACKEND_STATUS" != "running" ] || [ "$FRONTEND_STATUS" != "running" ]; then
+        continue
+    fi
+
+    # Active verification: live HTTP probe directly into backend and frontend
+    BACKEND_PROBE=$(docker exec $BACKEND_CONTAINER curl -fsS http://localhost:10000/health 2>/dev/null || echo "")
+    if [[ "$BACKEND_PROBE" == *"\"status\":\"healthy\""* ]] || [[ "$BACKEND_PROBE" == *"\"status\": \"healthy\""* ]]; then
+        FRONTEND_PROBE=$(docker exec $FRONTEND_CONTAINER curl -fsS http://localhost:3000/calrims/api/health/ 2>/dev/null || echo "")
+        if [ -n "$FRONTEND_PROBE" ]; then
+            HEALTH_OK=true
+            echo "✅ Direct health probe passed for both backend and frontend ($DEPLOY_ENV)."
+            break
+        fi
+    fi
 done
 
-if [ "$BACKEND_HEALTH" != "healthy" ]; then
-    echo "❌ DEPLOYMENT FAILED: Background health-check failed on $DEPLOY_ENV after 120 seconds."
-    echo "Last logs:"
-    docker logs $CONTAINER_NAME | tail -n 20
+if [ "$HEALTH_OK" != "true" ]; then
+    echo "❌ DEPLOYMENT FAILED: Health verification failed on $DEPLOY_ENV after 180 seconds."
+    echo "=== Backend logs ==="
+    docker logs $BACKEND_CONTAINER --tail=50 2>&1 || true
+    echo "=== Frontend logs ==="
+    docker logs $FRONTEND_CONTAINER --tail=50 2>&1 || true
     docker compose -f docker-compose.prod.yml stop frontend_$DEPLOY_ENV backend_$DEPLOY_ENV
     exit 1
 fi

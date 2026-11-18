@@ -479,6 +479,9 @@ async def lifespan(app):
     except Exception as e:
         logger.debug(f"Startup sequence check: {e}")
 
+    # Startup — kick off non-blocking external services health probe in background
+    threading.Thread(target=_refresh_external_health, daemon=True, name="startup_health_probe").start()
+
     # Startup — start IMAP polling loop ONLY on designated worker (IMAP_WORKER=true).
     # Using a dedicated worker service prevents N parallel polling loops.
     # The existing database-backed distributed lock remains as a secondary safeguard.
@@ -645,21 +648,21 @@ import threading
 
 _ext_services_cache = {
     "timestamp": 0.0,
-    "supabase": "not_configured",
-    "smtp": "not_configured",
-    "ai_provider": "not_configured",
-    "redis": "not_configured",
+    "supabase": "ok" if settings.supabase_url else "not_configured",
+    "smtp": "ok" if settings.smtp_host else "not_configured",
+    "ai_provider": "ok" if (getattr(settings, "groq_api_key", None) or "").strip() or (getattr(settings, "groq_keys", []) != []) else "not_configured",
+    "redis": "ok" if settings.redis_url else "not_configured",
 }
 _ext_services_lock = threading.Lock()
-_EXT_HEALTH_CACHE_TTL = 30.0  # seconds
+_ext_refresh_lock = threading.Lock()
+_is_refreshing_ext = False
+_EXT_HEALTH_CACHE_TTL = 60.0  # seconds
 
-def _get_cached_external_health() -> dict:
-    """Check external network-bound dependencies with a 30s cache to avoid socket/API churn."""
-    now = time.time()
-    with _ext_services_lock:
-        if now - _ext_services_cache["timestamp"] < _EXT_HEALTH_CACHE_TTL:
-            return dict(_ext_services_cache)
-
+def _refresh_external_health():
+    """Background worker to check external network-bound dependencies asynchronously."""
+    global _is_refreshing_ext
+    try:
+        now = time.time()
         # 1. Supabase check
         supabase_status = "not_configured"
         if settings.supabase_url:
@@ -700,14 +703,37 @@ def _get_cached_external_health() -> dict:
             except Exception:
                 redis_status = "error"
 
-        _ext_services_cache.update({
-            "timestamp": now,
-            "supabase": supabase_status,
-            "smtp": smtp_status,
-            "ai_provider": ai_provider_status,
-            "redis": redis_status,
-        })
-        return dict(_ext_services_cache)
+        with _ext_services_lock:
+            _ext_services_cache.update({
+                "timestamp": now,
+                "supabase": supabase_status,
+                "smtp": smtp_status,
+                "ai_provider": ai_provider_status,
+                "redis": redis_status,
+            })
+    except Exception as exc:
+        logger.warning(f"External health probe error: {exc}")
+    finally:
+        with _ext_refresh_lock:
+            _is_refreshing_ext = False
+
+def _get_cached_external_health() -> dict:
+    """Return external health cache immediately; refresh asynchronously in background to avoid blocking /health."""
+    global _is_refreshing_ext
+    now = time.time()
+    needs_refresh = False
+    with _ext_services_lock:
+        if now - _ext_services_cache["timestamp"] >= _EXT_HEALTH_CACHE_TTL:
+            needs_refresh = True
+        result = dict(_ext_services_cache)
+
+    if needs_refresh:
+        with _ext_refresh_lock:
+            if not _is_refreshing_ext:
+                _is_refreshing_ext = True
+                threading.Thread(target=_refresh_external_health, daemon=True, name="bg_health_probe").start()
+
+    return result
 
 @app.get("/health", tags=["System"])
 def health_check():
@@ -715,31 +741,39 @@ def health_check():
     db_status = "ok"
     linkedin_status = "disabled"
     linkedin_warning = None
+    _has_imap_users = True
+
     try:
         from sqlalchemy import text
         from app.infrastructure.database import SessionLocal
-        db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        if settings.enable_linkedin_posting:
-            from app.domain.models import GlobalSettings
-            linkedin_status = "ok"
-            try:
-                expires_record = db.query(GlobalSettings).filter(GlobalSettings.key == "linkedin_token_expires_at").first()
-                if expires_record and expires_record.value:
-                    from datetime import timedelta
-                    expires_at = datetime.fromisoformat(expires_record.value)
-                    now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
-                    if expires_at < now + timedelta(days=7):
-                        diff = expires_at - now
-                        days_left = diff.days
-                        linkedin_status = "warning"
-                        if days_left < 0:
-                            linkedin_warning = f"LinkedIn access token expired {abs(days_left)} days ago."
-                        else:
-                            linkedin_warning = f"LinkedIn access token expires in {days_left} days."
-            except Exception as e:
-                logger.error(f"Error checking LinkedIn token expiry: {e}")
-        db.close()
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+            if settings.enable_linkedin_posting:
+                from app.domain.models import GlobalSettings
+                linkedin_status = "ok"
+                try:
+                    expires_record = db.query(GlobalSettings).filter(GlobalSettings.key == "linkedin_token_expires_at").first()
+                    if expires_record and expires_record.value:
+                        from datetime import timedelta
+                        expires_at = datetime.fromisoformat(expires_record.value)
+                        now = datetime.now(timezone.utc) if expires_at.tzinfo else datetime.now(timezone.utc).replace(tzinfo=None)
+                        if expires_at < now + timedelta(days=7):
+                            diff = expires_at - now
+                            days_left = diff.days
+                            linkedin_status = "warning"
+                            if days_left < 0:
+                                linkedin_warning = f"LinkedIn access token expired {abs(days_left)} days ago."
+                            else:
+                                linkedin_warning = f"LinkedIn access token expires in {days_left} days."
+                except Exception as e:
+                    logger.error(f"Error checking LinkedIn token expiry: {e}")
+
+            if os.environ.get("WORKER_ID", "0") == "0":
+                try:
+                    from app.domain.models import User as _User
+                    _has_imap_users = db.query(_User.id).filter(_User.auto_sync_enabled == True).first() is not None
+                except Exception:
+                    _has_imap_users = True
     except Exception:
         db_status = "error"
     
@@ -755,16 +789,6 @@ def health_check():
     if os.environ.get("WORKER_ID", "0") == "0":
         last_success = getattr(app.state, "imap_last_success", 0)
         last_error_time = getattr(app.state, "imap_last_error_time", 0)
-
-        # Check if any user actually has IMAP auto-sync enabled before reporting stuck.
-        try:
-            from app.infrastructure.database import SessionLocal as _SL
-            from app.domain.models import User as _User
-            _chk_db = _SL()
-            _has_imap_users = _chk_db.query(_User.id).filter(_User.auto_sync_enabled == True).first() is not None
-            _chk_db.close()
-        except Exception:
-            _has_imap_users = True  # Assume configured if we can't check
 
         if not _has_imap_users:
             imap_status = "not_configured"

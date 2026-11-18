@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   nginx:
     image: nginx:alpine
@@ -35,6 +33,7 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
+      - INTERNAL_API_URL=http://backend_blue:10000
       - HOSTNAME=0.0.0.0
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/calrims/"]
@@ -113,6 +112,7 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
+      - INTERNAL_API_URL=http://backend_green:10000
       - HOSTNAME=0.0.0.0
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/calrims/"]

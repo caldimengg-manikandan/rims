@@ -59,6 +59,8 @@ jobs:
             docker compose -f docker-compose.prod.yml logs --tail=500 frontend_blue frontend_green || true
             
             echo "=== VPS CONTAINER INTERNAL ROUTING & CHROMIUM TEST ==="
-            docker compose -f docker-compose.prod.yml exec -T backend_blue curl -i -s http://nginx/calrims/api/health || true
-            docker compose -f docker-compose.prod.yml exec -T frontend_blue /usr/bin/chromium --version --no-sandbox || true
+            RUNNING_BACKEND=$(docker compose -f docker-compose.prod.yml ps --services --filter "status=running" | grep -E '^backend_' | head -n 1)
+            RUNNING_FRONTEND=$(docker compose -f docker-compose.prod.yml ps --services --filter "status=running" | grep -E '^frontend_' | head -n 1)
+            docker compose -f docker-compose.prod.yml exec -T ${RUNNING_BACKEND:-backend_blue} curl -i -sL http://nginx/calrims/api/health/ || true
+            docker compose -f docker-compose.prod.yml exec -T ${RUNNING_FRONTEND:-frontend_blue} /usr/bin/chromium --version --no-sandbox || true
 
