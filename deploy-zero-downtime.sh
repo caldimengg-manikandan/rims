@@ -74,7 +74,10 @@ fi
 
 echo "Active environment is: $ACTIVE_ENV. Deploying to: $DEPLOY_ENV"
 
-# 2. Free up disk space before build (removes unused images/cache older than 24h)
+# 2. Clean state for target deploy environment and prune old build cache
+echo "🧹 Stopping any stale containers for $DEPLOY_ENV before rebuild..."
+docker compose -f docker-compose.prod.yml stop frontend_$DEPLOY_ENV backend_$DEPLOY_ENV worker_$DEPLOY_ENV 2>/dev/null || true
+
 echo "🧹 Pruning old Docker images and build cache..."
 docker system prune -f --filter "until=24h" || true
 
@@ -186,8 +189,13 @@ fi
 docker compose -f docker-compose.prod.yml restart nginx
 echo "✅ Traffic successfully routed to $DEPLOY_ENV."
 
-# 5. Stabilize (Observability Window)
+# 5. Stabilize (Observability Window) & Automated Inactive Environment Teardown
 echo "🛑 Keeping old environment '$ACTIVE_ENV' alive for 15 minutes for instant rollback coverage..."
-# In a real environment, a separate cron task would spin down the old container after confirming 0 error spikes.
+# Spin down old environment after 15 minutes in a detached background subshell to prevent memory/CPU waste and log spam
+(
+    sleep 900
+    echo "🧹 Teardown: Stopping inactive environment '$ACTIVE_ENV' after 15-minute stabilization window..."
+    docker compose -f docker-compose.prod.yml stop frontend_$ACTIVE_ENV backend_$ACTIVE_ENV worker_$ACTIVE_ENV 2>/dev/null || true
+) >/dev/null 2>&1 &
 
 echo "🎉 ZERO-DOWNTIME DEPLOYMENT COMPLETE."

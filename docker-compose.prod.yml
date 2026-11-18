@@ -34,9 +34,12 @@ services:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
       - INTERNAL_API_URL=http://backend_blue:10000
+      - API_INTERNAL_URL=http://backend_blue:10000
+      - BRANDING_API_URL=http://backend_blue:10000
+      - NEXT_PUBLIC_INTERNAL_API_URL=http://backend_blue:10000
       - HOSTNAME=0.0.0.0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/calrims/"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/calrims/api/health/"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -113,9 +116,12 @@ services:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
       - INTERNAL_API_URL=http://backend_green:10000
+      - API_INTERNAL_URL=http://backend_green:10000
+      - BRANDING_API_URL=http://backend_green:10000
+      - NEXT_PUBLIC_INTERNAL_API_URL=http://backend_green:10000
       - HOSTNAME=0.0.0.0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/calrims/"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/calrims/api/health/"]
       interval: 10s
       timeout: 5s
       retries: 5

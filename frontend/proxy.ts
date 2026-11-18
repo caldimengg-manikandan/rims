@@ -47,7 +47,7 @@ function extractSlugFromHeader(request: NextRequest): string | null {
   );
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 1. Resolve Tenant Context
@@ -222,3 +222,6 @@ export const config = {
     '/apply/:path*',
   ],
 };
+
+export { proxy as middleware };
+export default proxy;
