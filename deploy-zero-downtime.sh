@@ -122,7 +122,7 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
 
     # Active verification: live HTTP probe directly into backend and frontend
     BACKEND_PROBE=$(docker exec $BACKEND_CONTAINER curl -fsS http://localhost:10000/health 2>/dev/null || echo "")
-    if [[ "$BACKEND_PROBE" == *"\"status\":\"healthy\""* ]] || [[ "$BACKEND_PROBE" == *"\"status\": \"healthy\""* ]]; then
+    if [[ "$BACKEND_PROBE" == *"\"status\":\"healthy\""* ]] || [[ "$BACKEND_PROBE" == *"\"status\": \"healthy\""* ]] || [[ "$BACKEND_PROBE" == *"\"healthy\""* ]]; then
         FRONTEND_PROBE=$(docker exec $FRONTEND_CONTAINER curl -fsS http://localhost:3000/calrims/api/health/ 2>/dev/null || echo "")
         if [ -n "$FRONTEND_PROBE" ]; then
             HEALTH_OK=true

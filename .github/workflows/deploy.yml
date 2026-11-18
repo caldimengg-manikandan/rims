@@ -55,13 +55,13 @@ jobs:
             fi
             
             echo "=== VPS CONTAINER LOGS AFTER SUCCESSFUL DEPLOY ==="
-            ACTIVE_ENV=$(grep -oP '(?<=server frontend_)(blue|green)' nginx.conf | head -n 1)
+            ACTIVE_ENV=$(grep -oP '(?<=server frontend_)(blue|green)' nginx.conf 2>/dev/null | head -n 1 || true)
             docker compose -f docker-compose.prod.yml logs --tail=500 backend_${ACTIVE_ENV:-blue} | grep -A 5 -B 5 -i "puppeteer" || true
             docker compose -f docker-compose.prod.yml logs --tail=300 frontend_${ACTIVE_ENV:-blue} || true
             
             echo "=== VPS CONTAINER INTERNAL ROUTING & CHROMIUM TEST ==="
-            RUNNING_BACKEND=$(docker compose -f docker-compose.prod.yml ps --services --filter "status=running" | grep -E '^backend_' | head -n 1)
-            RUNNING_FRONTEND=$(docker compose -f docker-compose.prod.yml ps --services --filter "status=running" | grep -E '^frontend_' | head -n 1)
+            RUNNING_BACKEND=$(docker compose -f docker-compose.prod.yml ps --services --filter "status=running" 2>/dev/null | grep -E '^backend_' | head -n 1 || true)
+            RUNNING_FRONTEND=$(docker compose -f docker-compose.prod.yml ps --services --filter "status=running" 2>/dev/null | grep -E '^frontend_' | head -n 1 || true)
             docker compose -f docker-compose.prod.yml exec -T ${RUNNING_BACKEND:-backend_blue} curl -i -sL http://nginx/calrims/api/health/ || true
             docker compose -f docker-compose.prod.yml exec -T ${RUNNING_FRONTEND:-frontend_blue} /usr/bin/chromium --version --no-sandbox || true
 
