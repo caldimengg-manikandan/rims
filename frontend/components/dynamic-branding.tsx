@@ -3,20 +3,12 @@
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useBranding } from '@/lib/branding-client';
+import { extractSubdomainSlug } from '@/lib/tenant-host';
 import { useAuth } from '@/app/dashboard/lib/auth-context';
 
 function getSubdomainSlug(): string | null {
   if (typeof window === 'undefined') return null;
-  const host = window.location.hostname.toLowerCase();
-  if (host.endsWith('.localhost')) {
-    const sub = host.replace('.localhost', '');
-    if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') return sub;
-  }
-  const parts = host.split('.');
-  if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static', 'cdn'].includes(parts[0])) {
-    return parts[0];
-  }
-  return null;
+  return extractSubdomainSlug(window.location.hostname);
 }
 
 function normalizePathname(raw: string | null | undefined): string {

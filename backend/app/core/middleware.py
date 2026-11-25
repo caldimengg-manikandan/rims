@@ -334,7 +334,7 @@ def _resolve_slug_from_host(host: str) -> Optional[str]:
         if sub and sub not in ("www", "api", "mail", "admin", "static"):
             return sub
     # Known platform apex domains have no tenant
-    if host in ("calrims.com", "rims.app", "calrims.local"):
+    if host in ("calrims.com", "rims.app", "calrims.local", "caldimproducts.com"):
         return None
 
     parts = host.split(".")
@@ -477,11 +477,11 @@ class TenantResolutionMiddleware:
                     cache_key = f"tenant:slug:{jwt_tenant_ref}"
                     tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_slug, jwt_tenant_ref)
 
-        # 5. Default tenant fallback (dev/single-tenant deployments)
+        # 5. Default tenant fallback (apex domain / localhost / bare IP when no subdomain or header was given)
         if tenant_data is None and not resolve_error:
-            from app.core.config import get_settings as _get_settings
-            _settings = _get_settings()
-            if _settings.env != "production":
+            if slug:
+                resolve_error = f"Tenant '{slug}' not found"
+            else:
                 cache_key = "tenant:slug:default"
                 tenant_data = _get_or_lookup(cache_key, _lookup_tenant_by_slug, "default")
 

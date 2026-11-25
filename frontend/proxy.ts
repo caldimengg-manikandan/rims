@@ -1,43 +1,11 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
+import { extractSubdomainSlug } from '@/lib/tenant-host';
 
 /**
  * Next.js Middleware — Multi-Tenant Resolution & Route Protection
  */
-
-const RESERVED_SUBDOMAINS = new Set([
-  'www', 'api', 'mail', 'admin', 'static', 'cdn', 'assets',
-  'auth', 'staging', 'preview', 'sandbox',
-]);
-
-function extractSlugFromHost(host: string): string | null {
-  if (!host) return null;
-  const hostname = host.split(':')[0].toLowerCase().trim();
-
-  if (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '0.0.0.0' ||
-    /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
-  ) {
-    return null;
-  }
-
-  // Support *.localhost out of the box (e.g., acme.localhost, nexus.localhost)
-  if (hostname.endsWith('.localhost')) {
-    const sub = hostname.slice(0, -'.localhost'.length);
-    if (sub && !RESERVED_SUBDOMAINS.has(sub)) return sub;
-  }
-
-  const parts = hostname.split('.');
-  if (parts.length < 2) return null;
-
-  const candidate = parts[0];
-  if (RESERVED_SUBDOMAINS.has(candidate)) return null;
-
-  return candidate;
-}
 
 function extractSlugFromHeader(request: NextRequest): string | null {
   return (
@@ -51,9 +19,9 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 1. Resolve Tenant Context
-  const host = request.headers.get('host') ?? '';
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? '';
   let tenantSlug =
-    extractSlugFromHost(host) ??
+    extractSubdomainSlug(host) ??
     extractSlugFromHeader(request) ??
     'default';
 

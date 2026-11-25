@@ -455,14 +455,18 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
 
     access_token = create_access_token(token_data, access_token_expires)
 
-    samesite_policy = "lax" if settings.env == "development" else "strict"
+    samesite_policy = "lax"
+    is_https = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    )
 
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
         samesite=samesite_policy,
-        secure=settings.env == "production",
+        secure=is_https,
         max_age=7 * 24 * 3600,
         path="/"
     )
@@ -472,7 +476,7 @@ def login(request: Request, response: Response, credentials: UserLogin, db: Sess
             value=user.tenant.slug,
             httponly=False,
             samesite=samesite_policy,
-            secure=settings.env == "production",
+            secure=is_https,
             max_age=7 * 24 * 3600,
             path="/"
         )
@@ -726,19 +730,23 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
                 detail="Authentication service temporarily offline.",
             )
 
+    is_https = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    )
     response.delete_cookie(
         key="access_token",
         httponly=True,
-        samesite="strict",
-        secure=settings.env == "production",
+        samesite="lax",
+        secure=is_https,
         path="/"
     )
     # BUG-013 Fix: Also clear hr_token (set during HR interview-module operations)
     response.delete_cookie(
         key="hr_token",
         httponly=True,
-        samesite="strict",
-        secure=settings.env == "production"
+        samesite="lax",
+        secure=is_https
     )
     response.delete_cookie(
         key="x-tenant-slug",

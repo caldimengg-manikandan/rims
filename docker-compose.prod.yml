@@ -27,12 +27,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
+        # Leave empty so browser resolves API same-origin (preserves tenant subdomains like *.caldimproducts.com)
+        - NEXT_PUBLIC_API_BASE_URL=
     env_file:
       - ./backend/.env
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
+      - NEXT_PUBLIC_API_BASE_URL=
       - INTERNAL_API_URL=http://backend_blue:10000
       - API_INTERNAL_URL=http://backend_blue:10000
       - BRANDING_API_URL=http://backend_blue:10000
@@ -109,12 +110,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
+        # Leave empty so browser resolves API same-origin (preserves tenant subdomains like *.caldimproducts.com)
+        - NEXT_PUBLIC_API_BASE_URL=
     env_file:
       - ./backend/.env
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=https://caldimproducts.com/calrims
+      - NEXT_PUBLIC_API_BASE_URL=
       - INTERNAL_API_URL=http://backend_green:10000
       - API_INTERNAL_URL=http://backend_green:10000
       - BRANDING_API_URL=http://backend_green:10000

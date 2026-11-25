@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { getApiBaseUrl } from '@/lib/config'
+import { extractSubdomainSlug } from '@/lib/tenant-host'
 import { clearSession } from '@/lib/session-store'
 import { APIClient, setActiveTenantMeta } from '@/app/dashboard/lib/api-client'
 
@@ -287,21 +288,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error("API base URL is not defined. Please check your environment configuration.");
       }
 
-      let currentSlug = 'default';
-      if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname.toLowerCase();
-        if (hostname.endsWith('.localhost')) {
-          const sub = hostname.slice(0, -'.localhost'.length);
-          if (sub && !['www', 'api', 'mail', 'admin', 'static'].includes(sub)) {
-            currentSlug = sub;
-          }
-        } else if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-          const parts = hostname.split('.');
-          if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
-            currentSlug = parts[0];
-          }
-        }
-      }
+      const currentSlug =
+        (typeof window !== 'undefined' ? extractSubdomainSlug(window.location.hostname) : null) ||
+        'default';
 
       const response = await fetch(`${apiBase}/api/auth/login`, {
         method: 'POST',

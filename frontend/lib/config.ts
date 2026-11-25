@@ -3,30 +3,41 @@
  */
 
 export function getApiBaseUrl(): string {
-  const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:10000';
+  const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || '';
   let url = rawApiBaseUrl.replace(/\/+$/, '');
 
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname;
+  if (typeof window === 'undefined') {
+    return getServerApiBaseUrl();
+  }
 
-    // If accessing via LAN IP or hostname (e.g. 192.168.x.x), route API calls to that host's port 10000
-    const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+  const host = window.location.hostname;
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
+
+  // In local development (localhost, *.localhost, LAN IP, or port 3000)
+  if (isLocalhost || window.location.port === '3000') {
     if (!isLocalhost && (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.endsWith('.local'))) {
       return `${window.location.protocol}//${host}:10000`;
     }
+    return url || 'http://127.0.0.1:10000';
+  }
 
-    // In local development on localhost or tenant subdomains (e.g. amazon.localhost)
-    if (isLocalhost || window.location.port === '3000') {
-      return url || 'http://127.0.0.1:10000';
-    }
+  // In production behind Nginx (/calrims), always use the active window origin
+  // so tenant subdomains (e.g. acme.caldimproducts.com) stay same-origin and preserve Host/cookies.
+  if (!url) {
+    return window.location.origin + '/calrims';
+  }
 
-    if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
-      return window.location.origin + '/calrims';
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.hostname !== window.location.hostname && window.location.hostname.endsWith(`.${parsed.hostname}`)) {
+      return `${window.location.protocol}//${window.location.host}${parsed.pathname.replace(/\/+$/, '')}`;
     }
+  } catch {
+    // Keep fallback url
+  }
 
-    if (window.location.protocol === 'https:' && url.startsWith('http://') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
-      url = url.replace(/^http:\/\//, 'https://');
-    }
+  if (window.location.protocol === 'https:' && url.startsWith('http://') && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+    url = url.replace(/^http:\/\//, 'https://');
   }
 
   return url;
@@ -47,17 +58,8 @@ export function getServerApiBaseUrl(): string {
   if (internal) {
     return internal.replace(/\/+$/, '');
   }
-  return getApiBaseUrl();
-}
-
-
-// Safeguard: warn in production if API base URL is missing (fallback remains localhost).
-if (typeof window !== 'undefined') {
-  const isProd = process.env.NODE_ENV === 'production'
-  if (isProd && !process.env.NEXT_PUBLIC_API_BASE_URL) {
-    // eslint-disable-next-line no-console
-    console.warn('[config] NEXT_PUBLIC_API_BASE_URL is not set in production; falling back to localhost')
-  }
+  const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:10000';
+  return rawApiBaseUrl.replace(/\/+$/, '');
 }
 
 // Other global constants can go here

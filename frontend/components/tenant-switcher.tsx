@@ -15,6 +15,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useAuth } from '@/app/dashboard/lib/auth-context'
 import { APIClient } from '@/app/dashboard/lib/api-client'
+import { extractSubdomainSlug } from '@/lib/tenant-host'
 import { Building2, ShieldCheck, ChevronDown, Check } from 'lucide-react'
 
 interface TenantOption {
@@ -27,16 +28,7 @@ interface TenantOption {
 
 function getSubdomainSlug(): string | null {
   if (typeof window === 'undefined') return null
-  const host = window.location.hostname.toLowerCase()
-  if (host.endsWith('.localhost')) {
-    const sub = host.replace('.localhost', '')
-    if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') return sub
-  }
-  const parts = host.split('.')
-  if (parts.length >= 3 && parts[0] !== 'www') {
-    return parts[0]
-  }
-  return null
+  return extractSubdomainSlug(window.location.hostname)
 }
 
 export function TenantSwitcher() {

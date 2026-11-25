@@ -1,5 +1,6 @@
 // API Client - Last Updated: 2026-09-01 (multi-tenancy)
 import { getApiBaseUrl } from '@/lib/config'
+import { extractSubdomainSlug } from '@/lib/tenant-host'
 import { toast } from 'sonner'
 
 const MUTATION_REVALIDATION_PREFIXES = [
@@ -109,19 +110,7 @@ export class APIClient {
       }
 
       // ── Multi-tenancy: attach tenant headers ──
-      let subdomainSlug: string | null = null
-      const host = window.location.hostname.toLowerCase()
-      if (host.endsWith('.localhost')) {
-        const sub = host.slice(0, -'.localhost'.length)
-        if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') {
-          subdomainSlug = sub
-        }
-      } else {
-        const parts = host.split('.')
-        if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
-          subdomainSlug = parts[0]
-        }
-      }
+      const subdomainSlug = extractSubdomainSlug(window.location.hostname)
 
       // If calling the platform default branding endpoint (no tenant query param and not on a subdomain),
       // NEVER attach a tenant slug header!

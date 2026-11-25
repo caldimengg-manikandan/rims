@@ -144,6 +144,12 @@ class TestTenantResolutionHelpers:
         from app.core.middleware import _resolve_slug_from_host
         assert _resolve_slug_from_host("acme.rims.app:8080") == "acme"
 
+    def test_caldimproducts_apex_and_subdomain(self):
+        from app.core.middleware import _resolve_slug_from_host
+        assert _resolve_slug_from_host("caldimproducts.com") is None
+        assert _resolve_slug_from_host("www.caldimproducts.com") is None
+        assert _resolve_slug_from_host("acme.caldimproducts.com") == "acme"
+
     def test_jwt_claim_extraction(self):
         """Construct a JWT with tenant_id in app_metadata and check extraction."""
         import base64, json
@@ -245,6 +251,44 @@ class TestTenantMiddlewareHTTP:
         assert response.status_code == 403
         body = response.json()
         assert "suspended" in body.get("detail", "").lower()
+
+    @patch("app.core.middleware._lookup_tenant_by_slug")
+    @patch("app.core.middleware._cached_get", return_value=None)
+    @patch("app.core.middleware._cached_set")
+    def test_production_apex_falls_back_to_default_tenant(
+        self, mock_cache_set, mock_cache_get, mock_lookup, app_client
+    ):
+        """Apex host in production falls back to 'default' rather than returning 404."""
+        default_tenant = {
+            "id": str(uuid.uuid4()),
+            "name": "Default Organization",
+            "slug": "default",
+            "status": "active",
+            "logo_url": None,
+            "custom_domain": None,
+            "settings": {},
+        }
+        mock_lookup.side_effect = lambda slug: default_tenant if slug == "default" else None
+        response = app_client.get(
+            "/api/jobs",
+            headers={"Host": "caldimproducts.com"},
+        )
+        # Middleware resolved 'default' tenant; route proceeds to auth (401) rather than 404
+        assert response.status_code != 404
+
+    @patch("app.core.middleware._lookup_tenant_by_slug", return_value=None)
+    @patch("app.core.middleware._cached_get", return_value=None)
+    @patch("app.core.middleware._cached_set")
+    def test_unknown_subdomain_returns_404(
+        self, mock_cache_set, mock_cache_get, mock_lookup, app_client
+    ):
+        """Unknown tenant subdomain returns 404 rather than leaking default tenant."""
+        response = app_client.get(
+            "/api/jobs",
+            headers={"Host": "bogus.caldimproducts.com"},
+        )
+        assert response.status_code == 404
+        assert "bogus" in response.json().get("detail", "").lower()
 
 
 # ---------------------------------------------------------------------------

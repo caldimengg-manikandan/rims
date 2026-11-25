@@ -617,9 +617,9 @@ if settings.env == "development":
         "http://localhost:10000",
         "http://127.0.0.1:10000"
     ]))
-    cors_origin_regex = r"^https?://(([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com)|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$"
+    cors_origin_regex = r"^https?://(([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com|caldimproducts\.com)|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$"
 else:
-    cors_origin_regex = r"^https?://([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com)(:\d+)?$"
+    cors_origin_regex = r"^https?://([a-zA-Z0-9-]+\.)*(localhost|127\.0\.0\.1|calrims\.local|calrims\.com|caldimproducts\.com)(:\d+)?$"
 
 app.add_middleware(
     CORSMiddleware,

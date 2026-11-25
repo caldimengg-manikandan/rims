@@ -1,6 +1,8 @@
 import React from 'react'
 import { Metadata } from 'next'
-import { getApiBaseUrl } from '@/lib/config'
+import { headers } from 'next/headers'
+import { getServerApiBaseUrl } from '@/lib/config'
+import { extractSubdomainSlug } from '@/lib/tenant-host'
 import { PublicJobDetail, Job } from '@/components/public-job-detail'
 
 interface PageProps {
@@ -27,9 +29,21 @@ async function getJob(id: string): Promise<Job | null> {
   if (!/^[a-zA-Z0-9\-]+$/.test(id)) {
     return null
   }
-  const apiBase = getApiBaseUrl()
+  const apiBase = getServerApiBaseUrl()
+  const fetchHeaders: Record<string, string> = {}
+  try {
+    const headerList = await headers()
+    const host = headerList.get('x-forwarded-host') || headerList.get('host') || ''
+    const tenantSlug = headerList.get('x-tenant-slug') || extractSubdomainSlug(host) || ''
+    if (tenantSlug) {
+      fetchHeaders['X-Tenant-Slug'] = tenantSlug
+    }
+  } catch {
+    // headers() unavailable during static generation
+  }
   try {
     const res = await fetch(`${apiBase}/api/jobs/public/${encodeURIComponent(id)}`, {
+      headers: fetchHeaders,
       next: { revalidate: 60 } // Cache for 1 minute
     })
     if (res.ok) {

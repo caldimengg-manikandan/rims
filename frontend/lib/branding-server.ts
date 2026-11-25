@@ -2,6 +2,7 @@ import { headers } from 'next/headers';
 import { cache } from 'react';
 import { getServerApiBaseUrl } from './config';
 import { getBranding, BrandingConfig } from './branding';
+import { extractSubdomainSlug } from './tenant-host';
 
 const fetchBrandingData = cache(async (tenantSlug: string): Promise<BrandingConfig> => {
   const controller = new AbortController();
@@ -39,19 +40,8 @@ export async function getBrandingServer(): Promise<BrandingConfig> {
     const headerList = await headers();
     tenantSlug = headerList.get('x-tenant-slug') || '';
     if (!tenantSlug) {
-      const host = headerList.get('host') || '';
-      const lowerHost = host.split(':')[0].toLowerCase().trim();
-      if (lowerHost.endsWith('.localhost')) {
-        const sub = lowerHost.slice(0, -'.localhost'.length);
-        if (sub && sub !== 'localhost' && sub !== 'www' && sub !== '127.0.0.1') {
-          tenantSlug = sub;
-        }
-      } else {
-        const parts = lowerHost.split('.');
-        if (parts.length >= 3 && !['www', 'api', 'mail', 'admin', 'static'].includes(parts[0])) {
-          tenantSlug = parts[0];
-        }
-      }
+      const host = headerList.get('x-forwarded-host') || headerList.get('host') || '';
+      tenantSlug = extractSubdomainSlug(host) || '';
     }
   } catch (_) {
     // headers() may not be available in all build/SSG contexts
