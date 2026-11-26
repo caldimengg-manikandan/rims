@@ -14,7 +14,7 @@ Security guarantees enforced by this module:
 import logging
 from datetime import datetime, timedelta, timezone as _tz
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 
@@ -53,8 +53,16 @@ from app.domain.schemas import (
     CodeSubmitRequest,
     CodeSubmitResponse,
     CodingSessionResponse,
+    CodingRepositoryImportResponse,
 )
 from app.execution.service import ExecutionService, SubmissionService
+from app.services.coding_repository_io import (
+    build_repository_xlsx,
+    parse_language_list,
+    parse_repository_xlsx,
+    serialize_problem_for_export,
+    serialize_set_for_export,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -573,6 +581,355 @@ def delete_coding_question_set(
     db.delete(q_set)
     db.commit()
     return None
+
+
+# ============================================================================
+# HR Endpoints — Repository Export & Import (JSON & Excel .xlsx)
+# ============================================================================
+
+@router.get("/repository/export")
+@router.get("/repository/export/")
+def export_coding_repository(
+    scope: str = "all",  # "all", "sets", "problems"
+    set_id: Optional[int] = None,
+    problem_id: Optional[int] = None,
+    format: str = "json",  # "json" | "xlsx"
+    current_user: User = Depends(get_current_hr),
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Export coding question sets and/or problems as JSON or Excel (.xlsx)."""
+    export_sets = []
+    export_problems = []
+    filename_prefix = f"coding-repository-{scope}"
+
+    if problem_id is not None:
+        prob = (
+            db.query(CodingProblem)
+            .options(joinedload(CodingProblem.test_cases))
+            .filter(
+                CodingProblem.id == problem_id,
+                CodingProblem.tenant_id == tenant_ctx.id,
+            )
+            .first()
+        )
+        if not prob:
+            raise HTTPException(status_code=404, detail="Coding problem not found.")
+        export_problems.append(serialize_problem_for_export(prob))
+        filename_prefix = f"problem-{prob.id}"
+    elif set_id is not None:
+        qs = (
+            db.query(CodingQuestionSet)
+            .options(joinedload(CodingQuestionSet.items).joinedload(CodingQuestionSetItem.problem).joinedload(CodingProblem.test_cases))
+            .filter(
+                CodingQuestionSet.id == set_id,
+                CodingQuestionSet.tenant_id == tenant_ctx.id,
+            )
+            .first()
+        )
+        if not qs:
+            raise HTTPException(status_code=404, detail="Coding question set not found.")
+        export_sets.append(serialize_set_for_export(qs))
+        filename_prefix = f"question-set-{qs.id}"
+    else:
+        all_sets = (
+            db.query(CodingQuestionSet)
+            .options(joinedload(CodingQuestionSet.items).joinedload(CodingQuestionSetItem.problem).joinedload(CodingProblem.test_cases))
+            .filter(CodingQuestionSet.tenant_id == tenant_ctx.id)
+            .order_by(CodingQuestionSet.id.desc())
+            .all()
+        )
+        all_problems = (
+            db.query(CodingProblem)
+            .options(joinedload(CodingProblem.test_cases))
+            .filter(CodingProblem.tenant_id == tenant_ctx.id)
+            .order_by(CodingProblem.id.desc())
+            .all()
+        )
+
+        if scope in ("all", "sets"):
+            export_sets = [serialize_set_for_export(s) for s in all_sets]
+
+        if scope == "problems":
+            export_problems = [serialize_problem_for_export(p) for p in all_problems]
+        elif scope == "all":
+            set_problem_ids = {item.problem_id for s in all_sets for item in s.items}
+            standalone = [p for p in all_problems if p.id not in set_problem_ids]
+            export_problems = [serialize_problem_for_export(p) for p in standalone]
+
+    if format.strip().lower() == "xlsx":
+        xlsx_bytes = build_repository_xlsx(export_sets, export_problems)
+        date_str = get_ist_now().strftime("%Y-%m-%d")
+        return Response(
+            content=xlsx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename_prefix}-{date_str}.xlsx"'
+            },
+        )
+
+    return {
+        "format": "calrims-coding-repository",
+        "version": "1.0",
+        "exported_at": get_ist_now().isoformat(),
+        "total_sets": len(export_sets),
+        "total_problems": len(export_problems),
+        "question_sets": export_sets,
+        "problems": export_problems,
+    }
+
+
+def _replace_problem_test_cases(db: Session, problem_id: int, test_cases_data: list, clear_existing: bool) -> None:
+    if clear_existing:
+        db.query(CodingTestCase).filter(CodingTestCase.problem_id == problem_id).delete()
+    for idx, tc in enumerate(test_cases_data):
+        db.add(
+            CodingTestCase(
+                problem_id=problem_id,
+                input=str(tc.get("input", "")),
+                expected_output=str(tc.get("expected_output", "")),
+                weight=float(tc.get("weight", 1.0) or 1.0),
+                is_hidden=bool(tc.get("is_hidden", False)),
+                display_order=int(tc.get("display_order", idx + 1) or (idx + 1)),
+            )
+        )
+
+
+def _normalize_problem_import_fields(prob_data: dict) -> dict:
+    sol = prob_data.get("solution_codes") or prob_data.get("solution_code")
+    if isinstance(sol, dict):
+        sol_str = json.dumps(sol)
+    elif sol:
+        sol_str = str(sol).strip()
+    else:
+        sol_str = json.dumps({"python3": "# Reference solution\ndef solve():\n    pass\n"})
+
+    starter = prob_data.get("starter_code") if isinstance(prob_data.get("starter_code"), dict) else {}
+    supported = parse_language_list(prob_data.get("supported_languages"))
+    if not supported:
+        if isinstance(sol, dict) and sol:
+            supported = parse_language_list(list(sol.keys()))
+        elif starter:
+            supported = parse_language_list(list(starter.keys()))
+    if not supported:
+        supported = ["python3"]
+
+    difficulty = str(prob_data.get("difficulty") or "medium").strip().lower()
+    if difficulty not in ("easy", "medium", "hard"):
+        difficulty = "medium"
+
+    return {
+        "description": str(prob_data.get("description") or ""),
+        "input_format": prob_data.get("input_format"),
+        "output_format": prob_data.get("output_format"),
+        "constraints": prob_data.get("constraints"),
+        "difficulty": difficulty,
+        "time_limit_ms": int(prob_data.get("time_limit_ms") or 2000),
+        "memory_limit_mb": int(prob_data.get("memory_limit_mb") or 256),
+        "supported_languages": supported,
+        "starter_code": starter,
+        "solution_code": sol_str,
+        "test_cases": prob_data.get("test_cases") or [],
+    }
+
+
+@router.post("/repository/import", response_model=CodingRepositoryImportResponse)
+@router.post("/repository/import/", response_model=CodingRepositoryImportResponse)
+async def import_coding_repository(
+    request: Request,
+    current_user: User = Depends(get_current_hr),
+    db: Session = Depends(get_db),
+    tenant_ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Import coding question sets and problems from JSON or Excel (.xlsx)."""
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        file_field = form.get("file")
+        if not file_field:
+            raise HTTPException(status_code=400, detail="No file uploaded.")
+        content = await file_field.read()
+        filename = (getattr(file_field, "filename", "") or "").lower()
+        if filename.endswith((".xlsx", ".xls")) or content[:2] == b"PK":
+            try:
+                data = parse_repository_xlsx(content)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid Excel (.xlsx) file: {exc}")
+        else:
+            try:
+                data = json.loads(content.decode("utf-8"))
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON file: {exc}")
+        strategy = str(form.get("strategy") or "copy")
+    else:
+        try:
+            data = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON body: {exc}")
+        strategy = str(data.get("strategy") or "copy")
+
+    if strategy not in ("copy", "skip", "overwrite"):
+        strategy = "copy"
+
+    imported_problems_count = 0
+    imported_sets_count = 0
+    skipped_count = 0
+    messages: List[str] = []
+
+    def _import_single_problem(prob_data: dict) -> Optional[CodingProblem]:
+        nonlocal skipped_count, imported_problems_count
+        raw_title = str(prob_data.get("title") or "").strip()
+        if not raw_title:
+            return None
+
+        fields = _normalize_problem_import_fields(prob_data)
+        existing = (
+            db.query(CodingProblem)
+            .filter(CodingProblem.title == raw_title, CodingProblem.tenant_id == tenant_ctx.id)
+            .first()
+        )
+
+        if existing:
+            if strategy == "skip":
+                skipped_count += 1
+                messages.append(f"Skipped existing problem: '{raw_title}'")
+                return existing
+            if strategy == "overwrite":
+                for attr in (
+                    "description", "input_format", "output_format", "constraints",
+                    "difficulty", "time_limit_ms", "memory_limit_mb",
+                    "supported_languages", "starter_code", "solution_code",
+                ):
+                    setattr(existing, attr, fields[attr])
+                if fields["test_cases"]:
+                    _replace_problem_test_cases(db, existing.id, fields["test_cases"], clear_existing=True)
+                imported_problems_count += 1
+                messages.append(f"Overwrote problem: '{raw_title}'")
+                return existing
+
+            target_title = f"{raw_title} (Imported)"
+            count = 1
+            while (
+                db.query(CodingProblem)
+                .filter(CodingProblem.title == target_title, CodingProblem.tenant_id == tenant_ctx.id)
+                .first()
+            ):
+                count += 1
+                target_title = f"{raw_title} (Imported {count})"
+        else:
+            target_title = raw_title
+
+        new_prob = CodingProblem(
+            tenant_id=tenant_ctx.id,
+            title=target_title,
+            description=fields["description"],
+            input_format=fields["input_format"],
+            output_format=fields["output_format"],
+            constraints=fields["constraints"],
+            supported_languages=fields["supported_languages"],
+            starter_code=fields["starter_code"],
+            solution_code=fields["solution_code"],
+            difficulty=fields["difficulty"],
+            time_limit_ms=fields["time_limit_ms"],
+            memory_limit_mb=fields["memory_limit_mb"],
+            hr_id=current_user.id,
+        )
+        db.add(new_prob)
+        db.flush()
+        if fields["test_cases"]:
+            _replace_problem_test_cases(db, new_prob.id, fields["test_cases"], clear_existing=False)
+        imported_problems_count += 1
+        messages.append(f"Imported problem: '{target_title}'")
+        return new_prob
+
+    try:
+        for qs_data in data.get("question_sets") or []:
+            qs_title = str(qs_data.get("title") or "").strip()
+            if not qs_title:
+                continue
+
+            qs_langs = parse_language_list(qs_data.get("supported_languages")) or ["python3"]
+            existing_set = (
+                db.query(CodingQuestionSet)
+                .filter(CodingQuestionSet.title == qs_title, CodingQuestionSet.tenant_id == tenant_ctx.id)
+                .first()
+            )
+
+            if existing_set:
+                if strategy == "skip":
+                    skipped_count += 1
+                    messages.append(f"Skipped existing question set: '{qs_title}'")
+                    continue
+                if strategy == "overwrite":
+                    target_set = existing_set
+                    target_set.description = qs_data.get("description", existing_set.description)
+                    target_set.supported_languages = qs_langs
+                    db.query(CodingQuestionSetItem).filter(CodingQuestionSetItem.question_set_id == target_set.id).delete()
+                    imported_sets_count += 1
+                    messages.append(f"Overwrote question set: '{qs_title}'")
+                else:
+                    target_set_title = f"{qs_title} (Imported)"
+                    count = 1
+                    while (
+                        db.query(CodingQuestionSet)
+                        .filter(CodingQuestionSet.title == target_set_title, CodingQuestionSet.tenant_id == tenant_ctx.id)
+                        .first()
+                    ):
+                        count += 1
+                        target_set_title = f"{qs_title} (Imported {count})"
+                    target_set = CodingQuestionSet(
+                        tenant_id=tenant_ctx.id,
+                        title=target_set_title,
+                        description=qs_data.get("description"),
+                        supported_languages=qs_langs,
+                        hr_id=current_user.id,
+                    )
+                    db.add(target_set)
+                    db.flush()
+                    imported_sets_count += 1
+                    messages.append(f"Created question set copy: '{target_set_title}'")
+            else:
+                target_set = CodingQuestionSet(
+                    tenant_id=tenant_ctx.id,
+                    title=qs_title,
+                    description=qs_data.get("description"),
+                    supported_languages=qs_langs,
+                    hr_id=current_user.id,
+                )
+                db.add(target_set)
+                db.flush()
+                imported_sets_count += 1
+                messages.append(f"Imported question set: '{qs_title}'")
+
+            for linked_order, p_data in enumerate(qs_data.get("problems") or [], start=1):
+                prob = _import_single_problem(p_data)
+                if prob:
+                    db.add(
+                        CodingQuestionSetItem(
+                            question_set_id=target_set.id,
+                            problem_id=prob.id,
+                            display_order=linked_order,
+                        )
+                    )
+
+        for p_data in (data.get("problems") or []) + (data.get("standalone_problems") or []):
+            _import_single_problem(p_data)
+
+        db.commit()
+        return CodingRepositoryImportResponse(
+            success=True,
+            imported_sets_count=imported_sets_count,
+            imported_problems_count=imported_problems_count,
+            skipped_count=skipped_count,
+            messages=messages,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to import coding repository: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to import repository items: {exc}")
 
 
 @router.get("/interviews/{interview_id}/submissions")

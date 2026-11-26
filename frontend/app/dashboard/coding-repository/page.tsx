@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
+import * as XLSX from 'xlsx'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -56,6 +57,7 @@ import {
     Upload,
     FileUp,
     FileJson,
+    FileSpreadsheet,
 } from 'lucide-react'
 import {
     Select,
@@ -165,6 +167,7 @@ export default function CodingRepositoryPage() {
     const [deleteTarget, setDeleteTarget] = useState<{ type: 'problem' | 'set'; id: number; title: string } | null>(null)
 
     // Export & Import State
+    const [exportFormat, setExportFormat] = useState<'xlsx' | 'json'>('xlsx')
     const [exporting, setExporting] = useState(false)
     const [exportingId, setExportingId] = useState<string | null>(null)
     const [importModalOpen, setImportModalOpen] = useState(false)
@@ -498,13 +501,23 @@ export default function CodingRepositoryPage() {
             .replace(/^-+|-+$/g, '') || 'item'
     }
 
+    const triggerExport = async (query: string, baseFilename: string, successMessage: string) => {
+        if (exportFormat === 'xlsx') {
+            await APIClient.downloadFile(`/api/coding/repository/export/?${query}&format=xlsx`, `${baseFilename}.xlsx`)
+            toast.success(successMessage)
+            return null
+        }
+        const data = await APIClient.get<any>(`/api/coding/repository/export/?${query}&format=json`)
+        downloadJsonFile(data, `${baseFilename}.json`)
+        return data
+    }
+
     const handleExportAll = async () => {
         setExporting(true)
         try {
-            const data = await APIClient.get<any>('/api/coding/repository/export/?scope=all')
             const dateStr = new Date().toISOString().split('T')[0]
-            downloadJsonFile(data, `coding-repository-all-${dateStr}.json`)
-            toast.success('Repository exported successfully')
+            await triggerExport('scope=all', `coding-repository-all-${dateStr}`, 'Repository exported successfully')
+            if (exportFormat === 'json') toast.success('Repository exported successfully')
         } catch (err: any) {
             console.error('Export all failed:', err)
             toast.error(err.detail || err.message || 'Failed to export repository')
@@ -516,10 +529,9 @@ export default function CodingRepositoryPage() {
     const handleExportProblems = async () => {
         setExporting(true)
         try {
-            const data = await APIClient.get<any>('/api/coding/repository/export/?scope=problems')
             const dateStr = new Date().toISOString().split('T')[0]
-            downloadJsonFile(data, `coding-problems-${dateStr}.json`)
-            toast.success(`Exported ${data.problems?.length || 0} coding problem(s)`)
+            const data = await triggerExport('scope=problems', `coding-problems-${dateStr}`, 'Coding problems exported successfully')
+            if (data) toast.success(`Exported ${data.problems?.length || 0} coding problem(s)`)
         } catch (err: any) {
             console.error('Export problems failed:', err)
             toast.error(err.detail || err.message || 'Failed to export problems')
@@ -531,10 +543,9 @@ export default function CodingRepositoryPage() {
     const handleExportSets = async () => {
         setExporting(true)
         try {
-            const data = await APIClient.get<any>('/api/coding/repository/export/?scope=sets')
             const dateStr = new Date().toISOString().split('T')[0]
-            downloadJsonFile(data, `coding-question-sets-${dateStr}.json`)
-            toast.success(`Exported ${data.question_sets?.length || 0} question set(s)`)
+            const data = await triggerExport('scope=sets', `coding-question-sets-${dateStr}`, 'Question sets exported successfully')
+            if (data) toast.success(`Exported ${data.question_sets?.length || 0} question set(s)`)
         } catch (err: any) {
             console.error('Export question sets failed:', err)
             toast.error(err.detail || err.message || 'Failed to export question sets')
@@ -546,9 +557,8 @@ export default function CodingRepositoryPage() {
     const handleExportSingleProblem = async (p: Problem) => {
         setExportingId(`p-${p.id}`)
         try {
-            const data = await APIClient.get<any>(`/api/coding/repository/export/?problem_id=${p.id}`)
-            downloadJsonFile(data, `problem-${slugify(p.title)}.json`)
-            toast.success(`Exported "${p.title}"`)
+            await triggerExport(`problem_id=${p.id}`, `problem-${slugify(p.title)}`, `Exported "${p.title}"`)
+            if (exportFormat === 'json') toast.success(`Exported "${p.title}"`)
         } catch (err: any) {
             console.error('Export single problem failed:', err)
             toast.error(err.detail || err.message || 'Failed to export problem')
@@ -560,15 +570,185 @@ export default function CodingRepositoryPage() {
     const handleExportSingleSet = async (qs: QuestionSet) => {
         setExportingId(`s-${qs.id}`)
         try {
-            const data = await APIClient.get<any>(`/api/coding/repository/export/?set_id=${qs.id}`)
-            downloadJsonFile(data, `question-set-${slugify(qs.title)}.json`)
-            toast.success(`Exported "${qs.title}"`)
+            await triggerExport(`set_id=${qs.id}`, `question-set-${slugify(qs.title)}`, `Exported "${qs.title}"`)
+            if (exportFormat === 'json') toast.success(`Exported "${qs.title}"`)
         } catch (err: any) {
             console.error('Export single set failed:', err)
             toast.error(err.detail || err.message || 'Failed to export question set')
         } finally {
             setExportingId(null)
         }
+    }
+
+    const normalizeWorkbookLanguage = (raw: string): string | null => {
+        const key = (raw || '').trim().toLowerCase()
+        const map: Record<string, string> = {
+            python3: 'python3', 'python 3': 'python3', python: 'python3', py: 'python3',
+            java21: 'java21', 'java 21': 'java21', java: 'java21',
+            cpp: 'cpp', 'c++': 'cpp', 'c++ (gcc 13)': 'cpp',
+            javascript: 'javascript', 'javascript (node.js 20)': 'javascript', js: 'javascript', node: 'javascript',
+            golang: 'golang', go: 'golang', 'go 1.22': 'golang',
+            rust: 'rust', 'rust 1.77': 'rust',
+        }
+        return map[key] || null
+    }
+
+    const parseCodingWorkbook = (wb: XLSX.WorkBook) => {
+        const findSheetName = (candidates: string[]) =>
+            wb.SheetNames.find((n) => candidates.includes(n.trim().toLowerCase()))
+
+        const problemSheetName = findSheetName(['problems', 'coding problems', 'questions']) || wb.SheetNames[0]
+        if (!problemSheetName) {
+            throw new Error('Excel workbook contains no sheets.')
+        }
+
+        const rawProblems = XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[problemSheetName], { defval: '' })
+        const problemsById = new Map<string, any>()
+        const problemsByTitle = new Map<string, any>()
+        const parsedProblems: any[] = []
+
+        const starterRe = /^starter\s*(?:code)?\s*(?:\(([^)]+)\)|_([a-z0-9_+]+))$/i
+        const solutionRe = /^(?:reference\s*solution|solution(?:\s*code)?)\s*(?:\(([^)]+)\)|_([a-z0-9_+]+))$/i
+
+        for (const row of rawProblems) {
+            const lower: Record<string, any> = {}
+            for (const [k, v] of Object.entries(row)) {
+                lower[k.trim().toLowerCase()] = v
+            }
+            const title = String(lower['title'] || lower['problem title'] || '').trim()
+            if (!title) continue
+
+            const rawId = lower['id'] ?? lower['problem id']
+            const starter_code: Record<string, string> = {}
+            const solution_codes: Record<string, string> = {}
+
+            for (const [col, val] of Object.entries(row)) {
+                if (val === '' || val === null || val === undefined) continue
+                const mStart = col.trim().match(starterRe)
+                if (mStart) {
+                    const lang = normalizeWorkbookLanguage(mStart[1] || mStart[2] || '')
+                    if (lang) starter_code[lang] = String(val)
+                    continue
+                }
+                const mSol = col.trim().match(solutionRe)
+                if (mSol) {
+                    const lang = normalizeWorkbookLanguage(mSol[1] || mSol[2] || '')
+                    if (lang) solution_codes[lang] = String(val)
+                }
+            }
+
+            const rawLangs = String(lower['supported languages'] ?? lower['supported_languages'] ?? '')
+            let supported_languages = rawLangs
+                .split(/[,;\n]+/)
+                .map((s) => normalizeWorkbookLanguage(s))
+                .filter((s): s is string => Boolean(s))
+            supported_languages = Array.from(new Set(supported_languages))
+            if (supported_languages.length === 0) {
+                supported_languages = Array.from(new Set([...Object.keys(solution_codes), ...Object.keys(starter_code)]))
+            }
+            if (supported_languages.length === 0) supported_languages = ['python3']
+
+            const diffRaw = String(lower['difficulty'] || 'medium').trim().toLowerCase()
+            const difficulty = ['easy', 'medium', 'hard'].includes(diffRaw) ? diffRaw : 'medium'
+
+            const prob = {
+                title,
+                description: String(lower['description'] || ''),
+                input_format: String(lower['input format'] ?? lower['input_format'] ?? '') || null,
+                output_format: String(lower['output format'] ?? lower['output_format'] ?? '') || null,
+                constraints: String(lower['constraints'] ?? '') || null,
+                difficulty,
+                time_limit_ms: Number(lower['time limit (ms)'] ?? lower['time_limit_ms']) || 2000,
+                memory_limit_mb: Number(lower['memory limit (mb)'] ?? lower['memory_limit_mb']) || 256,
+                supported_languages,
+                starter_code,
+                solution_codes,
+                test_cases: [] as any[],
+            }
+
+            parsedProblems.push(prob)
+            if (rawId !== '' && rawId !== null && rawId !== undefined) {
+                problemsById.set(String(rawId).trim(), prob)
+            }
+            problemsByTitle.set(title.toLowerCase(), prob)
+        }
+
+        const tcSheetName = findSheetName(['test cases', 'test_cases', 'testcases'])
+        if (tcSheetName) {
+            const rawTcs = XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[tcSheetName], { defval: '' })
+            for (const row of rawTcs) {
+                const lower: Record<string, any> = {}
+                for (const [k, v] of Object.entries(row)) {
+                    lower[k.trim().toLowerCase()] = v
+                }
+                const pidKey = String(lower['problem id'] ?? lower['problem_id'] ?? '').trim()
+                const ptitleKey = String(lower['problem title'] ?? lower['problem_title'] ?? '').trim().toLowerCase()
+                const target = problemsById.get(pidKey) || problemsByTitle.get(ptitleKey)
+                if (!target) continue
+
+                const rawHidden = lower['is hidden'] ?? lower['is_hidden']
+                const is_hidden = typeof rawHidden === 'boolean'
+                    ? rawHidden
+                    : ['true', '1', 'yes', 'y'].includes(String(rawHidden).trim().toLowerCase())
+
+                const rawWeight = String(lower['weight (%)'] ?? lower['weight'] ?? '1').replace('%', '').trim()
+                const weight = parseFloat(rawWeight) || 1.0
+                const display_order = Number(lower['test case #'] ?? lower['display_order'] ?? lower['order']) || (target.test_cases.length + 1)
+
+                target.test_cases.push({
+                    input: String(lower['input'] ?? ''),
+                    expected_output: String(lower['expected output'] ?? lower['expected_output'] ?? ''),
+                    is_hidden,
+                    weight,
+                    display_order,
+                })
+            }
+        }
+
+        const setsSheetName = findSheetName(['question sets', 'question_sets', 'sets'])
+        const parsedSets: any[] = []
+        const linkedTitles = new Set<string>()
+        if (setsSheetName) {
+            const rawSets = XLSX.utils.sheet_to_json<Record<string, any>>(wb.Sheets[setsSheetName], { defval: '' })
+            for (const row of rawSets) {
+                const lower: Record<string, any> = {}
+                for (const [k, v] of Object.entries(row)) {
+                    lower[k.trim().toLowerCase()] = v
+                }
+                const qsTitle = String(lower['title'] || '').trim()
+                if (!qsTitle) continue
+
+                const rawTitles = String(lower['problem titles'] ?? lower['problem_titles'] ?? '')
+                const linkedProbs = rawTitles
+                    .split(/[\n;]+/)
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                    .map((t) => {
+                        const match = problemsByTitle.get(t.toLowerCase())
+                        if (match) linkedTitles.add(t.toLowerCase())
+                        return match
+                    })
+                    .filter(Boolean)
+
+                const qsLangs = String(lower['supported languages'] ?? lower['supported_languages'] ?? '')
+                    .split(/[,;\n]+/)
+                    .map((s) => normalizeWorkbookLanguage(s))
+                    .filter((s): s is string => Boolean(s))
+
+                parsedSets.push({
+                    title: qsTitle,
+                    description: String(lower['description'] || '') || null,
+                    supported_languages: qsLangs.length > 0 ? Array.from(new Set(qsLangs)) : ['python3'],
+                    problems: linkedProbs,
+                })
+            }
+        }
+
+        const standalone = parsedSets.length > 0
+            ? parsedProblems.filter((p) => !linkedTitles.has(p.title.toLowerCase()))
+            : parsedProblems
+
+        return { question_sets: parsedSets, problems: standalone }
     }
 
     const openImportModal = () => {
@@ -585,34 +765,43 @@ export default function CodingRepositoryPage() {
         setImportFile(file)
         setImportError(null)
 
+        const isExcel = /\.(xlsx|xls)$/i.test(file.name)
         const reader = new FileReader()
         reader.onload = (event) => {
             try {
-                const text = event.target?.result as string
-                const json = JSON.parse(text)
-
                 let normalizedSets: any[] = []
                 let normalizedProblems: any[] = []
 
-                if (Array.isArray(json)) {
-                    normalizedProblems = json
-                } else if (json && typeof json === 'object') {
-                    if (Array.isArray(json.question_sets)) {
-                        normalizedSets = json.question_sets
-                    }
-                    if (Array.isArray(json.problems)) {
-                        normalizedProblems = json.problems
-                    } else if (Array.isArray(json.standalone_problems)) {
-                        normalizedProblems = json.standalone_problems
-                    } else if (json.title && (json.input_format || json.test_cases || json.difficulty)) {
-                        normalizedProblems = [json]
-                    } else if (json.title && (json.supported_languages || json.problems)) {
-                        normalizedSets = [json]
+                if (isExcel) {
+                    const data = new Uint8Array(event.target?.result as ArrayBuffer)
+                    const wb = XLSX.read(data, { type: 'array' })
+                    const parsed = parseCodingWorkbook(wb)
+                    normalizedSets = parsed.question_sets
+                    normalizedProblems = parsed.problems
+                } else {
+                    const text = event.target?.result as string
+                    const json = JSON.parse(text)
+
+                    if (Array.isArray(json)) {
+                        normalizedProblems = json
+                    } else if (json && typeof json === 'object') {
+                        if (Array.isArray(json.question_sets)) {
+                            normalizedSets = json.question_sets
+                        }
+                        if (Array.isArray(json.problems)) {
+                            normalizedProblems = json.problems
+                        } else if (Array.isArray(json.standalone_problems)) {
+                            normalizedProblems = json.standalone_problems
+                        } else if (json.title && (json.input_format || json.test_cases || json.difficulty)) {
+                            normalizedProblems = [json]
+                        } else if (json.title && (json.supported_languages || json.problems)) {
+                            normalizedSets = [json]
+                        }
                     }
                 }
 
                 if (normalizedSets.length === 0 && normalizedProblems.length === 0) {
-                    setImportError('No valid coding problems or question sets detected in this JSON file.')
+                    setImportError(`No valid coding problems or question sets detected in this ${isExcel ? 'Excel' : 'JSON'} file.`)
                     setImportData(null)
                     return
                 }
@@ -622,7 +811,7 @@ export default function CodingRepositoryPage() {
                     problems: normalizedProblems,
                 })
             } catch (err: any) {
-                setImportError(`Invalid JSON format: ${err.message}`)
+                setImportError(`Invalid ${isExcel ? 'Excel' : 'JSON'} format: ${err.message}`)
                 setImportData(null)
             }
         }
@@ -630,7 +819,11 @@ export default function CodingRepositoryPage() {
             setImportError('Failed to read the selected file.')
             setImportData(null)
         }
-        reader.readAsText(file)
+        if (isExcel) {
+            reader.readAsArrayBuffer(file)
+        } else {
+            reader.readAsText(file)
+        }
     }
 
     const handleConfirmImport = async () => {
@@ -673,6 +866,15 @@ export default function CodingRepositoryPage() {
                 icon={Code2}
             >
                 <div className="flex items-center gap-2">
+                    <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as 'xlsx' | 'json')}>
+                        <SelectTrigger className="h-8 w-[125px] text-xs">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="xlsx">Excel (.xlsx)</SelectItem>
+                            <SelectItem value="json">JSON (.json)</SelectItem>
+                        </SelectContent>
+                    </Select>
                     <Button
                         variant="outline"
                         size="sm"
@@ -834,7 +1036,7 @@ export default function CodingRepositoryPage() {
                                                         <Button
                                                             variant="ghost"
                                                             size="icon"
-                                                            title="Export problem as JSON"
+                                                            title={`Export problem as ${exportFormat.toUpperCase()}`}
                                                             onClick={() => handleExportSingleProblem(p)}
                                                             disabled={exportingId === `p-${p.id}`}
                                                             className="h-8 w-8 text-muted-foreground hover:text-foreground"
@@ -944,7 +1146,7 @@ export default function CodingRepositoryPage() {
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        title="Export question set as JSON"
+                                                        title={`Export question set as ${exportFormat.toUpperCase()}`}
                                                         onClick={() => handleExportSingleSet(qs)}
                                                         disabled={exportingId === `s-${qs.id}`}
                                                         className="h-8 w-8 text-muted-foreground hover:text-foreground"
@@ -1694,7 +1896,7 @@ export default function CodingRepositoryPage() {
                             Import Coding Repository
                         </DialogTitle>
                         <DialogDescription>
-                            Upload a JSON file containing coding question sets and/or algorithmic problems.
+                            Upload an Excel (.xlsx) or JSON (.json) file containing coding question sets and/or algorithmic problems.
                         </DialogDescription>
                     </DialogHeader>
 
@@ -1704,7 +1906,7 @@ export default function CodingRepositoryPage() {
                             <input
                                 type="file"
                                 id="repo-file-upload"
-                                accept=".json,application/json"
+                                accept=".json,.xlsx,.xls,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                                 onChange={handleFileChange}
                                 className="hidden"
                             />
@@ -1712,7 +1914,11 @@ export default function CodingRepositoryPage() {
                                 <div className="flex items-center justify-between bg-muted/40 p-3 rounded-lg border border-border">
                                     <div className="flex items-center gap-3 text-left">
                                         <div className="h-10 w-10 rounded-md bg-primary/10 flex items-center justify-center text-primary">
-                                            <FileJson className="h-5 w-5" />
+                                            {/\.(xlsx|xls)$/i.test(importFile.name) ? (
+                                                <FileSpreadsheet className="h-5 w-5" />
+                                            ) : (
+                                                <FileJson className="h-5 w-5" />
+                                            )}
                                         </div>
                                         <div>
                                             <p className="text-sm font-semibold text-foreground truncate max-w-[280px]">{importFile.name}</p>
@@ -1736,8 +1942,8 @@ export default function CodingRepositoryPage() {
                                     <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-1">
                                         <FileUp className="h-6 w-6" />
                                     </div>
-                                    <p className="text-sm font-medium text-foreground">Click to upload or drag & drop JSON file</p>
-                                    <p className="text-xs text-muted-foreground">Supports .json exports of question sets or problems</p>
+                                    <p className="text-sm font-medium text-foreground">Click to upload or drag & drop Excel or JSON file</p>
+                                    <p className="text-xs text-muted-foreground">Supports .xlsx workbooks and .json repository exports</p>
                                 </label>
                             )}
                         </div>
