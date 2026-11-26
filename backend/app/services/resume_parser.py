@@ -31,6 +31,16 @@ def parse_docx(file) -> str:
     except Exception as e:
         return f"Error parsing DOCX: {str(e)}"
 
+def _decode_text_bytes(raw: bytes) -> str:
+    """Decode text bytes using common encodings with safe replacement fallback."""
+    for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def parse_resume(uploaded_file) -> str:
     """
     Parse uploaded resume file (PDF or DOCX) and return text content.
@@ -52,17 +62,18 @@ def parse_resume(uploaded_file) -> str:
     else:
         # Fallback for text files
         try:
-            # Handle UploadFile read memory vs Streamlit read memory
-            if hasattr(uploaded_file, "read"):
-                # FastAPI sometimes requires awaiting read() or simply reading.
-                content = uploaded_file.read()
-                if isinstance(content, bytes):
-                    return content.decode("utf-8")
-                return content
-            elif hasattr(uploaded_file, "getvalue"):
-                stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
-                return stringio.read()
-            return ""
+            # Prefer Streamlit getvalue() when available, otherwise read synchronously from file_obj
+            # (FastAPI UploadFile.read() is async, whereas file_obj = UploadFile.file is synchronous).
+            if hasattr(uploaded_file, "getvalue"):
+                content = uploaded_file.getvalue()
+            elif hasattr(file_obj, "read"):
+                content = file_obj.read()
+            else:
+                return ""
+
+            if isinstance(content, bytes):
+                return _decode_text_bytes(content)
+            return content if isinstance(content, str) else str(content)
         except Exception as e:
             return f"Error parsing file: {str(e)}"
 

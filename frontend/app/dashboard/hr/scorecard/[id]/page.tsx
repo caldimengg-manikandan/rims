@@ -51,6 +51,7 @@ interface ApplicationScorecard {
     aptitude_score?: number
     interview_score?: number
     candidate_photo_path?: string
+    photo_url?: string | null
     hr_notes?: string
     pipeline_stages?: PipelineStage[]
     interview?: { id: number; status: string }
@@ -117,13 +118,19 @@ export default function CandidateScorecardPage() {
             <div className="flex flex-col md:flex-row justify-between items-start gap-6 border-b border-border pb-8">
                 <div className="flex items-center gap-6">
                     <Avatar className="h-24 w-24 ring-4 ring-background shadow-2xl border-2 border-border/50">
-                        {application.candidate_photo_path ? (
-                            <AvatarImage src={`${getApiBaseUrl()}/${application.candidate_photo_path.replace(/\\/g, '/')}`} />
-                        ) : (
-                            <AvatarFallback className="text-3xl font-black bg-gradient-to-br from-primary/20 to-primary/40">
-                                {application.candidate_name.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                        )}
+                        <AvatarImage
+                            src={application.photo_url
+                                || (application.candidate_photo_path
+                                    ? (application.candidate_photo_path.startsWith('http')
+                                        ? application.candidate_photo_path
+                                        : `${getApiBaseUrl()}/${application.candidate_photo_path.replace(/\\/g, '/')}`)
+                                    : undefined)}
+                            alt={application.candidate_name}
+                            className="object-cover"
+                        />
+                        <AvatarFallback className="text-3xl font-black bg-gradient-to-br from-primary/20 to-primary/40">
+                            {application.candidate_name.charAt(0).toUpperCase()}
+                        </AvatarFallback>
                     </Avatar>
                     <div>
                         <h1 className="text-4xl font-extrabold tracking-tight text-foreground">{application.candidate_name}</h1>
@@ -250,7 +257,7 @@ export default function CandidateScorecardPage() {
                                         <p className="text-xs font-bold leading-none">{stage.stage_name}</p>
                                         <p className="text-[10px] text-muted-foreground mt-0.5">{stage.stage_status.toUpperCase()}</p>
                                     </div>
-                                    {stage.score && <span className="text-[10px] font-bold">{stage.score}</span>}
+                                    {stage.score !== null && stage.score !== undefined && <span className="text-[10px] font-bold">{stage.score}</span>}
                                 </div>
                             ))}
                             {(!application.pipeline_stages || application.pipeline_stages.length === 0) && (

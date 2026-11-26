@@ -25,7 +25,7 @@ function matchesKey(cacheKey: unknown, key: string) {
     return false
   }
 
-  return cacheKey === key || cacheKey.startsWith(`${key}?`)
+  return cacheKey === key || cacheKey.startsWith(`${key}?`) || cacheKey.startsWith(`${key}/`)
 }
 
 async function revalidateKeys(keys: string[]) {

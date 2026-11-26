@@ -43,7 +43,7 @@ export default function LeaderboardPage() {
         return [...ranked].sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0))
     }, [ranked])
 
-    const totalPages = Math.ceil(sortedRanked.length / pageSize)
+    const totalPages = Math.max(1, Math.ceil(sortedRanked.length / pageSize))
     const paginatedRanked = React.useMemo(() => {
         const start = (rankingPage - 1) * pageSize
         return sortedRanked.slice(start, start + pageSize)

@@ -33,8 +33,7 @@ class HireRequest(BaseModel):
             raise ValueError('Year must be between 2000 and 2100')
         
         # LOW-02: Prevent selecting a past date
-        from app.core.timezone import get_ist_now
-        v_naive = v.replace(tzinfo=None)
+        v_naive = to_naive_ist(v)
         if v_naive.date() < get_ist_now().date():
             raise ValueError('Joining date cannot be in the past')
             
@@ -103,14 +102,27 @@ def make_hiring_decision(
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save hiring decision securely")
     
-    # Email notifications — ONLY after successful commit
+    # Extract plain scalar values before session closes to avoid DetachedInstanceError in BackgroundTasks
     candidate_email = application.candidate_email
-    job = application.job
-    
+    job_title = application.job.title if application.job else "N/A"
+    interview_id = application.interview.id if application.interview else None
+    tenant_id = (
+        getattr(application, "tenant_id", None)
+        or (getattr(application.interview, "tenant_id", None) if application.interview else None)
+        or (getattr(application.job, "tenant_id", None) if application.job else None)
+    )
+    tenant_ref = str(tenant_id) if tenant_id else None
+
     if result.email_type == "hired":
-        background_tasks.add_task(send_hired_email, candidate_email, job.title, application.interview)
+        background_tasks.add_task(
+            send_hired_email,
+            candidate_email,
+            job_title,
+            tenant=tenant_ref,
+            interview_id=interview_id,
+        )
     elif result.email_type == "rejected":
-        background_tasks.add_task(send_rejected_email, candidate_email, job.title, False)
+        background_tasks.add_task(send_rejected_email, candidate_email, job_title, False)
     elif result.email_type == "approved_for_interview":
         # Note: raw_access_key would be needed here if this action was APPROVE_FOR_INTERVIEW
         # But this endpoint is for HIRE/REJECT. FSM might return approved_for_interview if state was weird.
@@ -226,6 +238,17 @@ async def hire_candidate(
         offer_letter_path=storage_path,
         decided_at=get_ist_now()
     )
+    # Extract plain scalar values before commit/session close to avoid DetachedInstanceError in BackgroundTasks
+    candidate_email = application.candidate_email
+    job_title = application.job.title if application.job else "N/A"
+    interview_id = application.interview.id if application.interview else None
+    tenant_id = (
+        getattr(application, "tenant_id", None)
+        or (getattr(application.interview, "tenant_id", None) if application.interview else None)
+        or (getattr(application.job, "tenant_id", None) if application.job else None)
+    )
+    tenant_ref = str(tenant_id) if tenant_id else None
+
     db.add(hiring_decision)
     try:
         db.commit()
@@ -238,10 +261,11 @@ async def hire_candidate(
     if result.email_type == "hired":
         background_tasks.add_task(
             send_hired_email,
-            application.candidate_email,
-            application.job.title if application.job else "N/A",
-            application.interview,
-            offer_letter_path=storage_path
+            candidate_email,
+            job_title,
+            offer_letter_path=storage_path,
+            tenant=tenant_ref,
+            interview_id=interview_id,
         )
 
     return {"status": "success", "message": "Candidate hired and offer letter generated and sent."}
@@ -263,6 +287,7 @@ def get_application_decision(
         )
     if current_user.role.lower() not in ["super_admin", "admin", "hr"]:
         raise HTTPException(status_code=403, detail="Forbidden: Access restricted.")
+    validate_hr_ownership(application, current_user, resource_name="application")
     
     
     decision = db.query(HiringDecision).options(

@@ -1114,9 +1114,42 @@ async def send_approved_for_interview_email(to_email: str, job_title: str, raw_a
         event_type="INTERVIEW_INVITE"
     )
 
-async def send_hired_email(to_email: str, job_title: str, interview=None, offer_letter_path: str = None, application: Any = None, tenant: Optional[Any] = None):
+async def send_hired_email(
+    to_email: str,
+    job_title: str,
+    interview=None,
+    offer_letter_path: str = None,
+    application: Any = None,
+    tenant: Optional[Any] = None,
+    interview_id: Optional[int] = None,
+):
     subject = "Congratulations! You have been selected"
-    tenant_obj = resolve_tenant_for_email(tenant=tenant, application=application, interview=interview, to_email=to_email)
+    if interview is None and interview_id is not None and tenant is None and application is None:
+        try:
+            from app.infrastructure.database import SessionLocal
+            from app.domain.models import Interview, Application
+            from sqlalchemy.orm import joinedload
+            with SessionLocal() as db:
+                db_interview = (
+                    db.query(Interview)
+                    .options(
+                        joinedload(Interview.application).joinedload(Application.job)
+                    )
+                    .filter(Interview.id == interview_id)
+                    .first()
+                )
+                if db_interview is not None:
+                    tenant_obj = resolve_tenant_for_email(
+                        tenant=tenant, application=application, interview=db_interview, to_email=to_email
+                    )
+                else:
+                    tenant_obj = resolve_tenant_for_email(
+                        tenant=tenant, application=application, interview=interview, to_email=to_email
+                    )
+        except Exception:
+            tenant_obj = resolve_tenant_for_email(tenant=tenant, application=application, interview=interview, to_email=to_email)
+    else:
+        tenant_obj = resolve_tenant_for_email(tenant=tenant, application=application, interview=interview, to_email=to_email)
     branding = get_branding_dict(tenant=tenant_obj)
     sender_name = get_sender_display_name(branding=branding, tenant=tenant_obj)
     company_name = sender_name if sender_name.lower() not in ("cal-rims", "caldim", "default organization") else branding.get("company_name", "CALDIM")

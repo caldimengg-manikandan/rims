@@ -130,11 +130,26 @@ def create_support_ticket(payload: SupportTicketCreate, request: Request, db: Se
         Offer.offer_token == access_key  # Candidates use their offer token as key
     ).first()
 
-    # Fallback: if access_key is "onboarding_error", find application by email only
-    if not application and access_key == "onboarding_error":
-        application = db.query(Application).filter(
-            Application.candidate_email == email
-        ).first()
+    # Fallback: if access_key is "onboarding_error", only allow onboarding-scoped
+    # grievances from /offer/respond for candidates who actually have an offer-stage application.
+    # This prevents arbitrary users from filing general tickets using only a candidate's email.
+    if (
+        not application
+        and access_key == "onboarding_error"
+        and grievance_type in {"Onboarding Issue", "Onboarding Issue (Link Error)"}
+    ):
+        application = (
+            db.query(Application)
+            .join(Offer)
+            .options(joinedload(Application.job))
+            .filter(
+                Application.candidate_email == email,
+                (Offer.offer_sent.is_(True))
+                | (Application.status.in_(["offer_sent", "offer_accepted", "offer_rejected", "onboarded", "hired"])),
+            )
+            .order_by(Application.id.desc())
+            .first()
+        )
 
 
     # Find all interviews for this email to verify if the access key belongs to one
@@ -241,6 +256,7 @@ def create_support_ticket(payload: SupportTicketCreate, request: Request, db: Se
         "technical": "technical",
         "interruption": "interruption",
         "misconduct": "misconduct",
+        "misconduct_appeal": "misconduct",
         "other": "other",
     }
     issue_type = issue_type_map.get(grievance_type, grievance_type.lower() or "other")

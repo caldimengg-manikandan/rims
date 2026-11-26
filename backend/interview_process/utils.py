@@ -3,6 +3,11 @@ from typing import Dict, List
 from datetime import datetime
 from dateutil import parser
 
+try:
+    from app.core.timezone import get_ist_now
+except ImportError:
+    from backend.app.core.timezone import get_ist_now
+
 def format_response(text: str, color: str = None) -> str:
     """Format text (color argument is ignored for compatibility)"""
     return text
@@ -74,7 +79,7 @@ def calculate_detailed_score(responses: List[Dict]) -> Dict:
     for response in responses:
         eval_data = response.get('evaluation', {})
         scores["overall"].append(eval_data.get('overall', 5))
-        scores["technical"].append(eval_data.get('accuracy', 5))
+        scores["technical"].append(eval_data.get('technical_accuracy', eval_data.get('accuracy', 5)))
         scores["behavioral"].append(eval_data.get('relevance', 5))
         scores["depth"].append(eval_data.get('depth', 5))
     
@@ -281,7 +286,7 @@ def calculate_experience_years(roles: List[Dict]) -> float:
         return 0.0
 
     parsed_intervals = []
-    now = datetime.now()
+    now = get_ist_now()
 
     # Keywords for ongoing roles
     ongoing_terms = ["present", "current", "ongoing", "till now", "till date", "working"]
